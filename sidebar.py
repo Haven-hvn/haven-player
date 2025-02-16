@@ -3,7 +3,6 @@ from PyQt6.QtCore import QSize, Qt, pyqtSlot
 from PyQt6.QtGui import QIcon, QPixmap
 from svg_icons import SvgIcons
 from PyQt6.QtCore import pyqtSignal, pyqtSlot
-from utils import validate_video_file
 
 class Sidebar(QWidget):
     add_video_requested = pyqtSignal(str)  # New signal for video path
@@ -57,7 +56,7 @@ class Sidebar(QWidget):
     @pyqtSlot()
     def add_video_handler(self):
         video_path = self.get_video_path()
-        if video_path and validate_video_file(video_path):
+        if video_path:
             self.add_video_requested.emit(video_path)  # Emit signal instead of direct DB access
 
     def get_video_path(self):

@@ -1,17 +1,20 @@
 import sys
+import subprocess
+import json
 from pathlib import Path
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QLabel, QScrollArea, QFileDialog, QMessageBox,
-    QGridLayout, QMenu
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QScrollArea, QFileDialog, QMessageBox, QGridLayout, QMenu
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QIcon, QPixmap, QAction, QCursor
+from PyQt6.QtGui import QCursor, QAction
 from video_player import VideoPlayer, VideoThumbnailWidget
 from database import Database
 from utils import check_av1_codec, get_video_duration, generate_thumbnail, parse_ai_data
+from sidebar import Sidebar
+from top_bar import TopBar
 
-class MainWindow(QMainWindow):
+class HavenPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Haven Player")
@@ -25,41 +28,24 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Header with controls
-        header = QWidget()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.video_count_label = QLabel("0 videos")
-        self.video_count_label.setStyleSheet("""
-            color: white;
-            font-size: 16px;
-            font-weight: bold;
-        """)
-        header_layout.addWidget(self.video_count_label)
-        
-        add_button = QPushButton("Add Videos")
-        add_button.setStyleSheet("""
-            QPushButton {
-                background-color: #3d3d3d;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #4d4d4d;
-            }
-        """)
-        add_button.clicked.connect(self.add_videos)
-        header_layout.addWidget(add_button, alignment=Qt.AlignmentFlag.AlignRight)
-        
-        main_layout.addWidget(header)
+        # Original TopBar integration
+        self.top_bar = TopBar()
+        main_layout.addWidget(self.top_bar)
 
-        # Scroll area for video grid
+        # Main content area
+        content_widget = QWidget()
+        content_layout = QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+        content_layout.setSpacing(20)
+
+        # Original Sidebar integration
+        self.sidebar = Sidebar()
+        content_layout.addWidget(self.sidebar, stretch=1)
+
+        # Enhanced video grid area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("""
@@ -68,32 +54,27 @@ class MainWindow(QMainWindow):
                 background-color: #1e1e1e;
             }
             QScrollBar:vertical {
-                border: none;
                 background: #2d2d2d;
                 width: 10px;
-                margin: 0px;
             }
             QScrollBar::handle:vertical {
                 background: #5d5d5d;
                 min-height: 20px;
                 border-radius: 5px;
             }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                border: none;
-                background: none;
-            }
         """)
-        
-        self.video_grid_widget = QWidget()
-        self.video_grid_layout = QGridLayout(self.video_grid_widget)
-        self.video_grid_layout.setSpacing(20)
-        scroll.setWidget(self.video_grid_widget)
-        
-        main_layout.addWidget(scroll)
 
-        # Set dark theme
+        self.video_grid = QWidget()
+        self.grid_layout = QGridLayout(self.video_grid)
+        self.grid_layout.setSpacing(20)
+        scroll.setWidget(self.video_grid)
+
+        content_layout.addWidget(scroll, stretch=3)
+        main_layout.addWidget(content_widget)
+
+        # Dark theme styling
         self.setStyleSheet("""
-            QMainWindow {
+            QMainWindow, QWidget {
                 background-color: #1e1e1e;
                 color: white;
             }
@@ -113,7 +94,6 @@ class MainWindow(QMainWindow):
             if not path.exists():
                 continue
                 
-            # Check if video is AV1 encoded
             if not check_av1_codec(str(path)):
                 QMessageBox.warning(
                     self,
@@ -122,13 +102,9 @@ class MainWindow(QMainWindow):
                 )
                 continue
 
-            # Get video duration
             duration = get_video_duration(str(path))
-            
-            # Generate thumbnail
             thumbnail_path = generate_thumbnail(str(path))
             
-            # Check for AI data file
             ai_file = path.with_suffix(path.suffix + '.AI.json')
             has_ai_data = ai_file.exists()
             ai_data = None
@@ -140,7 +116,6 @@ class MainWindow(QMainWindow):
                     print(f"Error loading AI data: {e}")
                     has_ai_data = False
             
-            # Add to database
             self.db.add_video(
                 path=str(path),
                 title=path.name,
@@ -163,18 +138,13 @@ class MainWindow(QMainWindow):
             )
 
     def load_videos(self):
-        # Clear existing videos
-        while self.video_grid_layout.count():
-            child = self.video_grid_layout.takeAt(0)
+        while self.grid_layout.count():
+            child = self.grid_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
-        # Load videos from database
         videos = self.db.get_all_videos()
-        self.video_count_label.setText(f"{len(videos)} videos")
-
-        # Calculate grid layout
-        columns = max(1, self.video_grid_widget.width() // 400)
+        columns = max(1, self.video_grid.width() // 400)
         
         for i, video in enumerate(videos):
             row = i // columns
@@ -191,7 +161,7 @@ class MainWindow(QMainWindow):
                 lambda pos, v=video: self.show_context_menu(pos, v)
             )
             
-            self.video_grid_layout.addWidget(thumbnail, row, col)
+            self.grid_layout.addWidget(thumbnail, row, col)
 
     def play_video(self, video_path):
         if self.current_player:
@@ -270,6 +240,6 @@ class MainWindow(QMainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
+    player = HavenPlayer()
+    player.show()
     sys.exit(app.exec())

@@ -6,10 +6,12 @@ class Database:
     def __init__(self):
         self.db_path = Path.home() / '.haven-player' / 'videos.db'
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[Database] Connecting to database at {self.db_path}")
         self.conn = sqlite3.connect(str(self.db_path))
         self.create_tables()
 
     def create_tables(self):
+        print("[Database] Creating/verifying tables")
         cursor = self.conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS videos (
@@ -36,8 +38,10 @@ class Database:
             )
         ''')
         self.conn.commit()
+        print("[Database] Tables created/verified successfully")
 
     def add_video(self, path: str, ai_data: dict, duration: int, thumbnail_path: str) -> int:
+        print(f"[Database] Adding video: {path}")
         # Extract title from path
         title = Path(path).stem
         has_ai_data = bool(ai_data)
@@ -45,6 +49,7 @@ class Database:
         # Get max position
         cursor.execute('SELECT COALESCE(MAX(position), 0) FROM videos')
         max_position = cursor.fetchone()[0]
+        print(f"[Database] Current max position: {max_position}, new position will be: {max_position + 1}")
         
         cursor.execute('''
             INSERT OR REPLACE INTO videos 
@@ -52,11 +57,16 @@ class Database:
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (str(path), title, duration, has_ai_data, thumbnail_path, max_position + 1))
         self.conn.commit()
-        return cursor.lastrowid
+        video_id = cursor.lastrowid
+        print(f"[Database] Video added successfully with ID: {video_id}")
+        return video_id
 
     def add_timestamps(self, video_path: str, tags: dict):
+        print(f"[Database] Adding timestamps for video: {video_path}")
         cursor = self.conn.cursor()
+        timestamp_count = 0
         for tag_name, tag_data in tags.items():
+            print(f"[Database] Processing tag: {tag_name}")
             for frame in tag_data["time_frames"]:
                 cursor.execute('''
                     INSERT INTO timestamps 
@@ -69,9 +79,12 @@ class Database:
                     frame.get("end", frame["start"] + 2.0),
                     frame.get("confidence", 1.0)
                 ))
+                timestamp_count += 1
         self.conn.commit()
+        print(f"[Database] Added {timestamp_count} timestamps for video: {video_path}")
 
     def get_video_timestamps(self, video_path: str) -> list:
+        print(f"[Database] Fetching timestamps for video: {video_path}")
         cursor = self.conn.cursor()
         cursor.execute('''
             SELECT tag_name, start_time, end_time, confidence 
@@ -88,16 +101,18 @@ class Database:
                 'end': row[2],
                 'confidence': row[3]
             })
+        print(f"[Database] Found {len(timestamps)} timestamps")
         return timestamps
 
     def get_all_videos(self) -> list:
+        print("[Database] Fetching all videos")
         cursor = self.conn.cursor()
         cursor.execute('''
             SELECT path, title, duration, has_ai_data, thumbnail_path 
             FROM videos 
             ORDER BY position DESC, created_at DESC
         ''')
-        return [
+        videos = [
             {
                 'path': row[0],
                 'title': row[1],
@@ -107,8 +122,11 @@ class Database:
             }
             for row in cursor.fetchall()
         ]
+        print(f"[Database] Found {len(videos)} videos")
+        return videos
 
     def move_to_front(self, video_path: str):
+        print(f"[Database] Moving video to front: {video_path}")
         cursor = self.conn.cursor()
         # Get max position
         cursor.execute('SELECT COALESCE(MAX(position), 0) FROM videos')
@@ -120,18 +138,25 @@ class Database:
             (max_position + 1, str(video_path))
         )
         self.conn.commit()
+        print(f"[Database] Video moved to front with position: {max_position + 1}")
 
     def remove_video(self, video_path: str):
+        print(f"[Database] Removing video: {video_path}")
         cursor = self.conn.cursor()
         cursor.execute('DELETE FROM timestamps WHERE video_path = ?', (str(video_path),))
         cursor.execute('DELETE FROM videos WHERE path = ?', (str(video_path),))
         self.conn.commit()
+        print("[Database] Video and its timestamps removed successfully")
 
     def clear_videos(self):
+        print("[Database] Clearing all videos and timestamps")
         cursor = self.conn.cursor()
         cursor.execute('DELETE FROM timestamps')
         cursor.execute('DELETE FROM videos')
         self.conn.commit()
+        print("[Database] All videos and timestamps cleared successfully")
 
     def close(self):
+        print("[Database] Closing database connection")
         self.conn.close()
+        print("[Database] Database connection closed")

@@ -19,12 +19,14 @@ class HavenPlayer(QMainWindow):
         super().__init__()
         self.setWindowTitle("Haven Player")
         self.setMinimumSize(1200, 800)
+        print("[Main] Initializing Haven Player")
         self.db = Database()
         self.current_player = None
         self.setup_ui()
         self.load_videos()
 
     def setup_ui(self):
+        print("[Main] Setting up UI")
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -43,6 +45,8 @@ class HavenPlayer(QMainWindow):
 
         # Original Sidebar integration
         self.sidebar = Sidebar()
+        self.sidebar.add_video_requested.connect(self.add_video)  # Connect to add_video method
+        print("[Main] Connected sidebar add_video_requested signal")
         content_layout.addWidget(self.sidebar, stretch=1)
 
         # Enhanced video grid area
@@ -79,65 +83,70 @@ class HavenPlayer(QMainWindow):
                 color: white;
             }
         """)
+        print("[Main] UI setup complete")
 
-    def add_videos(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Select Videos",
-            str(Path.home()),
-            "Video Files (*.mp4 *.mkv *.webm)"
+    def add_video(self, video_path):
+        print(f"[Main] Adding video from path: {video_path}")
+        path = Path(video_path)
+        if not path.exists():
+            print(f"[Main] Error: Video path does not exist: {video_path}")
+            return
+                
+        print("[Main] Checking video codec")
+        if not check_av1_codec(str(path)):
+            print(f"[Main] Error: Video is not AV1 encoded: {path.name}")
+            QMessageBox.warning(
+                self,
+                "Invalid Codec",
+                f"Video {path.name} is not AV1 encoded. Skipping..."
+            )
+            return
+
+        print("[Main] Getting video duration")
+        duration = get_video_duration(str(path))
+        print(f"[Main] Video duration: {duration} seconds")
+        
+        print("[Main] Generating thumbnail")
+        thumbnail_path = generate_thumbnail(str(path))
+        print(f"[Main] Thumbnail generated at: {thumbnail_path}")
+        
+        ai_file = path.with_suffix(path.suffix + '.AI.json')
+        has_ai_data = ai_file.exists()
+        ai_data = None
+        if has_ai_data:
+            print(f"[Main] Found AI data file: {ai_file}")
+            try:
+                with open(ai_file) as f:
+                    ai_data = parse_ai_data(json.load(f))
+                print("[Main] AI data parsed successfully")
+            except Exception as e:
+                print(f"[Main] Error loading AI data: {e}")
+                has_ai_data = False
+                ai_data = None
+        
+        print("[Main] Adding video to database")
+        self.db.add_video(
+            path=str(path),
+            title=path.name,
+            duration=duration,
+            has_ai_data=has_ai_data,
+            thumbnail_path=thumbnail_path
         )
         
-        added_count = 0
-        for file in files:
-            path = Path(file)
-            if not path.exists():
-                continue
-                
-            if not check_av1_codec(str(path)):
-                QMessageBox.warning(
-                    self,
-                    "Invalid Codec",
-                    f"Video {path.name} is not AV1 encoded. Skipping..."
-                )
-                continue
-
-            duration = get_video_duration(str(path))
-            thumbnail_path = generate_thumbnail(str(path))
-            
-            ai_file = path.with_suffix(path.suffix + '.AI.json')
-            has_ai_data = ai_file.exists()
-            ai_data = None
-            if has_ai_data:
-                try:
-                    with open(ai_file) as f:
-                        ai_data = parse_ai_data(json.load(f))
-                except Exception as e:
-                    print(f"Error loading AI data: {e}")
-                    has_ai_data = False
-            
-            self.db.add_video(
-                path=str(path),
-                title=path.name,
-                duration=duration,
-                has_ai_data=has_ai_data,
-                thumbnail_path=thumbnail_path
-            )
-            
-            if has_ai_data and ai_data:
-                self.db.add_timestamps(path, ai_data["tags"])
-            
-            added_count += 1
-            
-        if added_count > 0:
-            self.load_videos()
-            QMessageBox.information(
-                self,
-                "Videos Added",
-                f"Successfully added {added_count} video(s)"
-            )
+        if has_ai_data and ai_data:
+            print("[Main] Adding AI timestamps to database")
+            self.db.add_timestamps(path, ai_data["tags"])
+        
+        print("[Main] Reloading video grid")
+        self.load_videos()
+        QMessageBox.information(
+            self,
+            "Video Added",
+            f"Successfully added video: {path.name}"
+        )
 
     def load_videos(self):
+        print("[Main] Loading videos into grid")
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)
             if child.widget():
@@ -145,10 +154,12 @@ class HavenPlayer(QMainWindow):
 
         videos = self.db.get_all_videos()
         columns = max(1, self.video_grid.width() // 400)
+        print(f"[Main] Grid columns: {columns}")
         
         for i, video in enumerate(videos):
             row = i // columns
             col = i % columns
+            print(f"[Main] Creating thumbnail for video: {video['path']} at position {row},{col}")
             
             thumbnail = VideoThumbnailWidget(
                 video,
@@ -162,20 +173,26 @@ class HavenPlayer(QMainWindow):
             )
             
             self.grid_layout.addWidget(thumbnail, row, col)
+        print(f"[Main] Loaded {len(videos)} videos into grid")
 
     def play_video(self, video_path):
+        print(f"[Main] Playing video: {video_path}")
         if self.current_player:
+            print("[Main] Closing existing video player")
             self.current_player.close()
             
         self.current_player = VideoPlayer()
         self.current_player.load_video(Path(video_path))
         self.current_player.showMaximized()
+        print("[Main] Video player launched")
 
     def analyze_video(self, video_path):
+        print(f"[Main] Analyze video requested for: {video_path}")
         # TODO: Implement video analysis
         pass
 
     def show_context_menu(self, pos, video):
+        print(f"[Main] Showing context menu for video: {video['path']}")
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu {
@@ -210,14 +227,17 @@ class HavenPlayer(QMainWindow):
         menu.exec(QCursor.pos())
 
     def move_to_front(self, video):
+        print(f"[Main] Moving video to front: {video['path']}")
         self.db.move_to_front(video['path'])
         self.load_videos()
 
     def remove_video(self, video):
+        print(f"[Main] Removing video: {video['path']}")
         self.db.remove_video(video['path'])
         self.load_videos()
 
     def show_in_folder(self, video):
+        print(f"[Main] Opening folder for video: {video['path']}")
         path = Path(video['path'])
         if sys.platform == 'win32':
             subprocess.run(['explorer', '/select,', str(path)])
@@ -227,6 +247,7 @@ class HavenPlayer(QMainWindow):
             subprocess.run(['xdg-open', str(path.parent)])
 
     def clear_playlist(self):
+        print("[Main] Clear playlist requested")
         reply = QMessageBox.question(
             self,
             "Clear Playlist",
@@ -235,6 +256,7 @@ class HavenPlayer(QMainWindow):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
+            print("[Main] Clearing playlist")
             self.db.clear_videos()
             self.load_videos()
 

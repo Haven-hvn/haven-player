@@ -55,11 +55,16 @@ class Sidebar(QWidget):
 
     @pyqtSlot()
     def add_video_handler(self):
+        print("[Sidebar] Add video button clicked")
         video_path = self.get_video_path()
         if video_path:
+            print(f"[Sidebar] Video selected: {video_path}")
             self.add_video_requested.emit(video_path)  # Emit signal instead of direct DB access
+        else:
+            print("[Sidebar] No video selected or dialog cancelled")
 
     def get_video_path(self):
+        print("[Sidebar] Opening file dialog")
         # Open a file dialog to select a video file
         file_dialog = QFileDialog(self)
         file_dialog.setNameFilter("Video Files (*.mp4 *.avi *.mkv *.mov)")

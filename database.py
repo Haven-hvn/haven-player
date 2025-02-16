@@ -37,7 +37,10 @@ class Database:
         ''')
         self.conn.commit()
 
-    def add_video(self, path: str, title: str, duration: int, has_ai_data: bool, thumbnail_path: str) -> int:
+    def add_video(self, path: str, ai_data: dict, duration: int, thumbnail_path: str) -> int:
+        # Extract title from path
+        title = Path(path).stem
+        has_ai_data = bool(ai_data)
         cursor = self.conn.cursor()
         # Get max position
         cursor.execute('SELECT COALESCE(MAX(position), 0) FROM videos')

@@ -26,40 +26,53 @@ def check_av1_codec(file_path: str) -> bool:
         return False
 
 def get_video_duration(file_path: str) -> int:
-    """Get video duration in seconds."""
+    """Get video duration in seconds using ffprobe."""
+    ffprobe_command = [
+        "ffprobe",
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_entries", "format=duration",
+        file_path
+    ]
+
     try:
-        container = av.open(file_path)
-        stream = container.streams.video[0]
-        duration = int(stream.frames / stream.rate)
-        return duration
-    except Exception as e:
-        print(f"Error getting duration: {e}")
+        ffprobe_output = subprocess.run(ffprobe_command, capture_output=True, check=True, text=True)
+        ffprobe_data = json.loads(ffprobe_output.stdout)
+        duration = ffprobe_data.get('format', {}).get('duration', '0')
+        return int(float(duration))  # Convert duration to int in seconds
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error running ffprobe on {file_path}: {e}")
+        logging.error(f"FFprobe stdout: {e.stdout}")
+        logging.error(f"FFprobe stderr: {e.stderr}")
+        return 0
+    except ValueError as ve:
+        logging.error(f"Error parsing duration: {ve}")
         return 0
 
 def generate_thumbnail(file_path: str, output_path: str = None, size: tuple = (320, 180)) -> str:
-    """Generate a thumbnail from the first frame of the video."""
+    """Generate a thumbnail from the first frame of the video using ffmpeg."""
+    
+    # Ensure output path has a .jpg extension, defaults to renaming input path with .thumb.jpg suffix
+    if output_path is None:
+        output_path = str(Path(file_path).with_suffix('.thumb.jpg'))
+
+    # Construct the ffmpeg command for thumbnail generation
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-i", file_path,  # Input file
+        "-vframes", "1",  # Capture only the first frame
+        "-vf", f"scale={size[0]}:{size[1]}",  # Specify the scale (size)
+        output_path  # Output file path
+    ]
+    
     try:
-        container = av.open(file_path)
-        stream = container.streams.video[0]
-        
-        # Get the first frame
-        for frame in container.decode(video=0):
-            img = frame.to_ndarray(format='rgb24')
-            
-            # Convert to PIL Image for easy resizing
-            from PIL import Image
-            pil_image = Image.fromarray(img)
-            pil_image.thumbnail(size)
-            
-            # Save thumbnail
-            if output_path is None:
-                output_path = str(Path(file_path).with_suffix('.thumb.jpg'))
-            pil_image.save(output_path, 'JPEG')
-            return output_path
-            
-    except Exception as e:
+        # Execute the command in subprocess
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return output_path
+    
+    except subprocess.CalledProcessError as e:
         print(f"Error generating thumbnail: {e}")
-        return None
+        return ""
 
 def format_timestamp(seconds: float) -> str:
     """Format seconds into HH:MM:SS string."""

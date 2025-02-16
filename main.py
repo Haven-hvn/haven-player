@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
                 background-color: #4A90E2;
             }
         """)
-        self.add_btn.clicked.connect(self.add_videos)
+        self.add_btn.clicked.connect(self.load_videos)
         button_layout.addWidget(self.add_btn)
 
         self.analyze_btn = QPushButton()

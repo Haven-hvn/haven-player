@@ -110,6 +110,26 @@ class Database:
         self.conn.commit()
         print("[Database] All videos and timestamps cleared successfully")
 
+    def get_video_timestamps(self, video_path: str):
+        print(f"[Database] Fetching timestamps for video: {video_path}")
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT tag_name, start_time, end_time, confidence
+            FROM timestamps
+            WHERE video_path = ?
+        ''', (str(video_path),))
+        timestamps = [
+            {
+                'tag_name': row[0],
+                'start_time': row[1],
+                'end_time': row[2],
+                'confidence': row[3]
+            }
+            for row in cursor.fetchall()
+        ]
+        print(f"[Database] Found {len(timestamps)} timestamps for video: {video_path}")
+        return timestamps
+
     def close(self):
         print("[Database] Closing database connection")
         self.conn.close()

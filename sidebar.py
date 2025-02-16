@@ -17,16 +17,6 @@ class Sidebar(QWidget):
         layout.setContentsMargins(0, 20, 0, 20)
         layout.setSpacing(15)
 
-        # Sidebar icons
-        icons = [
-            ('home', 'house.svg'),
-            ('file', 'folder.svg'),
-            ('add', 'plus.svg'),
-            ('graph-up', 'graph-up.svg'),
-            ('settings', 'gear.svg'),
-            ('help', 'info-circle.svg')
-        ]
-
         for icon_name, icon_file in icons:
             btn = QPushButton()
             if icon_file == 'plus.svg':

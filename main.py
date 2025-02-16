@@ -10,6 +10,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QAction, QCursor
 from video_player import VideoPlayer, VideoThumbnailWidget
 from database import Database
 from utils import check_av1_codec, get_video_duration, generate_thumbnail, parse_ai_data
+import json
 
 class MainWindow(QMainWindow):
     def __init__(self):

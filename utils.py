@@ -1,4 +1,3 @@
-import av
 from pathlib import Path
 import subprocess
 import json

@@ -3,10 +3,10 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QLabel, QScrollArea, QFileDialog, QMessageBox,
-    QGridLayout, QMenu
+    QGridLayout, QMenu, QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QIcon, QPixmap, QAction, QCursor
+from PyQt6.QtGui import QIcon, QPixmap, QAction, QCursor, QColor
 from video_player import VideoPlayer, VideoThumbnailWidget
 from database import Database
 from utils import check_av1_codec, get_video_duration, generate_thumbnail, parse_ai_data
@@ -25,57 +25,102 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(20)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Header with controls
-        header = QWidget()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        # Left Sidebar
+        sidebar = QWidget()
+        sidebar.setFixedWidth(50)
+        sidebar.setStyleSheet("""
+            QWidget {
+                background-color: #282828;
+            }
+        """)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+
+        icons = ["home", "file", "settings", "help"]
+        for icon in icons:
+            btn = QPushButton()
+            btn.setIcon(QIcon(f":/icons/{icon}.png"))
+            btn.setIconSize(QSize(24, 24))
+            btn.setFixedSize(50, 50)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #282828;
+                    border: none;
+                }
+                QPushButton:hover {
+                    background-color: #4A90E2;
+                }
+            """)
+            sidebar_layout.addWidget(btn)
+
+        main_layout.addWidget(sidebar)
+
+        # Main Content Area
+        main_content = QWidget()
+        main_content.setStyleSheet("""
+            QWidget {
+                background-color: #282828;
+                color: #FFFFFF;
+            }
+        """)
+        main_content_layout = QVBoxLayout(main_content)
+        main_content_layout.setContentsMargins(20, 20, 20, 20)
+        main_content_layout.setSpacing(20)
+
+        # Top Bar
+        top_bar = QWidget()
+        top_bar_layout = QHBoxLayout(top_bar)
+        top_bar_layout.setContentsMargins(0, 0, 0, 0)
         
         self.video_count_label = QLabel("0 videos")
         self.video_count_label.setStyleSheet("""
-            color: white;
+            color: #FFFFFF;
             font-size: 16px;
             font-weight: bold;
         """)
-        header_layout.addWidget(self.video_count_label)
+        top_bar_layout.addWidget(self.video_count_label)
         
-        add_button = QPushButton("Add Videos")
-        add_button.setStyleSheet("""
+        analyze_all_button = QPushButton("Analyze All")
+        analyze_all_button.setIcon(QIcon(":/icons/analyze.png"))
+        analyze_all_button.setIconSize(QSize(24, 24))
+        analyze_all_button.setStyleSheet("""
             QPushButton {
-                background-color: #3d3d3d;
-                color: white;
+                background-color: #282828;
+                color: #FFFFFF;
                 border: none;
                 padding: 8px 16px;
                 border-radius: 4px;
             }
             QPushButton:hover {
-                background-color: #4d4d4d;
+                background-color: #4A90E2;
             }
         """)
-        add_button.clicked.connect(self.add_videos)
-        header_layout.addWidget(add_button, alignment=Qt.AlignmentFlag.AlignRight)
+        analyze_all_button.clicked.connect(self.analyze_all_videos)
+        top_bar_layout.addWidget(analyze_all_button, alignment=Qt.AlignmentFlag.AlignRight)
         
-        main_layout.addWidget(header)
+        main_content_layout.addWidget(top_bar)
 
-        # Scroll area for video grid
+        # Scroll area for video list
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("""
             QScrollArea {
                 border: none;
-                background-color: #1e1e1e;
+                background-color: #282828;
             }
             QScrollBar:vertical {
                 border: none;
-                background: #2d2d2d;
+                background: #282828;
                 width: 10px;
                 margin: 0px;
             }
             QScrollBar::handle:vertical {
-                background: #5d5d5d;
+                background: #4A90E2;
                 min-height: 20px;
                 border-radius: 5px;
             }
@@ -85,88 +130,19 @@ class MainWindow(QMainWindow):
             }
         """)
         
-        self.video_grid_widget = QWidget()
-        self.video_grid_layout = QGridLayout(self.video_grid_widget)
-        self.video_grid_layout.setSpacing(20)
-        scroll.setWidget(self.video_grid_widget)
+        self.video_list_widget = QWidget()
+        self.video_list_layout = QVBoxLayout(self.video_list_widget)
+        self.video_list_layout.setSpacing(20)
+        scroll.setWidget(self.video_list_widget)
         
-        main_layout.addWidget(scroll)
+        main_content_layout.addWidget(scroll)
 
-        # Set dark theme
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #1e1e1e;
-                color: white;
-            }
-        """)
-
-    def add_videos(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Select Videos",
-            str(Path.home()),
-            "Video Files (*.mp4 *.mkv *.webm)"
-        )
-        
-        added_count = 0
-        for file in files:
-            path = Path(file)
-            if not path.exists():
-                continue
-                
-            # Check if video is AV1 encoded
-            if not check_av1_codec(str(path)):
-                QMessageBox.warning(
-                    self,
-                    "Invalid Codec",
-                    f"Video {path.name} is not AV1 encoded. Skipping..."
-                )
-                continue
-
-            # Get video duration
-            duration = get_video_duration(str(path))
-            
-            # Generate thumbnail
-            thumbnail_path = generate_thumbnail(str(path))
-            
-            # Check for AI data file
-            ai_file = path.with_suffix(path.suffix + '.AI.json')
-            has_ai_data = ai_file.exists()
-            ai_data = None
-            if has_ai_data:
-                try:
-                    with open(ai_file) as f:
-                        ai_data = parse_ai_data(json.load(f))
-                except Exception as e:
-                    print(f"Error loading AI data: {e}")
-                    has_ai_data = False
-            
-            # Add to database
-            self.db.add_video(
-                path=str(path),
-                title=path.name,
-                duration=duration,
-                has_ai_data=has_ai_data,
-                thumbnail_path=thumbnail_path
-            )
-            
-            if has_ai_data and ai_data:
-                self.db.add_timestamps(path, ai_data["tags"])
-            
-            added_count += 1
-            
-        if added_count > 0:
-            self.load_videos()
-            QMessageBox.information(
-                self,
-                "Videos Added",
-                f"Successfully added {added_count} video(s)"
-            )
+        main_layout.addWidget(main_content)
 
     def load_videos(self):
         # Clear existing videos
-        while self.video_grid_layout.count():
-            child = self.video_grid_layout.takeAt(0)
+        while self.video_list_layout.count():
+            child = self.video_list_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
@@ -174,13 +150,21 @@ class MainWindow(QMainWindow):
         videos = self.db.get_all_videos()
         self.video_count_label.setText(f"{len(videos)} videos")
 
-        # Calculate grid layout
-        columns = max(1, self.video_grid_widget.width() // 400)
-        
         for i, video in enumerate(videos):
-            row = i // columns
-            col = i % columns
-            
+            video_entry = QWidget()
+            video_entry_layout = QHBoxLayout(video_entry)
+            video_entry_layout.setContentsMargins(0, 0, 0, 0)
+            video_entry_layout.setSpacing(10)
+
+            # Entry Number
+            entry_number = QLabel(f"{i+1}.")
+            entry_number.setStyleSheet("""
+                color: #FFFFFF;
+                font-size: 14px;
+            """)
+            video_entry_layout.addWidget(entry_number)
+
+            # Video Thumbnail
             thumbnail = VideoThumbnailWidget(
                 video,
                 self.db.get_video_timestamps(video['path'])
@@ -191,8 +175,67 @@ class MainWindow(QMainWindow):
             thumbnail.customContextMenuRequested.connect(
                 lambda pos, v=video: self.show_context_menu(pos, v)
             )
-            
-            self.video_grid_layout.addWidget(thumbnail, row, col)
+            video_entry_layout.addWidget(thumbnail)
+
+            # Video Details
+            details = QVBoxLayout()
+            title = QLabel(video['title'])
+            title.setStyleSheet("""
+                color: #FFFFFF;
+                font-size: 14px;
+            """)
+            duration = QLabel(f"Duration: {video['duration']}")
+            duration.setStyleSheet("""
+                color: #FFFFFF;
+                font-size: 12px;
+            """)
+            details.addWidget(title)
+            details.addWidget(duration)
+            video_entry_layout.addLayout(details)
+
+            # Analysis Indicator Bar
+            indicator_bar = QFrame()
+            indicator_bar.setFixedHeight(10)
+            indicator_bar.setStyleSheet("""
+                QFrame {
+                    background-color: #4A90E2;
+                }
+            """)
+            video_entry_layout.addWidget(indicator_bar)
+
+            # Buttons
+            completed_button = QPushButton("Completed")
+            completed_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #282828;
+                    color: #FFFFFF;
+                    border: none;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #4A90E2;
+                }
+            """)
+            video_entry_layout.addWidget(completed_button)
+
+            play_button = QPushButton("Play")
+            play_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #282828;
+                    color: #FFFFFF;
+                    border: none;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #4A90E2;
+                }
+            """)
+            play_button.clicked.connect(lambda: self.play_video(video['path']))
+            video_entry_layout.addWidget(play_button)
+
+            self.video_list_layout.addWidget(video_entry)
 
     def play_video(self, video_path):
         if self.current_player:
@@ -206,68 +249,13 @@ class MainWindow(QMainWindow):
         # TODO: Implement video analysis
         pass
 
+    def analyze_all_videos(self):
+        # TODO: Implement analyze all videos
+        pass
+
     def show_context_menu(self, pos, video):
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #2d2d2d;
-                color: white;
-                border: 1px solid #3d3d3d;
-            }
-            QMenu::item {
-                padding: 5px 20px;
-            }
-            QMenu::item:selected {
-                background-color: #3d3d3d;
-            }
-        """)
-        
-        move_front = QAction("Move to front", self)
-        move_front.triggered.connect(lambda: self.move_to_front(video))
-        menu.addAction(move_front)
-        
-        remove = QAction("Remove", self)
-        remove.triggered.connect(lambda: self.remove_video(video))
-        menu.addAction(remove)
-        
-        show_folder = QAction("Show in folder", self)
-        show_folder.triggered.connect(lambda: self.show_in_folder(video))
-        menu.addAction(show_folder)
-        
-        clear_playlist = QAction("Clear playlist", self)
-        clear_playlist.triggered.connect(self.clear_playlist)
-        menu.addAction(clear_playlist)
-        
-        menu.exec(QCursor.pos())
-
-    def move_to_front(self, video):
-        self.db.move_to_front(video['path'])
-        self.load_videos()
-
-    def remove_video(self, video):
-        self.db.remove_video(video['path'])
-        self.load_videos()
-
-    def show_in_folder(self, video):
-        path = Path(video['path'])
-        if sys.platform == 'win32':
-            subprocess.run(['explorer', '/select,', str(path)])
-        elif sys.platform == 'darwin':
-            subprocess.run(['open', '-R', str(path)])
-        else:
-            subprocess.run(['xdg-open', str(path.parent)])
-
-    def clear_playlist(self):
-        reply = QMessageBox.question(
-            self,
-            "Clear Playlist",
-            "Are you sure you want to clear the entire playlist?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            self.db.clear_videos()
-            self.load_videos()
+        # TODO: Implement context menu
+        pass
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

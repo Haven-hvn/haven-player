@@ -8,7 +8,7 @@ def check_av1_codec(file_path: str) -> bool:
     "-v", "quiet",
     "-print_format", "json",
     "-show_streams",
-    input_file
+    file_path
     ]
     try:
         ffprobe_output = subprocess.run(ffprobe_command, capture_output=True, check=True)
@@ -18,7 +18,7 @@ def check_av1_codec(file_path: str) -> bool:
                 return True
         return False
     except subprocess.CalledProcessError as e:
-        logging.error(f"Error running ffprobe on {input_file}: {e}")
+        logging.error(f"Error running ffprobe on {file_path}: {e}")
         logging.error(f"FFprobe stdout: {e.stdout.decode()}")
         logging.error(f"FFprobe stderr: {e.stderr.decode()}")
         return False

@@ -1,6 +1,5 @@
 import av
 from pathlib import Path
-from moviepy.editor import VideoFileClip
 
 def check_av1_codec(file_path: str) -> bool:
     """Checks if the input file is already encoded with AV1."""

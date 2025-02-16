@@ -4,15 +4,24 @@ from moviepy.editor import VideoFileClip
 
 def check_av1_codec(file_path: str) -> bool:
     """Checks if the input file is already encoded with AV1."""
+    ffprobe_command = [
+    "ffprobe",
+    "-v", "quiet",
+    "-print_format", "json",
+    "-show_streams",
+    input_file
+    ]
     try:
-        clip = VideoFileClip(file_path)
-        # Check if the codec is 'av1'
-        if clip.codec.lower() == 'av1':
-            return True
-        else:
-            return False
-    except Exception as e:
-        print(f"Error checking codec on {file_path}: {e}")
+        ffprobe_output = subprocess.run(ffprobe_command, capture_output=True, check=True)
+        ffprobe_data = json.loads(ffprobe_output.stdout)
+        for stream in ffprobe_data.get('streams', []):
+            if stream.get('codec_type') == 'video' and stream.get('codec_name') == 'av1':
+                return True
+        return False
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error running ffprobe on {input_file}: {e}")
+        logging.error(f"FFprobe stdout: {e.stdout.decode()}")
+        logging.error(f"FFprobe stderr: {e.stderr.decode()}")
         return False
 
 def get_video_duration(file_path: str) -> int:

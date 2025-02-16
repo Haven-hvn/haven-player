@@ -1,6 +1,7 @@
 import av
 from pathlib import Path
 import subprocess
+import json
 
 def check_av1_codec(file_path: str) -> bool:
     """Checks if the input file is already encoded with AV1."""

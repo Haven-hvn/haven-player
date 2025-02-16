@@ -2,10 +2,11 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QFileDialog
 from PyQt6.QtCore import QSize, Qt, pyqtSlot
 from PyQt6.QtGui import QIcon, QPixmap
 from svg_icons import SvgIcons
-from database import add_video  # Import the function to add a video
-from utils import validate_video_file, parse_ai_data, get_video_length, generate_thumbnail  # Import additional utility functions
+from PyQt6.QtCore import pyqtSignal, pyqtSlot
+from utils import validate_video_file
 
 class Sidebar(QWidget):
+    add_video_requested = pyqtSignal(str)  # New signal for video path
     def __init__(self):
         super().__init__()
         self.setup_ui()
@@ -56,11 +57,8 @@ class Sidebar(QWidget):
     @pyqtSlot()
     def add_video_handler(self):
         video_path = self.get_video_path()
-        if video_path and validate_video_file(video_path):  # Validate the video file
-            ai_data = parse_ai_data(video_path)  # Parse AI data
-            video_length = get_video_length(video_path)  # Get video length
-            thumbnail_path = generate_thumbnail(video_path)  # Generate thumbnail
-            add_video(video_path, ai_data, video_length, thumbnail_path)  # Add video with additional data
+        if video_path and validate_video_file(video_path):
+            self.add_video_requested.emit(video_path)  # Emit signal instead of direct DB access
 
     def get_video_path(self):
         # Open a file dialog to select a video file

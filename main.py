@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QScrollArea, QFileDialog, QMessageBox, QGridLayout, QMenu
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSlot
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor, QAction
 from video_player import VideoPlayer, VideoThumbnailWidget
 from database import Database
@@ -24,68 +24,7 @@ class HavenPlayer(QMainWindow):
         self.setup_ui()
         self.load_videos()
 
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Haven Player")
-        self.setMinimumSize(1200, 800)
-        self.db = Database()
-        self.current_player = None
-        self.setup_ui()
-        self.load_videos()
-        
-        # Connect the sidebar signal to the add video slot
-        self.sidebar.add_video_requested.connect(self.handle_add_video_request)
-
-    @pyqtSlot(str)
-    def handle_add_video_request(self, video_path):
-        # Call the add_videos method with the selected video path
-        self.add_videos(video_path)
-
-    def add_videos(self, video_path):
-        # Open a file dialog to select a video file
-        if not Path(video_path).exists():
-            QMessageBox.warning(self, "File Not Found", "The selected video file does not exist.")
-            return
-
-        path = Path(video_path)
-        if not check_av1_codec(str(path)):
-            QMessageBox.warning(
-                self,
-                "Invalid Codec",
-                f"Video {path.name} is not AV1 encoded. Skipping..."
-            )
-            return
-
-        duration = get_video_duration(str(path))
-        thumbnail_path = generate_thumbnail(str(path))
-
-        ai_file = path.with_suffix(path.suffix + '.AI.json')
-        has_ai_data = ai_file.exists()
-        ai_data = None
-        if has_ai_data:
-            try:
-                with open(ai_file) as f:
-                    ai_data = parse_ai_data(json.load(f))
-            except Exception as e:
-                print(f"Error loading AI data: {e}")
-                has_ai_data = False
-
-        self.db.add_video(
-            path=str(path),
-            title=path.name,
-            duration=duration,
-            has_ai_data=has_ai_data,
-            thumbnail_path=thumbnail_path
-        )
-
-        if has_ai_data and ai_data:
-            self.db.add_timestamps(path, ai_data["tags"])
-
-        QMessageBox.information(
-            self,
-            "Video Added",
-            f"Successfully added video: {path.name}"
-        )
+    def setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)

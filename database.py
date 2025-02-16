@@ -40,10 +40,8 @@ class Database:
         self.conn.commit()
         print("[Database] Tables created/verified successfully")
 
-    def add_video(self, path: str, ai_data: dict, duration: int, thumbnail_path: str) -> int:
+    def add_video(self, path: str, title: str, ai_data: dict, duration: int, thumbnail_path: str) -> int:
         print(f"[Database] Adding video: {path}")
-        # Extract title from path
-        title = Path(path).stem
         has_ai_data = bool(ai_data)
         cursor = self.conn.cursor()
         # Get max position
@@ -57,54 +55,10 @@ class Database:
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (str(path), title, duration, has_ai_data, thumbnail_path, max_position + 1))
         self.conn.commit()
-        video_id = cursor.lastrowid
-        print(f"[Database] Video added successfully with ID: {video_id}")
-        return video_id
+        print(f"[Database] Video added with ID: {cursor.lastrowid}")
+        return cursor.lastrowid
 
-    def add_timestamps(self, video_path: str, tags: dict):
-        print(f"[Database] Adding timestamps for video: {video_path}")
-        cursor = self.conn.cursor()
-        timestamp_count = 0
-        for tag_name, tag_data in tags.items():
-            print(f"[Database] Processing tag: {tag_name}")
-            for frame in tag_data["time_frames"]:
-                cursor.execute('''
-                    INSERT INTO timestamps 
-                    (video_path, tag_name, start_time, end_time, confidence) 
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    str(video_path),
-                    tag_name,
-                    frame["start"],
-                    frame.get("end", frame["start"] + 2.0),
-                    frame.get("confidence", 1.0)
-                ))
-                timestamp_count += 1
-        self.conn.commit()
-        print(f"[Database] Added {timestamp_count} timestamps for video: {video_path}")
-
-    def get_video_timestamps(self, video_path: str) -> list:
-        print(f"[Database] Fetching timestamps for video: {video_path}")
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT tag_name, start_time, end_time, confidence 
-            FROM timestamps 
-            WHERE video_path = ? 
-            ORDER BY start_time
-        ''', (str(video_path),))
-        
-        timestamps = []
-        for row in cursor.fetchall():
-            timestamps.append({
-                'tag': row[0],
-                'start': row[1],
-                'end': row[2],
-                'confidence': row[3]
-            })
-        print(f"[Database] Found {len(timestamps)} timestamps")
-        return timestamps
-
-    def get_all_videos(self) -> list:
+    def get_all_videos(self):
         print("[Database] Fetching all videos")
         cursor = self.conn.cursor()
         cursor.execute('''

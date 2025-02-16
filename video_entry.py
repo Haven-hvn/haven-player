@@ -2,6 +2,7 @@ import sys
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QPushButton
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPixmap, QIcon
+from svg_icons import SvgIcons  # Import the SvgIcons class
 
 class VideoEntry(QWidget):
     def __init__(self, video):
@@ -62,7 +63,10 @@ class VideoEntry(QWidget):
         btn_layout.setSpacing(8)
         
         play_btn = QPushButton()
-        play_btn.setIcon(QIcon(":/icons/play.svg"))
+        play_svg_content = SvgIcons.play_svg()  # Get the SVG content
+        pixmap = QPixmap()
+        pixmap.loadFromData(play_svg_content.encode())  # Load the SVG content
+        play_btn.setIcon(QIcon(pixmap))
         play_btn.setIconSize(QSize(20, 20))
         play_btn.setFixedSize(32, 32)
         play_btn.setStyleSheet("""

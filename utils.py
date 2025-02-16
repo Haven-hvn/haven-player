@@ -2,15 +2,16 @@ import av
 from pathlib import Path
 
 def check_av1_codec(file_path: str) -> bool:
-    """Check if a video file is encoded with AV1 codec."""
+    """Checks if the input file is already encoded with AV1."""
     try:
-        container = av.open(file_path)
-        for stream in container.streams.video:
-            if stream.codec_context.name == 'av1':
-                return True
-        return False
+        clip = VideoFileClip(file_path)
+        # Check if the codec is 'av1'
+        if clip.codec.lower() == 'av1':
+            return True
+        else:
+            return False
     except Exception as e:
-        print(f"Error checking codec: {e}")
+        print(f"Error checking codec on {file_path}: {e}")
         return False
 
 def get_video_duration(file_path: str) -> int:

@@ -129,7 +129,7 @@ class HavenPlayer(QMainWindow):
             path=str(path),
             title=path.name,
             duration=duration,
-            has_ai_data=has_ai_data,
+            ai_data=ai_data,
             thumbnail_path=thumbnail_path
         )
         

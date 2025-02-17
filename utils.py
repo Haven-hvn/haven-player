@@ -54,6 +54,11 @@ def generate_thumbnail(file_path: str, output_path: str = None, size: tuple = (3
     # Ensure output path has a .jpg extension, defaults to renaming input path with .thumb.jpg suffix
     if output_path is None:
         output_path = str(Path(file_path).with_suffix('.thumb.jpg'))
+    
+    # Check if the file already exists.
+    if Path(output_path).exists():
+        print(f"Thumbnail already exists at {output_path}")
+        return output_path
 
     # Construct the ffmpeg command for thumbnail generation
     ffmpeg_cmd = [

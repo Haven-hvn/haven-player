@@ -126,7 +126,10 @@ class VideoThumbnailWidget(QWidget):
         layout.addWidget(play_btn)
 
         # Set fixed height for consistent grid layout
-        self.setFixedHeight(50)
+        self.progress_bar = AnalysisProgressBar(self)
+        layout.addWidget(self.progress_bar)
+
+        self.setFixedHeight(70)  # Increased to accommodate progress bar
         self.setStyleSheet("""
             QWidget {
                 background-color: #2d2d2d;

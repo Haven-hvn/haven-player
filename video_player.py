@@ -74,11 +74,11 @@ class VideoThumbnailWidget(QWidget):
 
         # Thumbnail
         thumbnail_label = QLabel()
-        thumbnail_label.setFixedSize(80, 45)
+        thumbnail_label.setFixedSize(120, 67)  # Increased thumbnail size
         if self.video['thumbnail_path']:
             pixmap = QPixmap(self.video['thumbnail_path'])
             thumbnail_label.setPixmap(pixmap.scaled(
-                80, 45,
+                120, 67,  # Increased thumbnail size
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             ))

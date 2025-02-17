@@ -22,7 +22,7 @@ class AnalysisProgressBar(QFrame):
         self.duration = 0
 
     def set_data(self, timestamps: list, duration: int):
-        logging.debug(f"Setting timestamps: {timestamps}, duration: {duration}")
+        # logging.debug(f"Setting timestamps: {timestamps}, duration: {duration}")
         self.timestamps = timestamps
         self.duration = duration
         self.update()
@@ -47,7 +47,7 @@ class AnalysisProgressBar(QFrame):
             start_time = ts['start_time']
             end_time = ts['start_time']
             if end_time is None:
-                end_time = start_time + 5  # Use start_time + 5 as default if 'end_time' is None
+                end_time = start_time + 1  # Use start_time + 1 as default if 'end_time' is None
 
             if start_time is None or end_time is None or self.duration == 0:
                 print('skipping timestamp')

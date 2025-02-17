@@ -165,7 +165,7 @@ class HavenPlayer(QMainWindow):
             print(f"[Main] Creating thumbnail for video: {video['path']} at position {row},{col}")
             
             video_path = video['path']
-            timestamps = self.database.get_video_timestamps(video_path)
+            timestamps = self.db.get_video_timestamps(video_path)
             duration = video['duration']
             thumbnail = VideoThumbnailWidget(video, None)
             thumbnail.progress_bar.set_data(timestamps, duration)

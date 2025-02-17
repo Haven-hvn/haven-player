@@ -52,6 +52,12 @@ class AnalysisProgressBar(QFrame):
                     end_x = int(((ts['start']+5) / self.duration) * width)
                 
                 # Draw blue indicator for timestamp range
+                print("Draw blue indicator for timestamp range")
+                print(start_x)
+                print(0)
+                print(max(2, end_x - start_x))
+                print(height)
+                print("QColor(#4A90E2)")
                 painter.fillRect(
                     start_x, 0,
                     max(2, end_x - start_x), height,

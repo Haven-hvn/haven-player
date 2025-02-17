@@ -44,25 +44,21 @@ class AnalysisProgressBar(QFrame):
 
         # Draw timestamp indicators
         for ts in self.timestamps:
-            if 'start' in ts:
-                start_x = int((ts['start'] / self.duration) * width)
-                if 'end' in ts:
-                    end_x = int((ts['end'] / self.duration) * width)
-                else:
-                    end_x = int(((ts['start']+5) / self.duration) * width)
-                
-                # Draw blue indicator for timestamp range
-                print("Draw blue indicator for timestamp range")
-                print(start_x)
-                print(0)
-                print(max(2, end_x - start_x))
-                print(height)
-                print("QColor(#4A90E2)")
-                painter.fillRect(
-                    start_x, 0,
-                    max(2, end_x - start_x), height,
-                    QColor("#4A90E2")
-                )
+            start_time = ts['start_time']
+            end_time = ts.get('end_time', start_time + 5)  # Use start_time + 5 as default if 'end_time' is None
+
+            start_x = int((start_time / self.duration) * width)
+            end_x = int((end_time / self.duration) * width)
+
+            # Ensure a minimum width of 2 pixels for the indicator if the start and end times are too close
+            indicator_width = max(2, end_x - start_x)
+
+            # Draw the blue indicator for this timestamp range
+            painter.fillRect(
+                start_x, 0,
+                indicator_width, height,
+                QColor("#4A90E2")
+            )
 
 class VideoThumbnailWidget(QWidget):
     play_clicked = pyqtSignal(str)

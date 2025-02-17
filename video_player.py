@@ -9,11 +9,11 @@ from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QIcon
 from svg_icons import SvgIcons  # Import the SvgIcons class
 
-class TimestampBar(QFrame):
+class AnalysisProgressBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(4)
-        self.setStyleSheet("background-color: #4A4A4A; border-radius: 2px;")
+        self.setFixedHeight(12)  # Increased thickness
+        self.setStyleSheet("background-color: #2d2d2d; border-radius: 6px;")  # Colored to match design
         self.timestamps = []
         self.duration = 0
 
@@ -85,9 +85,9 @@ class VideoThumbnailWidget(QWidget):
         layout.addWidget(title_label)
 
         # Analysis Indicator
-        self.timestamp_bar = TimestampBar()
-        self.timestamp_bar.set_data(self.timestamps, self.video['duration'])
-        layout.addWidget(self.timestamp_bar, stretch=1)
+        self.analysis_bar = AnalysisProgressBar()
+        self.analysis_bar.set_data(self.timestamps, self.video['duration'])
+        layout.addWidget(self.analysis_bar, stretch=1)
 
         # Completion Status
         if self.video['has_ai_data']:

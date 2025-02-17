@@ -1,6 +1,10 @@
 import av
 from pathlib import Path
 import json
+import logging
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QFrame, QSizePolicy
@@ -18,12 +22,14 @@ class AnalysisProgressBar(QFrame):
         self.duration = 0
 
     def set_data(self, timestamps: list, duration: int):
+        logging.debug(f"Setting timestamps: {timestamps}, duration: {duration}")
         self.timestamps = timestamps
         self.duration = duration
         self.update()
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        logging.debug(f"Painting event called with timestamps: {self.timestamps}, duration: {self.duration}")
         if not self.timestamps or not self.duration:
             return
 
@@ -216,6 +222,7 @@ class VideoPlayer(QWidget):
         layout.addWidget(controls)
 
     def load_video(self, path: Path):
+        logging.debug(f"Loading video: {path}")
         try:
             self.container = av.open(str(path))
             self.stream = self.container.streams.video[0]
@@ -226,9 +233,10 @@ class VideoPlayer(QWidget):
             self.play_button.setEnabled(True)
             self.time_slider.setEnabled(True)
         except Exception as e:
-            print(f"Error loading video: {e}")
+            logging.error(f"Error loading video: {e}")
 
     def display_frame(self, frame_num):
+        logging.debug(f"Displaying frame: {frame_num}")
         try:
             self.container.seek(frame_num, stream=self.stream)
             for frame in self.container.decode(video=0):
@@ -244,9 +252,10 @@ class VideoPlayer(QWidget):
                 self.video_frame.setPixmap(scaled_pixmap)
                 break
         except Exception as e:
-            print(f"Error displaying frame: {e}")
+            logging.error(f"Error displaying frame: {e}")
 
     def display_next_frame(self):
+        logging.debug(f"Displaying next frame: {self.current_frame}")
         if self.current_frame < self.total_frames - 1:
             self.current_frame += 1
             self.time_slider.setValue(self.current_frame)
@@ -265,11 +274,13 @@ class VideoPlayer(QWidget):
             self.play_button.setText("Pause")
 
     def seek(self, frame_num):
+        logging.debug(f"Seeking to frame: {frame_num}")
         self.current_frame = frame_num
         self.display_frame(frame_num)
         self.update_time_label()
 
     def update_time_label(self):
+        logging.debug("Updating time label")
         if not self.stream:
             return
             

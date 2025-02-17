@@ -58,6 +58,21 @@ class Database:
         print(f"[Database] Video added with ID: {cursor.lastrowid}")
         return cursor.lastrowid
 
+    def add_timestamps(self, video_path: str, ai_data: dict):
+        print(f"[Database] Adding AI timestamps to database for video: {video_path}")
+        cursor = self.conn.cursor()
+        for tag_name, tag_data in ai_data.items():
+            for time_frame in tag_data["time_frames"]:
+                start_time = time_frame["start"]
+                end_time = time_frame.get("end", None)
+                confidence = time_frame["confidence"]
+                cursor.execute('''
+                    INSERT INTO timestamps (video_path, tag_name, start_time, end_time, confidence)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (str(video_path), tag_name, start_time, end_time, confidence))
+        self.conn.commit()
+        print(f"[Database] AI timestamps added successfully for video: {video_path}")
+
     def get_all_videos(self):
         print("[Database] Fetching all videos")
         cursor = self.conn.cursor()

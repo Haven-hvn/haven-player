@@ -164,7 +164,11 @@ class HavenPlayer(QMainWindow):
             col = i % columns
             print(f"[Main] Creating thumbnail for video: {video['path']} at position {row},{col}")
             
+            video_path = video['path']
+            timestamps = self.database.get_video_timestamps(video_path)
+            duration = video['duration']
             thumbnail = VideoThumbnailWidget(video, None)
+            thumbnail.progress_bar.set_data(timestamps, duration)
             thumbnail.play_clicked.connect(self.play_video)
             thumbnail.analyze_clicked.connect(self.analyze_video)
             thumbnail.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

@@ -7,12 +7,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QIcon
+from svg_icons import SvgIcons  # Import the SvgIcons class
 
 class TimestampBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(6)
-        self.setStyleSheet("background-color: #1e1e1e;")
+        self.setFixedHeight(4)
+        self.setStyleSheet("background-color: #4A4A4A; border-radius: 2px;")
         self.timestamps = []
         self.duration = 0
 
@@ -33,7 +34,7 @@ class TimestampBar(QFrame):
         height = self.height()
 
         # Draw base bar
-        painter.fillRect(0, 0, width, height, QColor("#1e1e1e"))
+        painter.fillRect(0, 0, width, height, QColor("#4A4A4A"))
 
         # Draw timestamp indicators
         for ts in self.timestamps:
@@ -48,7 +49,7 @@ class TimestampBar(QFrame):
                 painter.fillRect(
                     start_x, 0,
                     max(2, end_x - start_x), height,
-                    QColor("#007AFF")
+                    QColor("#4A90E2")
                 )
 
 class VideoThumbnailWidget(QWidget):
@@ -62,73 +63,37 @@ class VideoThumbnailWidget(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
-        # Thumbnail container
-        thumbnail_container = QWidget()
-        thumbnail_container.setFixedSize(320, 180)
-        thumbnail_container.setStyleSheet("background-color: #1e1e1e;")
-        
-        # Load thumbnail
+        # Thumbnail
+        thumbnail_label = QLabel()
+        thumbnail_label.setFixedSize(80, 45)
         if self.video['thumbnail_path']:
-            thumbnail_label = QLabel(thumbnail_container)
             pixmap = QPixmap(self.video['thumbnail_path'])
             thumbnail_label.setPixmap(pixmap.scaled(
-                320, 180,
+                80, 45,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             ))
-            thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        layout.addWidget(thumbnail_container)
+        layout.addWidget(thumbnail_label)
 
-        # Video info
-        info_layout = QHBoxLayout()
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(10)
-        
-        # Title and duration
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(4)
-        
+        # Video Name
         title_label = QLabel(Path(self.video['path']).name)
         title_label.setStyleSheet("color: white; font-weight: bold;")
-        title_label.setWordWrap(True)
-        text_layout.addWidget(title_label)
-        
-        duration = self.format_duration(self.video['duration'])
-        duration_label = QLabel(duration)
-        duration_label.setStyleSheet("color: #888888;")
-        text_layout.addWidget(duration_label)
-        
-        info_layout.addLayout(text_layout)
-        
-        # Status icons
-        icon_layout = QHBoxLayout()
-        icon_layout.setSpacing(10)
-        
+        layout.addWidget(title_label)
+
+        # Analysis Indicator
+        self.timestamp_bar = TimestampBar()
+        self.timestamp_bar.set_data(self.timestamps, self.video['duration'])
+        layout.addWidget(self.timestamp_bar, stretch=1)
+
+        # Completion Status
         if self.video['has_ai_data']:
-            checkmark = QLabel()
-            checkmark.setPixmap(self.create_checkmark())
-            checkmark.setFixedSize(24, 24)
-            icon_layout.addWidget(checkmark)
-            
-            play_btn = QPushButton()
-            play_btn.setIcon(QIcon.fromTheme("media-playback-start"))
-            play_btn.setFixedSize(32, 32)
-            play_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #007AFF;
-                    border: none;
-                    border-radius: 16px;
-                }
-                QPushButton:hover {
-                    background-color: #0066CC;
-                }
-            """)
-            play_btn.clicked.connect(lambda: self.play_clicked.emit(self.video['path']))
+            status_label = QLabel("Completed")
+            status_label.setStyleSheet("color: #34C759;")
+            layout.addWidget(status_label)
         else:
             analyze_btn = QPushButton("Analyze")
             analyze_btn.setFixedSize(80, 32)
@@ -144,51 +109,36 @@ class VideoThumbnailWidget(QWidget):
                 }
             """)
             analyze_btn.clicked.connect(lambda: self.analyze_clicked.emit(self.video['path']))
-            icon_layout.addWidget(analyze_btn)
-        
-        info_layout.addLayout(icon_layout)
-        layout.addLayout(info_layout)
+            layout.addWidget(analyze_btn)
 
-        # Timestamp bar
-        self.timestamp_bar = TimestampBar()
-        self.timestamp_bar.set_data(self.timestamps, self.video['duration'])
-        layout.addWidget(self.timestamp_bar)
+        # Play Button
+        play_btn = QPushButton()
+        play_svg_content = SvgIcons.play_svg()  # Get the SVG content
+        pixmap = QPixmap()
+        pixmap.loadFromData(play_svg_content.encode())  # Load the SVG content
+        play_btn.setIcon(QIcon(pixmap))
+        play_btn.setIconSize(QSize(20, 20))
+        play_btn.setFixedSize(32, 32)
+        play_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3A3A3A;
+                border-radius: 16px;
+            }
+            QPushButton:hover {
+                background-color: #4A90E2;
+            }
+        """)
+        play_btn.clicked.connect(lambda: self.play_clicked.emit(self.video['path']))
+        layout.addWidget(play_btn)
 
-        # Set fixed size for consistent grid layout
-        self.setFixedSize(320, 260)
+        # Set fixed height for consistent grid layout
+        self.setFixedHeight(50)
         self.setStyleSheet("""
             QWidget {
                 background-color: #2d2d2d;
                 border-radius: 8px;
             }
         """)
-
-    def format_duration(self, seconds: int) -> str:
-        m, s = divmod(seconds, 60)
-        h, m = divmod(m, 60)
-        if h > 0:
-            return f"{h:02d}:{m:02d}:{s:02d}"
-        return f"{m:02d}:{s:02d}"
-
-    def create_checkmark(self) -> QPixmap:
-        pixmap = QPixmap(24, 24)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Draw green circle
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#34C759"))
-        painter.drawEllipse(0, 0, 24, 24)
-        
-        # Draw checkmark
-        painter.setPen(QPen(Qt.GlobalColor.white, 2))
-        painter.drawLine(6, 12, 10, 16)
-        painter.drawLine(10, 16, 18, 8)
-        
-        painter.end()
-        return pixmap
 
 class VideoPlayer(QWidget):
     def __init__(self, parent=None):

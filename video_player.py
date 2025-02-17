@@ -29,7 +29,7 @@ class AnalysisProgressBar(QFrame):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        logging.debug(f"Painting event called with timestamps: {self.timestamps}, duration: {self.duration}")
+        # logging.debug(f"Painting event called with timestamps: {self.timestamps}, duration: {self.duration}")
         if not self.timestamps or not self.duration:
             return
 
@@ -46,6 +46,10 @@ class AnalysisProgressBar(QFrame):
         for ts in self.timestamps:
             start_time = ts['start_time']
             end_time = ts.get('end_time', start_time + 5)  # Use start_time + 5 as default if 'end_time' is None
+
+            if start_time is None or end_time is None or self.duration == 0:
+                print('skipping timestamp')
+                continue  # Skip this timestamp if any of the values are None
 
             start_x = int((start_time / self.duration) * width)
             end_x = int((end_time / self.duration) * width)

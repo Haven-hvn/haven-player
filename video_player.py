@@ -84,16 +84,18 @@ class VideoThumbnailWidget(QWidget):
             ))
         layout.addWidget(thumbnail_label)
 
-        # Video Name
+        # Video Name and Completion Status
+        center_layout = QVBoxLayout()
+        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         title_label = QLabel(Path(self.video['path']).name)
         title_label.setStyleSheet("color: white; font-weight: bold;")
-        layout.addWidget(title_label)
+        center_layout.addWidget(title_label)
 
-        # Completion Status
         if self.video['has_ai_data']:
             status_label = QLabel("Completed")
             status_label.setStyleSheet("color: #34C759;")
-            layout.addWidget(status_label)
+            center_layout.addWidget(status_label)
         else:
             analyze_btn = QPushButton("Analyze")
             analyze_btn.setFixedSize(80, 32)
@@ -109,7 +111,9 @@ class VideoThumbnailWidget(QWidget):
                 }
             """)
             analyze_btn.clicked.connect(lambda: self.analyze_clicked.emit(self.video['path']))
-            layout.addWidget(analyze_btn)
+            center_layout.addWidget(analyze_btn)
+
+        layout.addLayout(center_layout)
 
         # Play Button
         play_btn = QPushButton()

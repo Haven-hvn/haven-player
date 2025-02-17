@@ -56,10 +56,9 @@ class VideoThumbnailWidget(QWidget):
     play_clicked = pyqtSignal(str)
     analyze_clicked = pyqtSignal(str)
 
-    def __init__(self, video: dict, timestamps: list, parent=None):
+    def __init__(self, video: dict, parent=None):
         super().__init__(parent)
         self.video = video
-        self.timestamps = timestamps
         self.setup_ui()
 
     def setup_ui(self):
@@ -83,11 +82,6 @@ class VideoThumbnailWidget(QWidget):
         title_label = QLabel(Path(self.video['path']).name)
         title_label.setStyleSheet("color: white; font-weight: bold;")
         layout.addWidget(title_label)
-
-        # Analysis Indicator
-        self.analysis_bar = AnalysisProgressBar()
-        self.analysis_bar.set_data(self.timestamps, self.video['duration'])
-        layout.addWidget(self.analysis_bar, stretch=1)
 
         # Completion Status
         if self.video['has_ai_data']:

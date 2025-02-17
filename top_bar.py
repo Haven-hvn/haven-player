@@ -84,3 +84,6 @@ class TopBar(QWidget):
         button_layout.addWidget(self.analyze_btn)
 
         layout.addWidget(button_container)
+
+    def update_video_count(self, count):
+        self.video_count_label.setText(f"{count} videos")

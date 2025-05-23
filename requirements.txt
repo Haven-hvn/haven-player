@@ -1,4 +1,0 @@
-PyQt6
-av
-pillow
-ffmpeg-python

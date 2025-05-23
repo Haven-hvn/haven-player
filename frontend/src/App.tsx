@@ -6,6 +6,7 @@ import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import VideoAnalysisList from '@/components/VideoAnalysisList';
 import VideoPlayer from '@/components/VideoPlayer';
+import ConfigurationModal from '@/components/ConfigurationModal';
 import { useVideos } from '@/hooks/useVideos';
 import { Video, Timestamp } from '@/types/video';
 import { videoService } from '@/services/api';
@@ -34,6 +35,7 @@ const MainApp: React.FC = () => {
   const { videos, loading, error, videoTimestamps, addVideo, refreshVideos, fetchTimestampsForVideo } = useVideos();
   const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, 'pending' | 'analyzing' | 'completed' | 'error'>>({});
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+  const [configModalOpen, setConfigModalOpen] = useState(false);
   
   // Initialize hidden videos from localStorage
   const [hiddenVideos, setHiddenVideos] = useState<Set<string>>(() => {
@@ -156,6 +158,32 @@ const MainApp: React.FC = () => {
     refreshVideos();
   }, [refreshVideos]);
 
+  const handleSettings = useCallback(() => {
+    setConfigModalOpen(true);
+  }, []);
+
+  const handleConfigSave = useCallback(async (config: any) => {
+    try {
+      const response = await fetch('http://localhost:8000/api/config/', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(config),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to save configuration');
+      }
+
+      console.log('✅ Configuration saved successfully');
+    } catch (error) {
+      console.error('❌ Failed to save configuration:', error);
+      throw error;
+    }
+  }, []);
+
   // Initialize analysis statuses for videos with AI data
   useEffect(() => {
     const newStatuses: Record<string, 'pending' | 'analyzing' | 'completed' | 'error'> = {};
@@ -173,7 +201,10 @@ const MainApp: React.FC = () => {
   return (
     <Box sx={{ display: 'flex', height: '100vh', backgroundColor: '#2a2a2a' }}>
       {/* Sidebar */}
-      <Sidebar onRefresh={handleRefresh} />
+      <Sidebar 
+        onRefresh={handleRefresh} 
+        onSettings={handleSettings}
+      />
       
       {/* Main content area */}
       <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
@@ -195,6 +226,13 @@ const MainApp: React.FC = () => {
           onRemove={handleRemoveVideo}
         />
       </Box>
+
+      {/* Configuration Modal */}
+      <ConfigurationModal
+        open={configModalOpen}
+        onClose={() => setConfigModalOpen(false)}
+        onSave={handleConfigSave}
+      />
     </Box>
   );
 };

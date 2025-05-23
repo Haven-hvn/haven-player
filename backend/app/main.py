@@ -1,26 +1,27 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import videos
-from app.models.base import Base, init_db
-from app.models.database import engine
+from app.api import videos, config
+from app.models.base import init_db
 
-app = FastAPI(title="Haven Player API")
+app = FastAPI(title="Haven Player API", version="1.0.0")
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["*"],  # In production, specify actual origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize database
-init_db(engine)
-
 # Include routers
-app.include_router(videos.router, prefix="/api")
+app.include_router(videos.router, prefix="/api", tags=["videos"])
+app.include_router(config.router, prefix="/api", tags=["config"])
+
+@app.on_event("startup")
+async def startup_event():
+    init_db()
 
 @app.get("/")
-def read_root():
-    return {"message": "Welcome to Haven Player API"} 
+async def root():
+    return {"message": "Haven Player API is running"} 

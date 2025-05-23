@@ -1,8 +1,15 @@
 from typing import Any
 from sqlalchemy.orm import declarative_base, Session
-from sqlalchemy import Engine
+# Import engine and SQLALCHEMY_DATABASE_URL from app.models.database
+from app.models.database import engine, SQLALCHEMY_DATABASE_URL 
+# Remove direct create_engine and sessionmaker from here
 
 Base = declarative_base()
 
-def init_db(engine: Engine) -> None:
+def init_db():
+    # Import all models here to ensure they are registered with SQLAlchemy
+    from app.models.video import Video, Timestamp
+    from app.models.config import AppConfig
+    
+    # Create all tables using the imported engine
     Base.metadata.create_all(bind=engine) 

@@ -1,6 +1,6 @@
 # Haven Player
 
-A modern video analysis application migrated from PyQt to Electron + FastAPI architecture. Haven Player provides AI-powered video analysis with a sleek, dark-themed interface.
+A modern video analysis application with Electron + FastAPI architecture. Haven Player provides AI-powered video analysis with a sleek, dark-themed interface.
 
 ## Architecture
 

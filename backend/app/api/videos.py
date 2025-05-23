@@ -1,4 +1,6 @@
 from typing import List, Optional
+import os
+import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -43,6 +45,57 @@ class TimestampResponse(BaseModel):
     end_time: Optional[float]
     confidence: float
 
+def process_ai_analysis_file(video_path: str, db: Session) -> bool:
+    """
+    Check for and process AI analysis file (.AI.json) for the given video.
+    Returns True if AI data was found and processed, False otherwise.
+    """
+    try:
+        # Construct the AI analysis file path
+        ai_file_path = f"{video_path}.AI.json"
+        
+        if not os.path.exists(ai_file_path):
+            return False
+        
+        # Read and parse the AI analysis file
+        with open(ai_file_path, 'r', encoding='utf-8') as f:
+            ai_data = json.load(f)
+        
+        # Extract tags and process them
+        tags = ai_data.get('tags', {})
+        processed_count = 0
+        
+        for tag_name, tag_data in tags.items():
+            ai_model_name = tag_data.get('ai_model_name', 'unknown')
+            time_frames = tag_data.get('time_frames', [])
+            
+            for frame in time_frames:
+                start_time = frame.get('start', 0.0)
+                end_time = frame.get('end')  # May be None
+                confidence = frame.get('confidence', 0.0)
+                
+                # Create timestamp entry
+                db_timestamp = Timestamp(
+                    video_path=video_path,
+                    tag_name=tag_name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    confidence=confidence
+                )
+                db.add(db_timestamp)
+                processed_count += 1
+        
+        if processed_count > 0:
+            db.commit()
+            print(f"✅ Processed {processed_count} AI timestamps from {ai_file_path}")
+            return True
+        
+    except Exception as e:
+        print(f"❌ Error processing AI file {ai_file_path}: {e}")
+        db.rollback()
+    
+    return False
+
 @router.get("/videos/", response_model=List[VideoResponse])
 def get_videos(
     skip: int = 0,
@@ -57,6 +110,13 @@ def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Video:
     # Get max position
     max_position = db.query(Video).order_by(Video.position.desc()).first()
     position = (max_position.position + 1) if max_position else 0
+
+    # Check for and process AI analysis file
+    has_ai_data = process_ai_analysis_file(video.path, db)
+    
+    # Override the has_ai_data field if AI data was found
+    if has_ai_data:
+        video.has_ai_data = True
 
     db_video = Video(
         path=video.path,

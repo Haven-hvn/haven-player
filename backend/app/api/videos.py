@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.video import Video, Timestamp
 from pydantic import BaseModel, ConfigDict
+from phash_calculator import calculate_phash
 
 router = APIRouter()
 
@@ -16,6 +17,7 @@ class VideoCreate(BaseModel):
     duration: int
     has_ai_data: bool = False
     thumbnail_path: Optional[str] = None
+    phash: Optional[str] = None
 
 class TimestampCreate(BaseModel):
     tag_name: str
@@ -34,6 +36,7 @@ class VideoResponse(BaseModel):
     thumbnail_path: Optional[str]
     position: int
     created_at: datetime
+    phash: Optional[str] = None
 
 class TimestampResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -118,6 +121,13 @@ def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Video:
     if has_ai_data:
         video.has_ai_data = True
 
+     # Calculate phash
+    try:
+        phash = calculate_phash(video.path)
+    except Exception as e:
+        print(f"Error calculating phash: {e}")
+        phash = None
+
     db_video = Video(
         path=video.path,
         title=video.title,
@@ -125,6 +135,7 @@ def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Video:
         has_ai_data=video.has_ai_data,
         thumbnail_path=video.thumbnail_path,
         position=position
+        phash=phash
     )
     db.add(db_video)
     db.commit()

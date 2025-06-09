@@ -1,0 +1,20 @@
+[project]
+name = "videophash-generator"
+version = "0.1.0"
+description = "A tool to generate perceptual hashes (pHash) for video files."
+authors = [
+    { name="Abel", email="toroke1960@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+
+dependencies = [
+    "opencv-python",
+    "Pillow",
+    "imagehash",
+    "numpy"
+]
+
+[project.urls]
+Homepage = "https://github.com/Apha205/videophash-generator"

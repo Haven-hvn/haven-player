@@ -9,7 +9,7 @@ import VideoPlayer from '@/components/VideoPlayer';
 import ConfigurationModal from '@/components/ConfigurationModal';
 import { useVideos } from '@/hooks/useVideos';
 import { Video, Timestamp } from '@/types/video';
-import { videoService } from '@/services/api';
+import { videoService, startAnalysisJob, getVideoJobs, JobProgress } from '@/services/api';
 
 const darkTheme = createTheme({
   palette: {
@@ -34,6 +34,8 @@ const MainApp: React.FC = () => {
   const navigate = useNavigate();
   const { videos, loading, error, videoTimestamps, addVideo, refreshVideos, fetchTimestampsForVideo } = useVideos();
   const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, 'pending' | 'analyzing' | 'completed' | 'error'>>({});
+  const [activeJobs, setActiveJobs] = useState<Record<string, number>>({});
+  const [jobProgresses, setJobProgresses] = useState<Record<string, number>>({});
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
   const [configModalOpen, setConfigModalOpen] = useState(false);
   
@@ -108,19 +110,56 @@ const MainApp: React.FC = () => {
       return;
     }
 
-    setAnalysisStatuses(prev => ({ ...prev, [video.path]: 'analyzing' }));
-    
-    // Simulate analysis process for videos without existing AI data
-    setTimeout(async () => {
-      try {
-        // In a real implementation, this would trigger actual AI analysis
-        // For now, we'll just mark it as completed
-        setAnalysisStatuses(prev => ({ ...prev, [video.path]: 'completed' }));
-      } catch (error) {
-        setAnalysisStatuses(prev => ({ ...prev, [video.path]: 'error' }));
-      }
-    }, 3000);
-  }, [fetchTimestampsForVideo]);
+    try {
+      // Start analysis job
+      const response = await startAnalysisJob(video.path);
+      const jobId = response.job_id;
+      
+      // Track the job
+      setActiveJobs(prev => ({ ...prev, [video.path]: jobId }));
+      setAnalysisStatuses(prev => ({ ...prev, [video.path]: 'analyzing' }));
+      setJobProgresses(prev => ({ ...prev, [video.path]: 0 }));
+      
+      // Start polling for job progress
+      const pollInterval = setInterval(async () => {
+        try {
+          const jobs = await getVideoJobs(video.path);
+          const currentJob = jobs.find(job => job.id === jobId);
+          
+          if (currentJob) {
+            setJobProgresses(prev => ({ ...prev, [video.path]: currentJob.progress }));
+            
+            if (currentJob.status === 'completed') {
+              setAnalysisStatuses(prev => ({ ...prev, [video.path]: 'completed' }));
+              setActiveJobs(prev => {
+                const updated = { ...prev };
+                delete updated[video.path];
+                return updated;
+              });
+              // Refresh video data to get new timestamps
+              await fetchTimestampsForVideo(video);
+              await refreshVideos();
+              clearInterval(pollInterval);
+            } else if (currentJob.status === 'failed') {
+              setAnalysisStatuses(prev => ({ ...prev, [video.path]: 'error' }));
+              setActiveJobs(prev => {
+                const updated = { ...prev };
+                delete updated[video.path];
+                return updated;
+              });
+              clearInterval(pollInterval);
+            }
+          }
+        } catch (error) {
+          console.error('Error polling job status:', error);
+        }
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Failed to start analysis:', error);
+      setAnalysisStatuses(prev => ({ ...prev, [video.path]: 'error' }));
+    }
+  }, [fetchTimestampsForVideo, refreshVideos]);
 
   const handleAnalyzeAll = useCallback(async () => {
     setIsAnalyzingAll(true);
@@ -221,6 +260,7 @@ const MainApp: React.FC = () => {
           videos={visibleVideos}
           videoTimestamps={videoTimestamps}
           analysisStatuses={analysisStatuses}
+          jobProgresses={jobProgresses}
           onPlay={handlePlayVideo}
           onAnalyze={handleAnalyzeVideo}
           onRemove={handleRemoveVideo}
@@ -251,4 +291,4 @@ const App: React.FC = () => {
   );
 };
 
-export default App; 
+export default App;

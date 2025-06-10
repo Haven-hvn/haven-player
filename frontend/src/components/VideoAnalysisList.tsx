@@ -32,6 +32,7 @@ interface VideoAnalysisItemProps {
   index: number;
   timestamps: Timestamp[];
   analysisStatus: 'pending' | 'analyzing' | 'completed' | 'error';
+  jobProgress?: number;
   onPlay: (video: Video) => void;
   onAnalyze: (video: Video) => void;
   onRemove: (video: Video) => void;
@@ -42,6 +43,7 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
   index,
   timestamps,
   analysisStatus,
+  jobProgress = 0,
   onPlay,
   onAnalyze,
   onRemove,
@@ -242,6 +244,8 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
             {/* Progress overlay for analyzing state */}
             {analysisStatus === 'analyzing' && (
               <LinearProgress
+                variant="determinate"
+                value={jobProgress}
                 sx={{
                   position: 'absolute',
                   top: 0,
@@ -311,6 +315,7 @@ interface VideoAnalysisListProps {
   videos: Video[];
   videoTimestamps: Record<string, Timestamp[]>;
   analysisStatuses: Record<string, 'pending' | 'analyzing' | 'completed' | 'error'>;
+  jobProgresses?: Record<string, number>;
   onPlay: (video: Video) => void;
   onAnalyze: (video: Video) => void;
   onRemove: (video: Video) => void;
@@ -320,6 +325,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   videos,
   videoTimestamps,
   analysisStatuses,
+  jobProgresses = {},
   onPlay,
   onAnalyze,
   onRemove,
@@ -333,6 +339,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
           index={index}
           timestamps={videoTimestamps[video.path] || []}
           analysisStatus={analysisStatuses[video.path] || 'pending'}
+          jobProgress={jobProgresses[video.path] || 0}
           onPlay={onPlay}
           onAnalyze={onAnalyze}
           onRemove={onRemove}
@@ -362,4 +369,4 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   );
 };
 
-export default VideoAnalysisList; 
+export default VideoAnalysisList;

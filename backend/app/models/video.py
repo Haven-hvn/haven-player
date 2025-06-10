@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.analysis_job import AnalysisJob
 
 class Video(Base):
     __tablename__ = 'videos'
@@ -17,6 +20,7 @@ class Video(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     timestamps: Mapped[List['Timestamp']] = relationship('Timestamp', back_populates='video', cascade='all, delete-orphan')
+    analysis_jobs: Mapped[List['AnalysisJob']] = relationship('AnalysisJob', back_populates='video', cascade='all, delete-orphan')
 
     def to_dict(self) -> dict:
         return {
@@ -50,4 +54,4 @@ class Timestamp(Base):
             'start_time': self.start_time,
             'end_time': self.end_time,
             'confidence': self.confidence
-        } 
+        }

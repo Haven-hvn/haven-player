@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import videos, config
+from app.api import videos, config, jobs
 from app.models.base import init_db
 
 app = FastAPI(title="Haven Player API", version="1.0.0")
@@ -17,6 +17,7 @@ app.add_middleware(
 # Include routers
 app.include_router(videos.router, prefix="/api", tags=["videos"])
 app.include_router(config.router, prefix="/api", tags=["config"])
+app.include_router(jobs.router, prefix="/api", tags=["jobs"])
 
 @app.on_event("startup")
 async def startup_event():
@@ -24,4 +25,4 @@ async def startup_event():
 
 @app.get("/")
 async def root():
-    return {"message": "Haven Player API is running"} 
+    return {"message": "Haven Player API is running"}

@@ -10,6 +10,23 @@ const api = axios.create({
   },
 });
 
+// Job-related types
+export interface JobProgress {
+  id: number;
+  video_path: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  error?: string;
+}
+
+export interface JobCreateResponse {
+  job_id: number;
+  status: string;
+}
+
 export const videoService = {
   getAll: async (): Promise<Video[]> => {
     const response = await api.get<Video[]>('/videos/');
@@ -41,4 +58,30 @@ export const videoService = {
     );
     return response.data;
   },
-}; 
+};
+
+// Job-related API functions
+export const startAnalysisJob = async (videoPath: string): Promise<JobCreateResponse> => {
+  const response = await api.post<JobCreateResponse>(`/videos/${encodeURIComponent(videoPath)}/analyze`);
+  return response.data;
+};
+
+export const getJobProgress = async (jobId: number): Promise<JobProgress> => {
+  const response = await api.get<JobProgress>(`/jobs/${jobId}`);
+  return response.data;
+};
+
+export const getVideoJobs = async (videoPath: string): Promise<JobProgress[]> => {
+  const response = await api.get<JobProgress[]>(`/videos/${encodeURIComponent(videoPath)}/jobs`);
+  return response.data;
+};
+
+export const getAllJobs = async (status?: string): Promise<JobProgress[]> => {
+  const params = status ? { status } : {};
+  const response = await api.get<JobProgress[]>('/jobs/', { params });
+  return response.data;
+};
+
+export const cancelJob = async (jobId: number): Promise<void> => {
+  await api.delete(`/jobs/${jobId}`);
+};

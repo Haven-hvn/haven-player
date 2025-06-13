@@ -17,6 +17,7 @@ class Video(Base):
     has_ai_data: Mapped[bool] = mapped_column(Boolean, default=False)
     thumbnail_path: Mapped[Optional[str]] = mapped_column(String)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    phash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     timestamps: Mapped[List['Timestamp']] = relationship('Timestamp', back_populates='video', cascade='all, delete-orphan')
@@ -31,6 +32,7 @@ class Video(Base):
             'has_ai_data': self.has_ai_data,
             'thumbnail_path': self.thumbnail_path,
             'position': self.position,
+            'phash': self.phash,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 

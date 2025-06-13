@@ -55,8 +55,3 @@ def calculate_phash(video_path):
     sprite = create_sprite(frames)
     phash = imagehash.phash(sprite)
     return str(phash)
-
-if __name__ == "__main__":
-    video_path = "C:\\Users\\User\\Videos\\Capcut Tuto\\EDITS\\0127.mp4" 
-    result = calculate_phash(video_path)
-    print("pHash:", result)

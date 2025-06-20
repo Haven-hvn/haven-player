@@ -2,6 +2,29 @@
 
 A modern video analysis application with Electron + FastAPI architecture. Haven Player provides AI-powered video analysis with a sleek, dark-themed interface.
 
+## 📸 Screens
+
+### Main Application Interface
+
+Sleek Dark-themed video analysis dash
+
+![Screenshot 2025-06-21 040505](https://github.com/user-attachments/assets/f3a1857a-affc-4331-a67f-5fb2600a402b)
+board with sidebar navigation_
+
+### Video Analysis Progress
+
+Real-time progress visualization 
+
+![Screenshot 2025-06-21 040642](https://github.com/user-attachments/assets/40c6eade-4392-4fd9-95f0-e9e27e475032)
+
+### Configuration Modal
+
+AI model configuration and settings interface
+
+![Screenshot 2025-06-21 040603](https://github.com/user-attachments/assets/623791a0-95d8-4eba-b122-e29efb48dc0f)
+![Screenshot 2025-06-21 040548](https://github.com/user-attachments/assets/ea0745f9-3738-4a7e-9c8a-786867a7cad2)
+
+
 ## Architecture
 
 This application consists of two main components:

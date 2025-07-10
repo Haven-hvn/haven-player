@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 
-// Check if we're in development mode - only true if explicitly set or --dev flag
-const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
+// Check if we're in development mode
+const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -13,18 +13,27 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
+      webSecurity: false, // Disable web security for development
       // TODO: Improve security later with preload script
     },
   });
 
-  // Always load from local files unless explicitly in dev mode with --dev flag
-  const indexPath = path.join(__dirname, 'index.html');
-  
+  // Load from development server in dev mode, otherwise load from local files
   if (isDev) {
     console.log('Loading from development server: http://localhost:3000');
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools();
+
+    // Enable hot reload
+    mainWindow.webContents.on('did-frame-finish-load', () => {
+      if (isDev) {
+        mainWindow?.webContents.once('devtools-opened', () => {
+          mainWindow?.webContents.focus();
+        });
+      }
+    });
   } else {
+    const indexPath = path.join(__dirname, 'index.html');
     console.log('Loading from local file:', indexPath);
     mainWindow.loadFile(indexPath);
   }
@@ -64,4 +73,4 @@ ipcMain.handle('select-video', async () => {
   }
 
   return result.filePaths[0];
-}); 
+});

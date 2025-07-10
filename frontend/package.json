@@ -7,7 +7,9 @@
     "start": "npm run build && electron-forge start",
     "package": "npm run build && electron-forge package",
     "make": "npm run build && electron-forge make",
-    "dev": "concurrently \"npm run watch\" \"npm run start:dev\"",
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\" \"wait-on http://localhost:3000 && npm run start:dev\"",
+    "dev:renderer": "webpack serve --config webpack.dev.js",
+    "dev:main": "webpack --config webpack.config.js --target electron-main --watch",
     "start:dev": "cross-env NODE_ENV=development electron-forge start",
     "watch": "webpack --config webpack.config.js --watch",
     "build": "webpack --config webpack.config.js",
@@ -41,8 +43,10 @@
     "ts-jest": "^29.1.2",
     "ts-loader": "^9.5.1",
     "typescript": "^5.3.3",
+    "wait-on": "^8.0.3",
     "webpack": "^5.90.3",
-    "webpack-cli": "^5.1.4"
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.2.2"
   },
   "dependencies": {
     "@emotion/react": "^11.11.3",

@@ -1,29 +1,29 @@
-const path = require('path');
-const HtmlWebpackPlugin = require('html-webpack-plugin');
-const webpack = require('webpack');
+const path = require("path");
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const webpack = require("webpack");
 
 module.exports = [
   // Main process configuration
   {
-    mode: 'development',
-    entry: './src/main.ts',
-    target: 'electron-main',
-    devtool: 'source-map',
+    mode: "development",
+    entry: "./src/main.ts",
+    target: "electron-main",
+    devtool: "source-map",
     module: {
       rules: [
         {
           test: /\.ts$/,
-          use: 'ts-loader',
+          use: "ts-loader",
           exclude: /node_modules/,
         },
       ],
     },
     resolve: {
-      extensions: ['.ts', '.js'],
+      extensions: [".ts", ".js"],
     },
     output: {
-      filename: 'main.js',
-      path: path.resolve(__dirname, 'dist'),
+      filename: "main.js",
+      path: path.resolve(__dirname, "dist"),
     },
     node: {
       __dirname: false,
@@ -32,53 +32,66 @@ module.exports = [
   },
   // Renderer process configuration
   {
-    mode: 'development',
-    entry: './src/index.tsx',
-    target: 'electron-renderer',
-    devtool: 'source-map',
+    mode: "development",
+    entry: "./src/index.tsx",
+    target: "electron-renderer",
+    devtool: "source-map",
+    devServer: {
+      static: {
+        directory: path.join(__dirname, "dist"),
+      },
+      hot: true,
+      port: 3000,
+      allowedHosts: "all",
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+      },
+    },
     module: {
       rules: [
         {
           test: /\.tsx?$/,
-          use: 'ts-loader',
+          use: "ts-loader",
           exclude: /node_modules/,
         },
         {
           test: /\.css$/,
-          use: ['style-loader', 'css-loader'],
+          use: ["style-loader", "css-loader"],
         },
         {
           test: /\.(png|jpe?g|gif|svg)$/i,
-          type: 'asset/resource',
+          type: "asset/resource",
         },
       ],
     },
     resolve: {
-      extensions: ['.tsx', '.ts', '.js'],
+      extensions: [".tsx", ".ts", ".js"],
       alias: {
-        '@': path.resolve(__dirname, 'src'),
+        "@": path.resolve(__dirname, "src"),
       },
       fallback: {
-        "buffer": require.resolve("buffer"),
-        "process": require.resolve("process/browser"),
+        buffer: require.resolve("buffer"),
+        process: require.resolve("process/browser"),
       },
     },
     output: {
-      filename: 'renderer.js',
-      path: path.resolve(__dirname, 'dist'),
+      filename: "renderer.js",
+      path: path.resolve(__dirname, "dist"),
+      publicPath: "/",
     },
     plugins: [
       new HtmlWebpackPlugin({
-        template: './src/index.html',
-        filename: 'index.html',
+        template: "./src/index.html",
+        filename: "index.html",
       }),
       new webpack.DefinePlugin({
-        global: 'window',
+        global: "window",
       }),
       new webpack.ProvidePlugin({
-        Buffer: ['buffer', 'Buffer'],
-        process: 'process/browser',
+        Buffer: ["buffer", "Buffer"],
+        process: "process/browser",
       }),
+      new webpack.HotModuleReplacementPlugin(),
     ],
   },
-]; 
+];

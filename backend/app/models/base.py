@@ -11,6 +11,7 @@ def init_db():
     from app.models.video import Video, Timestamp
     from app.models.config import AppConfig
     from app.models.analysis_job import AnalysisJob
-    
+    from app.models.live_session import LiveSession
+
     # Create all tables using the imported engine
     Base.metadata.create_all(bind=engine)

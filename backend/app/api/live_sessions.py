@@ -10,25 +10,25 @@ live_session_service = LiveSessionService()
 
 
 class StartSessionRequest(BaseModel):
-    room_name: str
+    mint_id: str
     record_session: Optional[bool] = False
 
 
 class StopSessionRequest(BaseModel):
-    room_name: str
+    mint_id: str
 
 
 @router.post("/start")
 async def start_live_session(request: StartSessionRequest):
     """
-    Start a new live streaming session.
+    Start a new live streaming session for a pump.fun stream.
 
-    - **room_name**: Name of the LiveKit room to connect to
+    - **mint_id**: Pump.fun mint ID of the coin/stream to connect to
     - **record_session**: Whether to record the session (default: false)
     """
     try:
         result = await live_session_service.start_session(
-            room_name=request.room_name,
+            mint_id=request.mint_id,
             record_session=request.record_session
         )
 
@@ -46,10 +46,10 @@ async def stop_live_session(request: StopSessionRequest):
     """
     Stop a live streaming session.
 
-    - **room_name**: Name of the room to disconnect from
+    - **mint_id**: Pump.fun mint ID of the stream to disconnect from
     """
     try:
-        result = await live_session_service.stop_session(request.room_name)
+        result = await live_session_service.stop_session(request.mint_id)
 
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
@@ -60,16 +60,16 @@ async def stop_live_session(request: StopSessionRequest):
         raise HTTPException(status_code=500, detail=f"Failed to stop session: {str(e)}")
 
 
-@router.websocket("/ws/live/{room_name}")
-async def live_stream_websocket(websocket: WebSocket, room_name: str):
+@router.websocket("/ws/live/{mint_id}")
+async def live_stream_websocket(websocket: WebSocket, mint_id: str):
     """
-    WebSocket endpoint for live video/audio streaming.
+    WebSocket endpoint for live video/audio streaming from pump.fun.
 
-    Connects to the specified room and streams:
+    Connects to the specified mint_id stream and streams:
     - Video frames as binary JPEG data
     - Audio frames as text messages prefixed with "audio:"
     """
-    await live_session_service.connect_websocket(websocket, room_name)
+    await live_session_service.connect_websocket(websocket, mint_id)
 
 
 @router.get("/active")

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import videos, config, jobs, live_sessions
+from app.api import videos, config, jobs, live_sessions, pumpfun_streams
 from app.models.base import init_db
 from app.services.live_session_service import LiveSessionService
 
@@ -20,6 +20,7 @@ app.include_router(videos.router, prefix="/api", tags=["videos"])
 app.include_router(config.router, prefix="/api", tags=["config"])
 app.include_router(jobs.router, prefix="/api", tags=["jobs"])
 app.include_router(live_sessions.router, prefix="/api/live-sessions", tags=["live-sessions"])
+app.include_router(pumpfun_streams.router, prefix="/api/pumpfun", tags=["pump-fun-streams"])
 
 # Initialize LiveSessionService
 live_session_service = LiveSessionService()

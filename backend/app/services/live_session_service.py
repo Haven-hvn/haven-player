@@ -14,6 +14,7 @@ from app.models.database import SessionLocal
 from app.models.live_session import LiveSession
 from app.models.config import AppConfig
 from .recording_shim import RecordingShim
+from .pumpfun_service import PumpFunService
 
 
 class LiveSessionService:
@@ -49,6 +50,9 @@ class LiveSessionService:
             # Configuration
             self.config: Optional[AppConfig] = None
 
+            # Pump.fun service
+            self.pumpfun_service = PumpFunService()
+
             self._initialized = True
 
     async def initialize(self) -> None:
@@ -69,15 +73,31 @@ class LiveSessionService:
         finally:
             db.close()
 
-    async def start_session(self, room_name: str, record_session: bool = False) -> Dict[str, Any]:
+    async def start_session(self, mint_id: str, record_session: bool = False) -> Dict[str, Any]:
         """
-        Start a new live streaming session for the given room.
+        Start a new live streaming session for the given pump.fun mint_id.
         Returns session information including participant SID.
         """
         if not self.config:
             await self.initialize()
 
         try:
+            # Validate mint_id and get stream info
+            stream_info = await self.pumpfun_service.get_stream_info(mint_id)
+            if not stream_info:
+                return {
+                    "success": False,
+                    "error": f"Stream not found or not live for mint_id: {mint_id}"
+                }
+
+            # Get pump.fun token for this mint_id
+            token = await self.pumpfun_service.get_livestream_token(mint_id, role="viewer")
+            if not token:
+                return {
+                    "success": False,
+                    "error": f"Failed to get livestream token for mint_id: {mint_id}"
+                }
+
             # Create room instance
             self.room = rtc.Room()
 
@@ -89,10 +109,12 @@ class LiveSessionService:
                 auto_subscribe=True,
             )
 
-            print(f"Connecting to LiveKit room: {room_name}")
+            print(f"Connecting to pump.fun LiveKit room for mint_id: {mint_id}")
+            print(f"Stream: {stream_info['name']} ({stream_info['symbol']})")
 
-            token = self._generate_token(room_name)
-            await self.room.connect(self.config.livekit_url, token, connect_options)
+            # Use pump.fun's LiveKit URL
+            livekit_url = self.pumpfun_service.get_livekit_url()
+            await self.room.connect(livekit_url, token, connect_options)
 
             print(f"Successfully connected to room: {self.room.name}")
 
@@ -105,26 +127,45 @@ class LiveSessionService:
             db = SessionLocal()
             try:
                 live_session = LiveSession(
-                    room_name=room_name,
+                    # Pump.fun fields
+                    mint_id=mint_id,
+                    coin_name=stream_info.get("name"),
+                    coin_symbol=stream_info.get("symbol"),
+                    coin_description=stream_info.get("description"),
+                    image_uri=stream_info.get("image_uri"),
+                    thumbnail=stream_info.get("thumbnail"),
+                    creator=stream_info.get("creator"),
+                    market_cap=stream_info.get("market_cap"),
+                    usd_market_cap=stream_info.get("usd_market_cap"),
+                    num_participants=stream_info.get("num_participants", 0),
+                    nsfw=stream_info.get("nsfw", False),
+                    website=stream_info.get("website"),
+                    twitter=stream_info.get("twitter"),
+                    telegram=stream_info.get("telegram"),
+                    # LiveKit fields
+                    room_name=self.room.name,
                     participant_sid=participant_sid,
-                    record_session=record_session,
-                    status="active"
+                    status="active",
+                    # Recording fields
+                    record_session=record_session
                 )
                 db.add(live_session)
                 db.commit()
                 db.refresh(live_session)
 
                 # Store in active sessions
-                self.active_sessions[room_name] = live_session
+                self.active_sessions[mint_id] = live_session
 
-                print(f"Started live session for room: {room_name}, participant: {participant_sid}")
+                print(f"Started live session for mint_id: {mint_id}, participant: {participant_sid}")
 
                 return {
                     "success": True,
-                    "room_name": room_name,
+                    "mint_id": mint_id,
+                    "room_name": self.room.name,
                     "participant_sid": participant_sid,
                     "session_id": live_session.id,
-                    "record_session": record_session
+                    "record_session": record_session,
+                    "stream_info": self.pumpfun_service.format_stream_for_ui(stream_info)
                 }
             finally:
                 db.close()
@@ -136,14 +177,14 @@ class LiveSessionService:
                 "error": str(e)
             }
 
-    async def stop_session(self, room_name: str) -> Dict[str, Any]:
-        """Stop the live streaming session for the given room."""
+    async def stop_session(self, mint_id: str) -> Dict[str, Any]:
+        """Stop the live streaming session for the given mint_id."""
         try:
             # Update database session
             db = SessionLocal()
             try:
                 session = db.query(LiveSession).filter(
-                    LiveSession.room_name == room_name,
+                    LiveSession.mint_id == mint_id,
                     LiveSession.status == "active"
                 ).first()
 
@@ -153,17 +194,17 @@ class LiveSessionService:
                     db.commit()
 
                     # Close recording if active
-                    if room_name in self.recording_shims:
-                        recording_info = self.recording_shims[room_name].close()
+                    if mint_id in self.recording_shims:
+                        recording_info = self.recording_shims[mint_id].close()
                         if recording_info["video_path"]:
                             session.recording_path = recording_info["video_path"]
                             db.commit()
 
-                        del self.recording_shims[room_name]
+                        del self.recording_shims[mint_id]
 
                 # Remove from active sessions
-                if room_name in self.active_sessions:
-                    del self.active_sessions[room_name]
+                if mint_id in self.active_sessions:
+                    del self.active_sessions[mint_id]
 
             finally:
                 db.close()
@@ -178,11 +219,11 @@ class LiveSessionService:
                 self.room_connection_task.cancel()
                 self.room_connection_task = None
 
-            print(f"Stopped live session for room: {room_name}")
+            print(f"Stopped live session for mint_id: {mint_id}")
 
             return {
                 "success": True,
-                "room_name": room_name
+                "mint_id": mint_id
             }
 
         except Exception as e:
@@ -192,16 +233,16 @@ class LiveSessionService:
                 "error": str(e)
             }
 
-    async def connect_websocket(self, websocket: WebSocket, room_name: str) -> None:
+    async def connect_websocket(self, websocket: WebSocket, mint_id: str) -> None:
         """Connect a WebSocket for streaming video/audio to the frontend."""
         await websocket.accept()
 
-        # Add to active websockets for this room
-        if room_name not in self.active_websockets:
-            self.active_websockets[room_name] = set()
-        self.active_websockets[room_name].add(websocket)
+        # Add to active websockets for this mint_id
+        if mint_id not in self.active_websockets:
+            self.active_websockets[mint_id] = set()
+        self.active_websockets[mint_id].add(websocket)
 
-        print(f"WebSocket connected for room: {room_name}")
+        print(f"WebSocket connected for mint_id: {mint_id}")
 
         try:
             # Keep connection alive
@@ -210,15 +251,15 @@ class LiveSessionService:
                 data = await websocket.receive_text()
                 # Handle any client messages if needed
         except Exception as e:
-            print(f"WebSocket error for room {room_name}: {e}")
+            print(f"WebSocket error for mint_id {mint_id}: {e}")
         finally:
             # Remove from active websockets
-            if room_name in self.active_websockets:
-                self.active_websockets[room_name].discard(websocket)
-                if not self.active_websockets[room_name]:
-                    del self.active_websockets[room_name]
+            if mint_id in self.active_websockets:
+                self.active_websockets[mint_id].discard(websocket)
+                if not self.active_websockets[mint_id]:
+                    del self.active_websockets[mint_id]
 
-            print(f"WebSocket disconnected for room: {room_name}")
+            print(f"WebSocket disconnected for mint_id: {mint_id}")
 
     async def _setup_handlers(self, record_session: bool) -> None:
         """Set up LiveKit event handlers for video/audio tracks."""
@@ -290,9 +331,9 @@ class LiveSessionService:
             if participant_sid in self.recording_shims:
                 self.recording_shims[participant_sid].record_video_frame(frame)
 
-            # Send to all connected websockets for this participant's room
-            # Note: We need to map participant_sid back to room_name
-            for room_name, websockets in self.active_websockets.items():
+            # Send to all connected websockets for this participant's mint_id
+            # Note: We need to map participant_sid back to mint_id
+            for mint_id, websockets in self.active_websockets.items():
                 for websocket in websockets:
                     try:
                         await websocket.send_bytes(jpeg_bytes)
@@ -313,11 +354,11 @@ class LiveSessionService:
             if participant_sid in self.recording_shims:
                 self.recording_shims[participant_sid].record_audio_frame(frame)
 
-            # Send to all connected websockets for this participant's room
+            # Send to all connected websockets for this participant's mint_id
             # Format: "audio:" + base64_data
             audio_message = f"audio:{audio_base64}"
 
-            for room_name, websockets in self.active_websockets.items():
+            for mint_id, websockets in self.active_websockets.items():
                 for websocket in websockets:
                     try:
                         await websocket.send_text(audio_message)
@@ -357,12 +398,12 @@ class LiveSessionService:
         print("Shutting down LiveSessionService...")
 
         # Stop all active sessions
-        active_room_names = list(self.active_sessions.keys())
-        for room_name in active_room_names:
-            await self.stop_session(room_name)
+        active_mint_ids = list(self.active_sessions.keys())
+        for mint_id in active_mint_ids:
+            await self.stop_session(mint_id)
 
         # Close all websockets
-        for room_name, websockets in self.active_websockets.items():
+        for mint_id, websockets in self.active_websockets.items():
             for websocket in websockets:
                 try:
                     await websocket.close()
@@ -377,11 +418,14 @@ class LiveSessionService:
             await self.room.disconnect()
             self.room = None
 
+        # Close pump.fun service
+        await self.pumpfun_service.close()
+
         print("LiveSessionService shutdown complete")
 
     def get_active_sessions(self) -> Dict[str, Dict[str, Any]]:
         """Get information about all active sessions."""
         return {
-            room_name: session.to_dict()
-            for room_name, session in self.active_sessions.items()
+            mint_id: session.to_dict()
+            for mint_id, session in self.active_sessions.items()
         }

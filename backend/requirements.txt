@@ -12,3 +12,4 @@ opencv-python==4.10.0.84
 av==12.0.0
 websockets==13.1
 livekit-server-sdk==0.2.2
+httpx==0.25.2

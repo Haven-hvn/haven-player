@@ -52,7 +52,7 @@ class PumpFunService:
                 json=payload
             )
             
-            if response.status_code == 200:
+            if response.status_code in [200, 201]:  # Both 200 and 201 are success
                 data = response.json()
                 token = data.get("token")
                 if token:

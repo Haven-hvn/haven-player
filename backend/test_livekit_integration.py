@@ -34,7 +34,7 @@ async def test_basic_connection():
 
     try:
         # Test with a simple room name
-        room_name = "test-room"
+        room_name = "JCXMR4uW9aGDgqEvzSJcZ88iCtsm8MM2tQqk7P4Ppump"
 
         logger.info(f"Starting session for room: {room_name}")
         result = await service.start_session(room_name, record_session=False)
@@ -72,7 +72,7 @@ async def test_token_generation():
     await service.initialize()
 
     try:
-        room_name = "test-token-room"
+        room_name = "JCXMR4uW9aGDgqEvzSJcZ88iCtsm8MM2tQqk7P4Ppump"
         token = service._generate_token(room_name)
 
         if token and "token_for_" not in token:
@@ -119,7 +119,7 @@ async def main():
         logger.warning("Using default/placeholder values for testing")
 
         # Set some defaults for testing
-        os.environ.setdefault("LIVEKIT_URL", "ws://localhost:7880")
+        os.environ.setdefault("LIVEKIT_URL", "ws://pump-prod-tg2x8veh.livekit.cloud")
         os.environ.setdefault("LIVEKIT_API_KEY", "test-key")
         os.environ.setdefault("LIVEKIT_API_SECRET", "test-secret")
 

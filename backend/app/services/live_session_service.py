@@ -105,7 +105,7 @@ class LiveSessionService:
             await self._setup_handlers(record_session)
 
             # Connect to room with options
-            connect_options = rtc.ConnectOptions(
+            connect_options = rtc.RoomOptions(
                 auto_subscribe=True,
             )
 

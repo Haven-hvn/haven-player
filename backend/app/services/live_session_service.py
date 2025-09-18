@@ -373,18 +373,18 @@ class LiveSessionService:
         if not self.config:
             raise ValueError("Configuration not loaded")
 
-        # Use LiveKit Server SDK for proper token generation
+        # Use LiveKit Python SDK for proper token generation
         try:
-            from livekit.api import AccessToken, VideoGrants
+            from livekit import api
         except ImportError:
-            print("Warning: livekit-server-sdk not installed. Using placeholder token.")
-            print("Install with: pip install livekit-server-sdk")
+            print("Warning: livekit not installed. Using placeholder token.")
+            print("Install with: pip install livekit==1.0.13")
             return f"token_for_{room_name}"
 
-        token = AccessToken(self.config.livekit_api_key, self.config.livekit_api_secret)
+        token = api.AccessToken(self.config.livekit_api_key, self.config.livekit_api_secret)
         token.with_identity("haven-player")  # You can customize this
         token.with_name("Haven Player")      # Display name
-        token.with_grants(VideoGrants(
+        token.with_grants(api.VideoGrants(
             room_join=True,
             room=room_name,
             can_publish=False,  # We're only subscribing/viewing

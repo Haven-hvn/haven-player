@@ -11,7 +11,6 @@ livekit==1.0.13
 opencv-python==4.10.0.84
 av==15.1.0
 websockets==13.1
-httpx==0.25.2
 ImageHash==4.3.2
-livekit==1.0.13
 livekit-api==1.0.5
+Pillow==10.0.0

@@ -104,6 +104,17 @@ def on_participant_connected(participant: rtc.RemoteParticipant):
 @room.on("track_subscribed")
 def on_track_subscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
     # Handle new video/audio track
+    if track.kind == rtc.TrackKind.KIND_VIDEO:
+        @track.on("frame_received")
+        def on_video_frame(frame: rtc.VideoFrame):
+            # Process video frames for streaming and recording
+            asyncio.create_task(self._stream_video(frame, participant.sid))
+    
+    elif track.kind == rtc.TrackKind.KIND_AUDIO:
+        @track.on("frame_received")
+        def on_audio_frame(frame: rtc.AudioFrame):
+            # Process audio frames for streaming and recording
+            asyncio.create_task(self._stream_audio(frame, participant.sid))
 
 @room.on("connection_state_changed")
 def on_connection_state_changed(state: rtc.ConnectionState):
@@ -173,6 +184,46 @@ See `FRONTEND_INTEGRATION_GUIDE.md` for complete frontend integration instructio
 - Video rendering on canvas
 - Audio playback with Web Audio API
 - Complete working examples
+
+## Frame Capture Implementation
+
+### Real-Time Frame Processing
+
+The Haven Player implements real-time frame capture using LiveKit's event-driven architecture:
+
+```python
+# Video frame capture
+@track.on("frame_received")
+def on_video_frame(frame: rtc.VideoFrame):
+    # Convert to JPEG and stream to WebSocket
+    frame_array = frame.buffer.to_ndarray(format="rgb24")
+    image = Image.fromarray(frame_array)
+    # ... JPEG conversion and WebSocket streaming
+
+# Audio frame capture  
+@track.on("frame_received")
+def on_audio_frame(frame: rtc.AudioFrame):
+    # Convert to base64 and stream to WebSocket
+    audio_bytes = frame.data.tobytes()
+    audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+    # ... WebSocket streaming
+```
+
+### Frame Processing Pipeline
+
+1. **Frame Reception**: LiveKit delivers frames via `track.on("frame_received")` events
+2. **Format Conversion**: 
+   - Video: `rtc.VideoFrame` → numpy array → PIL Image → JPEG (85% quality)
+   - Audio: `rtc.AudioFrame` → raw bytes → base64 string
+3. **WebSocket Distribution**: Frames sent to connected frontend clients
+4. **Recording**: Simultaneous recording to MP4/WAV files if enabled
+
+### Performance Optimization
+
+- **Asynchronous Processing**: Frame handlers use `asyncio.create_task()` for non-blocking processing
+- **Memory Management**: Frames processed and released immediately
+- **Quality Settings**: JPEG quality optimized for streaming (85%)
+- **Participant Mapping**: Efficient routing between participant SIDs and mint_ids
 
 ## Best Practices
 
@@ -257,11 +308,12 @@ logging.basicConfig(level=logging.DEBUG)
 Required packages (already included in `requirements.txt`):
 
 ```
-livekit==0.15.2              # LiveKit Python SDK
-livekit-server-sdk==0.2.2     # Token generation
-opencv-python==4.10.0.84     # Video recording
-av==12.0.0                   # Video processing
+livekit==1.0.13              # LiveKit Python SDK
+livekit-api==1.0.5           # Token generation
+opencv-python==4.10.0.84    # Video recording
+av==15.1.0                   # Video processing
 websockets==13.1             # WebSocket support
+PIL (Pillow)                 # Image processing for JPEG conversion
 ```
 
 ## Next Steps

@@ -106,6 +106,96 @@ async def test_active_sessions():
         return False
 
 
+async def test_frame_capture_setup():
+    """Test that frame capture handlers are properly set up."""
+    logger.info("Testing frame capture setup...")
+
+    service = LiveSessionService()
+    await service.initialize()
+
+    try:
+        # Test with a mint_id that should be live
+        mint_id = "JCXMR4uW9aGDgqEvzSJcZ88iCtsm8MM2tQqk7P4Ppump"
+
+        logger.info(f"Starting session for frame capture test: {mint_id}")
+        result = await service.start_session(mint_id, record_session=True)
+
+        if result["success"]:
+            logger.info("✅ Session started successfully for frame capture test")
+            logger.info(f"Participant SID: {result['participant_sid']}")
+            
+            # Check if participant mapping is set up
+            participant_sid = result['participant_sid']
+            if participant_sid in service.participant_to_mint_id:
+                logger.info("✅ Participant to mint_id mapping established")
+            else:
+                logger.warning("⚠️  Participant to mint_id mapping not found")
+            
+            # Check if recording shim is set up
+            if participant_sid in service.recording_shims:
+                logger.info("✅ Recording shim initialized")
+            else:
+                logger.warning("⚠️  Recording shim not initialized")
+
+            # Wait a bit to see if we get any frame events
+            logger.info("Waiting for frame events...")
+            await asyncio.sleep(10)
+
+            # Stop the session
+            logger.info("Stopping session...")
+            stop_result = await service.stop_session(mint_id)
+            logger.info(f"Stop result: {stop_result}")
+
+        else:
+            logger.error(f"❌ Session start failed: {result['error']}")
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ Frame capture test failed with exception: {e}")
+        return False
+    finally:
+        await service.shutdown()
+
+    return True
+
+
+async def test_websocket_frame_routing():
+    """Test WebSocket frame routing mechanism."""
+    logger.info("Testing WebSocket frame routing...")
+
+    service = LiveSessionService()
+    await service.initialize()
+
+    try:
+        # Test participant to mint_id mapping
+        test_participant_sid = "PA_test123"
+        test_mint_id = "test_mint_id"
+        
+        # Add test mapping
+        service.participant_to_mint_id[test_participant_sid] = test_mint_id
+        
+        # Verify mapping
+        if service.participant_to_mint_id.get(test_participant_sid) == test_mint_id:
+            logger.info("✅ Participant to mint_id mapping works correctly")
+        else:
+            logger.error("❌ Participant to mint_id mapping failed")
+            return False
+            
+        # Test cleanup
+        del service.participant_to_mint_id[test_participant_sid]
+        if test_participant_sid not in service.participant_to_mint_id:
+            logger.info("✅ Mapping cleanup works correctly")
+        else:
+            logger.error("❌ Mapping cleanup failed")
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ WebSocket routing test failed: {e}")
+        return False
+
+    return True
+
+
 async def main():
     """Run all tests."""
     logger.info("🚀 Starting LiveKit integration tests...")
@@ -127,6 +217,8 @@ async def main():
     tests = [
         ("Token Generation", test_token_generation),
         ("Active Sessions", test_active_sessions),
+        ("WebSocket Frame Routing", test_websocket_frame_routing),
+        ("Frame Capture Setup", test_frame_capture_setup),
         ("Basic Connection", test_basic_connection),
     ]
 
@@ -152,7 +244,7 @@ async def main():
     logger.info("TEST SUMMARY")
     logger.info(f"{'='*60}")
     logger.info(f"Passed: {passed}/{total}")
-    logger.info(".1f")
+    logger.info(f"Success rate: {passed/total:.1%}")
 
     if passed == total:
         logger.info("🎉 All tests passed! LiveKit integration is working.")

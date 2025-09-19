@@ -466,10 +466,19 @@ export default PumpFunViewer;
 - Reduces API calls and improves performance
 - Historical tracking of coin data
 
+### Real-Time Frame Capture
+- **Video Frames**: Captured using LiveKit's `track.on("frame_received")` event handlers
+- **Audio Frames**: Captured using LiveKit's `track.on("frame_received")` event handlers
+- **WebSocket Streaming**: Frames are automatically streamed to connected frontend clients
+- **Frame Processing**: Video frames converted to JPEG (85% quality), audio frames to base64
+- **Participant Mapping**: Automatic mapping between participant SIDs and mint_ids for proper routing
+
 ### Recording Support
 - Optional local recording to MP4/WAV files
 - Automatic file management with timestamps
 - Recording directory configurable
+- **Frame-Based Recording**: Uses the same frame capture mechanism for recording
+- **Synchronized Recording**: Video and audio frames are recorded simultaneously
 
 ## Error Handling
 
@@ -531,6 +540,44 @@ Stores active/completed streaming sessions with full pump.fun metadata.
 ### `pumpfun_coins`
 Caches coin information for performance and historical tracking.
 
+## Frame Capture Implementation
+
+### Technical Details
+
+The frame capture system uses LiveKit's event-driven architecture:
+
+```python
+# Video frame handler
+@track.on("frame_received")
+def on_video_frame(frame: rtc.VideoFrame):
+    print(f"Received video frame: {frame.width}x{frame.height}")
+    # Stream frame to WebSocket and record if enabled
+    asyncio.create_task(self._stream_video(frame, participant.sid))
+
+# Audio frame handler  
+@track.on("frame_received")
+def on_audio_frame(frame: rtc.AudioFrame):
+    print(f"Received audio frame: {len(frame.data)} samples")
+    # Stream frame to WebSocket and record if enabled
+    asyncio.create_task(self._stream_audio(frame, participant.sid))
+```
+
+### Frame Processing Pipeline
+
+1. **Frame Reception**: LiveKit delivers frames via event handlers
+2. **Format Conversion**: 
+   - Video: `rtc.VideoFrame` → numpy array → PIL Image → JPEG bytes
+   - Audio: `rtc.AudioFrame` → raw bytes → base64 string
+3. **WebSocket Distribution**: Frames sent to all connected clients for the mint_id
+4. **Recording**: Frames simultaneously written to MP4/WAV files if enabled
+
+### Performance Considerations
+
+- **Video Quality**: JPEG quality set to 85% for optimal balance of quality/size
+- **Frame Rate**: Limited by source stream and network conditions
+- **Memory Management**: Frames processed and released immediately
+- **WebSocket Buffering**: High-frequency frames handled efficiently
+
 ## Development Tips
 
 1. **Test with Popular Streams**: Use `/api/pumpfun/popular` to find active streams
@@ -538,5 +585,7 @@ Caches coin information for performance and historical tracking.
 3. **Handle NSFW Content**: Use `include_nsfw=false` for family-friendly apps
 4. **Cache Aggressively**: Coin data doesn't change frequently
 5. **Error Recovery**: Implement retry logic for network issues
+6. **Frame Debugging**: Monitor frame reception logs for troubleshooting
+7. **WebSocket Testing**: Use browser dev tools to verify frame delivery
 
 This integration provides a complete pump.fun streaming experience with minimal setup required!

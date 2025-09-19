@@ -46,6 +46,9 @@ class LiveSessionService:
 
             # Session management
             self.active_sessions: Dict[str, LiveSession] = {}
+            
+            # Participant to mint_id mapping for WebSocket routing
+            self.participant_to_mint_id: Dict[str, str] = {}
 
             # Configuration
             self.config: Optional[AppConfig] = None
@@ -155,6 +158,9 @@ class LiveSessionService:
 
                 # Store in active sessions
                 self.active_sessions[mint_id] = live_session
+                
+                # Store participant to mint_id mapping for WebSocket routing
+                self.participant_to_mint_id[participant_sid] = mint_id
 
                 print(f"Started live session for mint_id: {mint_id}, participant: {participant_sid}")
 
@@ -205,6 +211,15 @@ class LiveSessionService:
                 # Remove from active sessions
                 if mint_id in self.active_sessions:
                     del self.active_sessions[mint_id]
+                
+                # Clean up participant to mint_id mapping
+                participant_sid_to_remove = None
+                for pid, mid in self.participant_to_mint_id.items():
+                    if mid == mint_id:
+                        participant_sid_to_remove = pid
+                        break
+                if participant_sid_to_remove:
+                    del self.participant_to_mint_id[participant_sid_to_remove]
 
             finally:
                 db.close()
@@ -288,15 +303,23 @@ class LiveSessionService:
                     shim = RecordingShim(recording_dir, participant.sid)
                     self.recording_shims[participant.sid] = shim
 
+                print(f"Video track subscribed: {track.sid} from {participant.identity}")
+                
                 # Set up video frame handler
                 @track.on("frame_received")
                 def on_video_frame(frame: rtc.VideoFrame):
+                    print(f"Received video frame: {frame.width}x{frame.height}")
+                    # Stream frame to WebSocket and record if enabled
                     asyncio.create_task(self._stream_video(frame, participant.sid))
 
             elif track.kind == rtc.TrackKind.KIND_AUDIO:
+                print(f"Audio track subscribed: {track.sid} from {participant.identity}")
+                
                 # Set up audio frame handler
                 @track.on("frame_received")
                 def on_audio_frame(frame: rtc.AudioFrame):
+                    print(f"Received audio frame: {len(frame.data)} samples")
+                    # Stream frame to WebSocket and record if enabled
                     asyncio.create_task(self._stream_audio(frame, participant.sid))
 
         @self.room.on("track_unsubscribed")
@@ -331,10 +354,15 @@ class LiveSessionService:
             if participant_sid in self.recording_shims:
                 self.recording_shims[participant_sid].record_video_frame(frame)
 
-            # Send to all connected websockets for this participant's mint_id
-            # Note: We need to map participant_sid back to mint_id
-            for mint_id, websockets in self.active_websockets.items():
-                for websocket in websockets:
+            # Get mint_id for this participant
+            mint_id = self.participant_to_mint_id.get(participant_sid)
+            if not mint_id:
+                print(f"No mint_id found for participant {participant_sid}")
+                return
+
+            # Send to all connected websockets for this mint_id
+            if mint_id in self.active_websockets:
+                for websocket in self.active_websockets[mint_id]:
                     try:
                         await websocket.send_bytes(jpeg_bytes)
                     except Exception as e:
@@ -354,12 +382,18 @@ class LiveSessionService:
             if participant_sid in self.recording_shims:
                 self.recording_shims[participant_sid].record_audio_frame(frame)
 
-            # Send to all connected websockets for this participant's mint_id
+            # Get mint_id for this participant
+            mint_id = self.participant_to_mint_id.get(participant_sid)
+            if not mint_id:
+                print(f"No mint_id found for participant {participant_sid}")
+                return
+
+            # Send to all connected websockets for this mint_id
             # Format: "audio:" + base64_data
             audio_message = f"audio:{audio_base64}"
 
-            for mint_id, websockets in self.active_websockets.items():
-                for websocket in websockets:
+            if mint_id in self.active_websockets:
+                for websocket in self.active_websockets[mint_id]:
                     try:
                         await websocket.send_text(audio_message)
                     except Exception as e:

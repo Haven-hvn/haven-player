@@ -46,17 +46,18 @@ result = await service.start_session("my-room", record_session=True)
 await service.stop_session("my-room")
 ```
 
-### 2. RecordingShim
+### 2. AioRTCRecordingService
 
-**Location:** `backend/app/services/recording_shim.py`
+**Location:** `backend/app/services/aiortc_recording_service.py`
 
-**Purpose:** Handles video/audio recording to local files.
+**Purpose:** Handles AV1 video/audio recording using aiortc.
 
 **Features:**
-- MP4 video recording with OpenCV
-- WAV audio recording with wave module
+- AV1 video recording with aiortc
+- Multiple format support (AV1, MP4, WebM)
+- Quality presets (low, medium, high)
 - Automatic file management
-- Timestamp-based filenames
+- Real-time recording status
 
 ### 3. API Endpoints
 
@@ -67,6 +68,12 @@ await service.stop_session("my-room")
 - `POST /api/live-sessions/stop` - Stop streaming session
 - `GET /api/live-sessions/active` - Get active sessions
 - `WebSocket /api/live-sessions/ws/live/{room_name}` - Real-time streaming
+
+**Recording Endpoints:**
+- `POST /api/recording/start` - Start AV1 recording
+- `POST /api/recording/stop` - Stop recording
+- `GET /api/recording/status/{mint_id}` - Get recording status
+- `GET /api/recording/active` - Get active recordings
 
 ## Usage Patterns
 

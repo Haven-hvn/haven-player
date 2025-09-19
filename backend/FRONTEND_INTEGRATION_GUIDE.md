@@ -1,12 +1,19 @@
-# Frontend Integration Guide - Live Streaming & Recording
+# Frontend Integration Guide - Shared Stream Management
 
-This guide provides detailed instructions for integrating the Haven Player's live streaming and recording functionality into the Electron/React frontend.
+This guide provides detailed instructions for integrating the Haven Player's live streaming and recording functionality using the new shared stream management architecture.
 
 ## Overview
 
-The backend provides real-time video streaming from LiveKit rooms with optional local recording. Communication uses:
+The backend now uses a **shared stream management architecture** that eliminates duplicate WebRTC connections and provides clean separation between streaming and recording:
+
+- **StreamManager**: Single WebRTC connection per stream
+- **LiveSessionService**: WebSocket streaming using shared stream
+- **AioRTCRecordingService**: AV1 recording using shared stream
+
+Communication uses:
 - **HTTP POST requests** for session control (start/stop)
 - **WebSocket connection** for real-time video/audio streaming
+- **Separate recording endpoints** for AV1 recording
 
 ## API Endpoints
 
@@ -16,8 +23,7 @@ The backend provides real-time video streaming from LiveKit rooms with optional 
 **Request Body:**
 ```json
 {
-  "room_name": "your-room-name",
-  "record_session": false
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump"
 }
 ```
 
@@ -25,10 +31,14 @@ The backend provides real-time video streaming from LiveKit rooms with optional 
 ```json
 {
   "success": true,
-  "room_name": "your-room-name",
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump",
+  "room_name": "room-name",
   "participant_sid": "PA_xxx",
   "session_id": 1,
-  "record_session": false
+  "stream_info": {
+    "coin_name": "PumpCoin",
+    "telegram": "@pumpcoin"
+  }
 }
 ```
 
@@ -38,8 +48,7 @@ const response = await fetch('/api/live-sessions/start', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    room_name: 'my-live-room',
-    record_session: true  // Set to true to enable recording
+    mint_id: 'V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump'
   })
 });
 const result = await response.json();
@@ -51,7 +60,7 @@ const result = await response.json();
 **Request Body:**
 ```json
 {
-  "room_name": "your-room-name"
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump"
 }
 ```
 
@@ -59,7 +68,7 @@ const result = await response.json();
 ```json
 {
   "success": true,
-  "room_name": "your-room-name"
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump"
 }
 ```
 
@@ -69,7 +78,7 @@ const response = await fetch('/api/live-sessions/stop', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    room_name: 'my-live-room'
+    mint_id: 'V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump'
   })
 });
 const result = await response.json();
@@ -81,57 +90,176 @@ const result = await response.json();
 **Response:**
 ```json
 {
-  "active_sessions": {
-    "room-name": {
-      "id": 1,
+  "success": true,
+  "sessions": {
+    "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump": {
+      "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump",
       "room_name": "room-name",
       "participant_sid": "PA_xxx",
-      "status": "active",
-      "record_session": true,
-      "recording_path": "/path/to/recording.mp4",
-      "start_time": "2024-01-01T12:00:00Z",
-      "end_time": null,
-      "created_at": "2024-01-01T12:00:00Z",
-      "updated_at": "2024-01-01T12:00:00Z"
+      "stream_data": {
+        "coin_name": "PumpCoin",
+        "telegram": "@pumpcoin"
+      }
+    }
+  }
+}
+```
+
+## Recording API Endpoints
+
+### Start Recording
+**Endpoint:** `POST /api/recording/start`
+
+**Request Body:**
+```json
+{
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump",
+  "output_format": "av1",
+  "video_quality": "medium"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump",
+  "output_path": "/path/to/recording.mp4",
+  "config": {
+    "video_codec": "libaom-av1",
+    "audio_codec": "aac",
+    "video_bitrate": "2000k",
+    "audio_bitrate": "128k",
+    "format": "mp4"
+  }
+}
+```
+
+**Usage:**
+```javascript
+const response = await fetch('/api/recording/start', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    mint_id: 'V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump',
+    output_format: 'av1',
+    video_quality: 'medium'
+  })
+});
+const result = await response.json();
+```
+
+### Stop Recording
+**Endpoint:** `POST /api/recording/stop`
+
+**Request Body:**
+```json
+{
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "output_path": "/path/to/recording.mp4",
+  "start_time": "2024-01-01T12:00:00Z",
+  "end_time": "2024-01-01T12:05:00Z"
+}
+```
+
+### Get Recording Status
+**Endpoint:** `GET /api/recording/status/{mint_id}`
+
+**Response:**
+```json
+{
+  "mint_id": "V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump",
+  "is_recording": true,
+  "start_time": "2024-01-01T12:00:00Z",
+  "output_path": "/path/to/recording.mp4",
+  "config": {
+    "video_codec": "libaom-av1",
+    "format": "mp4"
+  }
+}
+```
+
+### Get Supported Formats
+**Endpoint:** `GET /api/recording/formats`
+
+**Response:**
+```json
+{
+  "success": true,
+  "formats": {
+    "av1": {
+      "description": "AV1 codec (recommended)",
+      "codec": "libaom-av1",
+      "container": "mp4"
+    },
+    "h264": {
+      "description": "H.264 codec",
+      "codec": "libx264",
+      "container": "mp4"
+    },
+    "vp9": {
+      "description": "VP9 codec",
+      "codec": "libvpx-vp9",
+      "container": "webm"
     }
   },
-  "count": 1
+  "quality_presets": {
+    "low": {
+      "video_bitrate": "1000k",
+      "audio_bitrate": "64k"
+    },
+    "medium": {
+      "video_bitrate": "2000k",
+      "audio_bitrate": "128k"
+    },
+    "high": {
+      "video_bitrate": "4000k",
+      "audio_bitrate": "192k"
+    }
+  }
 }
 ```
 
 ## WebSocket Streaming
 
 ### Connection
-**Endpoint:** `ws://localhost:8000/api/live-sessions/ws/live/{room_name}`
+**Endpoint:** `ws://localhost:8000/api/live-sessions/stream/{mint_id}`
 
 **Connection Example:**
 ```javascript
-const roomName = 'my-live-room';
-const ws = new WebSocket(`ws://localhost:8000/api/live-sessions/ws/live/${roomName}`);
+const mintId = 'V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump';
+const ws = new WebSocket(`ws://localhost:8000/api/live-sessions/stream/${mintId}`);
 ```
 
 ### Message Types
 
-#### Video Frames (Binary)
-- **Format:** Raw JPEG binary data
-- **Usage:** Display directly on HTML5 Canvas
+#### Video Frames (JSON with base64 data)
+- **Format:** JSON with base64-encoded JPEG data
+- **Usage:** Display on HTML5 Canvas
 
 ```javascript
 ws.onmessage = (event) => {
-  if (event.data instanceof Blob) {
-    // This is a video frame (JPEG)
-    const blob = event.data;
-    displayVideoFrame(blob);
-  } else if (typeof event.data === 'string' && event.data.startsWith('audio:')) {
-    // This is an audio frame
-    const audioData = event.data.substring(6); // Remove 'audio:' prefix
-    playAudioFrame(audioData);
+  const data = JSON.parse(event.data);
+  
+  if (data.type === 'video_frame') {
+    // Display video frame
+    displayVideoFrame(data.data);
+  } else if (data.type === 'audio_frame') {
+    // Play audio frame
+    playAudioFrame(data.data);
   }
 };
 ```
 
-#### Audio Frames (Text)
-- **Format:** `"audio:" + base64_encoded_audio_data`
+#### Audio Frames (JSON with base64 data)
+- **Format:** JSON with base64-encoded audio data
 - **Audio Format:** Raw PCM audio data (16-bit, sample rate depends on source)
 
 ```javascript
@@ -174,7 +302,7 @@ function playAudioFrame(base64Audio) {
 const canvas = document.getElementById('videoCanvas');
 const ctx = canvas.getContext('2d');
 
-function displayVideoFrame(blob) {
+function displayVideoFrame(base64Data) {
   const img = new Image();
 
   img.onload = () => {
@@ -185,37 +313,8 @@ function displayVideoFrame(blob) {
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   };
 
-  // Create object URL from blob
-  img.src = URL.createObjectURL(blob);
-}
-```
-
-### Optimized Rendering Loop
-```javascript
-let animationId = null;
-
-function startVideoRendering() {
-  const ws = new WebSocket(`ws://localhost:8000/api/live-sessions/ws/live/${roomName}`);
-
-  ws.onmessage = (event) => {
-    if (event.data instanceof Blob) {
-      displayVideoFrame(event.data);
-    }
-  };
-
-  // Optional: Use requestAnimationFrame for smoother rendering
-  function renderLoop() {
-    // Additional rendering logic if needed
-    animationId = requestAnimationFrame(renderLoop);
-  }
-  renderLoop();
-}
-
-function stopVideoRendering() {
-  if (animationId) {
-    cancelAnimationFrame(animationId);
-  }
-  ws.close();
+  // Set image source from base64 data
+  img.src = `data:image/jpeg;base64,${base64Data}`;
 }
 ```
 
@@ -223,24 +322,24 @@ function stopVideoRendering() {
 
 ```javascript
 class LiveStreamPlayer {
-  constructor(roomName) {
-    this.roomName = roomName;
+  constructor(mintId) {
+    this.mintId = mintId;
     this.ws = null;
     this.canvas = document.getElementById('videoCanvas');
     this.ctx = this.canvas.getContext('2d');
     this.audioContext = new AudioContext();
     this.isPlaying = false;
+    this.isRecording = false;
   }
 
-  async startSession(recordSession = false) {
+  async startSession() {
     try {
       // Start the session
       const startResponse = await fetch('/api/live-sessions/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          room_name: this.roomName,
-          record_session: recordSession
+          mint_id: this.mintId
         })
       });
 
@@ -262,14 +361,69 @@ class LiveStreamPlayer {
     }
   }
 
+  async startRecording(outputFormat = 'av1', videoQuality = 'medium') {
+    try {
+      const response = await fetch('/api/recording/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mint_id: this.mintId,
+          output_format: outputFormat,
+          video_quality: videoQuality
+        })
+      });
+
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      this.isRecording = true;
+      console.log('Recording started:', result);
+      return result;
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      throw error;
+    }
+  }
+
+  async stopRecording() {
+    try {
+      const response = await fetch('/api/recording/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mint_id: this.mintId
+        })
+      });
+
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      this.isRecording = false;
+      console.log('Recording stopped:', result);
+      return result;
+    } catch (error) {
+      console.error('Failed to stop recording:', error);
+      throw error;
+    }
+  }
+
   async stopSession() {
     try {
+      // Stop recording if active
+      if (this.isRecording) {
+        await this.stopRecording();
+      }
+
       // Stop the session
       const stopResponse = await fetch('/api/live-sessions/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          room_name: this.roomName
+          mint_id: this.mintId
         })
       });
 
@@ -294,7 +448,7 @@ class LiveStreamPlayer {
   }
 
   connectWebSocket() {
-    this.ws = new WebSocket(`ws://localhost:8000/api/live-sessions/ws/live/${this.roomName}`);
+    this.ws = new WebSocket(`ws://localhost:8000/api/live-sessions/stream/${this.mintId}`);
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');
@@ -314,17 +468,16 @@ class LiveStreamPlayer {
   }
 
   handleMessage(event) {
-    if (event.data instanceof Blob) {
-      // Video frame
-      this.displayVideoFrame(event.data);
-    } else if (typeof event.data === 'string' && event.data.startsWith('audio:')) {
-      // Audio frame
-      const audioData = event.data.substring(6);
-      this.playAudioFrame(audioData);
+    const data = JSON.parse(event.data);
+    
+    if (data.type === 'video_frame') {
+      this.displayVideoFrame(data.data);
+    } else if (data.type === 'audio_frame') {
+      this.playAudioFrame(data.data);
     }
   }
 
-  displayVideoFrame(blob) {
+  displayVideoFrame(base64Data) {
     const img = new Image();
 
     img.onload = () => {
@@ -332,7 +485,7 @@ class LiveStreamPlayer {
       this.ctx.drawImage(img, 0, 0, this.canvas.width, this.canvas.height);
     };
 
-    img.src = URL.createObjectURL(blob);
+    img.src = `data:image/jpeg;base64,${base64Data}`;
   }
 
   playAudioFrame(base64Audio) {
@@ -363,39 +516,57 @@ class LiveStreamPlayer {
       console.error('Error playing audio frame:', error);
     }
   }
+
+  async getRecordingStatus() {
+    try {
+      const response = await fetch(`/api/recording/status/${this.mintId}`);
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Failed to get recording status:', error);
+      throw error;
+    }
+  }
 }
 
 // Usage
-const player = new LiveStreamPlayer('my-room');
+const player = new LiveStreamPlayer('V5cCiSixPLAiEDX2zZquT5VuLm4prr5t35PWmjNpump');
 
-// Start streaming (with recording)
-await player.startSession(true);
+// Start streaming
+await player.startSession();
+
+// Start recording (optional)
+await player.startRecording('av1', 'medium');
+
+// Stop recording (optional)
+// await player.stopRecording();
 
 // Stop streaming
 // await player.stopSession();
 ```
 
-## Configuration
+## Key Changes from Previous Architecture
 
-The LiveKit configuration is managed through the `/api/config` endpoint:
+### ✅ **Shared Stream Management**
+- **Single WebRTC connection** per stream (no duplicates)
+- **StreamManager** handles connection management
+- **LiveSessionService** handles WebSocket streaming
+- **AioRTCRecordingService** handles AV1 recording
 
-```javascript
-// Get current configuration
-const configResponse = await fetch('/api/config');
-const config = await configResponse.json();
+### ✅ **Updated API Endpoints**
+- **Live Sessions**: Use `mint_id` instead of `room_name`
+- **Recording**: Separate endpoints with format/quality options
+- **WebSocket**: Updated path to use `mint_id`
 
-// Update LiveKit settings
-await fetch('/api/config', {
-  method: 'PUT',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    livekit_url: 'ws://your-livekit-server:7880',
-    livekit_api_key: 'your-api-key',
-    livekit_api_secret: 'your-api-secret',
-    recording_directory: '/path/to/recordings'
-  })
-});
-```
+### ✅ **Better Performance**
+- No duplicate WebRTC connections
+- Shared frame distribution
+- Clean separation of concerns
+
+### ✅ **AV1 Recording Support**
+- Multiple format support (AV1, H.264, VP9)
+- Quality presets (low, medium, high)
+- Proper WebRTC connection management
 
 ## Error Handling
 
@@ -404,15 +575,15 @@ Always handle errors appropriately:
 ```javascript
 try {
   await player.startSession();
+  await player.startRecording('av1', 'medium');
 } catch (error) {
   if (error.message.includes('connection')) {
-    // Handle connection errors
     console.error('Failed to connect to LiveKit room');
   } else if (error.message.includes('websocket')) {
-    // Handle WebSocket errors
     console.error('WebSocket connection failed');
+  } else if (error.message.includes('recording')) {
+    console.error('Recording failed');
   } else {
-    // Handle other errors
     console.error('Unknown error:', error);
   }
 }
@@ -425,13 +596,14 @@ try {
 3. **Audio Sync:** Audio and video may have slight synchronization differences
 4. **Memory Usage:** Clean up object URLs after use to prevent memory leaks
 5. **WebSocket Buffering:** Handle high-frequency messages appropriately
+6. **Shared Stream:** Single WebRTC connection reduces bandwidth usage
 
 ## Recording
 
-When `record_session` is set to `true`:
-- Video is saved as MP4 file
-- Audio is saved as WAV file
-- Files are stored in the configured `recording_directory`
-- Recording paths are available in the session information
+The new architecture provides:
+- **AV1 recording** with proper WebRTC connection management
+- **Multiple format support** (AV1, H.264, VP9)
+- **Quality presets** for different use cases
+- **Shared stream usage** (no duplicate connections)
 
-The recording happens server-side and doesn't affect the streaming performance to the frontend.
+Recording happens server-side using the shared WebRTC connection and doesn't affect streaming performance to the frontend.

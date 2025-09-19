@@ -1,17 +1,22 @@
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
+"""
+Live session API endpoints using shared StreamManager.
+"""
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from app.services.live_session_service import LiveSessionService
 
-router = APIRouter()
+from app.services.live_session_service import LiveSessionService
 
 # Initialize the singleton service
 live_session_service = LiveSessionService()
 
+router = APIRouter()
+
 
 class StartSessionRequest(BaseModel):
     mint_id: str
-    record_session: Optional[bool] = False
+    # Recording is handled by separate /api/recording endpoints
 
 
 class StopSessionRequest(BaseModel):
@@ -24,12 +29,12 @@ async def start_live_session(request: StartSessionRequest):
     Start a new live streaming session for a pump.fun stream.
 
     - **mint_id**: Pump.fun mint ID of the coin/stream to connect to
-    - **record_session**: Whether to record the session (default: false)
+    
+    Note: Recording is handled by separate /api/recording endpoints.
     """
     try:
         result = await live_session_service.start_session(
-            mint_id=request.mint_id,
-            record_session=request.record_session
+            mint_id=request.mint_id
         )
 
         if not result["success"]:
@@ -38,7 +43,7 @@ async def start_live_session(request: StartSessionRequest):
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start session: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/stop")
@@ -46,10 +51,12 @@ async def stop_live_session(request: StopSessionRequest):
     """
     Stop a live streaming session.
 
-    - **mint_id**: Pump.fun mint ID of the stream to disconnect from
+    - **mint_id**: Pump.fun mint ID of the session to stop
     """
     try:
-        result = await live_session_service.stop_session(request.mint_id)
+        result = await live_session_service.stop_session(
+            mint_id=request.mint_id
+        )
 
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
@@ -57,31 +64,50 @@ async def stop_live_session(request: StopSessionRequest):
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to stop session: {str(e)}")
-
-
-@router.websocket("/ws/live/{mint_id}")
-async def live_stream_websocket(websocket: WebSocket, mint_id: str):
-    """
-    WebSocket endpoint for live video/audio streaming from pump.fun.
-
-    Connects to the specified mint_id stream and streams:
-    - Video frames as binary JPEG data
-    - Audio frames as text messages prefixed with "audio:"
-    """
-    await live_session_service.connect_websocket(websocket, mint_id)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/active")
 async def get_active_sessions():
     """
-    Get information about all currently active live streaming sessions.
+    Get information about all active live streaming sessions.
     """
     try:
-        sessions = live_session_service.get_active_sessions()
-        return {
-            "active_sessions": sessions,
-            "count": len(sessions)
-        }
+        sessions = await live_session_service.get_active_sessions()
+        return {"success": True, "sessions": sessions}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get active sessions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.websocket("/stream/{mint_id}")
+async def websocket_stream(websocket: WebSocket, mint_id: str):
+    """
+    WebSocket endpoint for streaming video/audio frames.
+    
+    - **mint_id**: Pump.fun mint ID of the stream to connect to
+    """
+    await websocket.accept()
+    
+    try:
+        # Add WebSocket to the session
+        await live_session_service.add_websocket(mint_id, websocket)
+        
+        # Keep connection alive
+        while True:
+            try:
+                # Wait for client messages (ping/pong)
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                print(f"WebSocket error for {mint_id}: {e}")
+                break
+                
+    except Exception as e:
+        print(f"WebSocket connection error for {mint_id}: {e}")
+    finally:
+        # Remove WebSocket from session
+        await live_session_service.remove_websocket(mint_id, websocket)

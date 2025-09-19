@@ -14,3 +14,6 @@ websockets==13.1
 ImageHash==4.3.2
 livekit-api==1.0.5
 Pillow==10.0.0
+# aiortc dependencies for AV1 recording
+aiortc==1.6.0
+aiofiles==23.2.1

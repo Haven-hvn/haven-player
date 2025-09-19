@@ -44,7 +44,6 @@ class StreamManager:
         # Event handlers
         self.video_frame_handlers: Dict[str, Callable] = {}
         self.audio_frame_handlers: Dict[str, Callable] = {}
-        self.recording_handlers: Dict[str, Callable] = {}
         
         # WebSocket connections for streaming
         self.active_websockets: Dict[str, set] = {}
@@ -159,9 +158,6 @@ class StreamManager:
         """Register an audio frame handler for streaming."""
         self.audio_frame_handlers[mint_id] = handler
 
-    def register_recording_handler(self, mint_id: str, handler: Callable) -> None:
-        """Register a recording handler."""
-        self.recording_handlers[mint_id] = handler
 
     async def _setup_room_handlers(self) -> None:
         """Set up room-level event handlers."""
@@ -194,16 +190,12 @@ class StreamManager:
                 def on_video_frame(frame: rtc.VideoFrame):
                     if mint_id in self.video_frame_handlers:
                         self.video_frame_handlers[mint_id](frame)
-                    if mint_id in self.recording_handlers:
-                        self.recording_handlers[mint_id]("video", frame)
 
             elif track.kind == rtc.TrackKind.KIND_AUDIO:
                 @track.on("frame_received")
                 def on_audio_frame(frame: rtc.AudioFrame):
                     if mint_id in self.audio_frame_handlers:
                         self.audio_frame_handlers[mint_id](frame)
-                    if mint_id in self.recording_handlers:
-                        self.recording_handlers[mint_id]("audio", frame)
 
         @self.room.on("disconnected")
         def on_disconnected():
@@ -213,7 +205,6 @@ class StreamManager:
             self.active_websockets.clear()
             self.video_frame_handlers.clear()
             self.audio_frame_handlers.clear()
-            self.recording_handlers.clear()
 
     async def add_websocket(self, mint_id: str, websocket) -> None:
         """Add a WebSocket connection for streaming."""

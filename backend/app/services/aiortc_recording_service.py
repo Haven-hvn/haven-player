@@ -65,7 +65,7 @@ class AioRTCRecordingService:
                             video_quality: str = "medium") -> Dict[str, Any]:
         """
         Start recording a stream using shared StreamManager.
-        No separate WebRTC connection needed - uses existing stream.
+        Connects MediaRecorder to the existing LiveKit WebRTC stream.
         """
         try:
             if mint_id in self.active_recordings:
@@ -76,25 +76,27 @@ class AioRTCRecordingService:
             if not stream_info:
                 return {"success": False, "error": f"No active stream found for {mint_id}"}
             
+            # Get the LiveKit room from StreamManager
+            room = self.stream_manager.room
+            if not room:
+                return {"success": False, "error": "No active LiveKit room found"}
+            
             # Create recording configuration
             config = self._get_recording_config(output_format, video_quality)
             
-            # Create stream recorder
+            # Create stream recorder with LiveKit room
             recorder = StreamRecorder(
                 mint_id=mint_id,
                 stream_info=stream_info,
                 output_dir=self.output_dir,
                 config=config,
-                stream_manager=self.stream_manager
+                room=room
             )
             
             # Start recording
             result = await recorder.start()
             if result["success"]:
                 self.active_recordings[mint_id] = recorder
-                
-                # Register recording handler with StreamManager
-                self.stream_manager.register_recording_handler(mint_id, recorder.handle_frame)
                 
                 return {
                     "success": True,
@@ -119,10 +121,6 @@ class AioRTCRecordingService:
             
             # Remove from active recordings
             del self.active_recordings[mint_id]
-            
-            # Unregister recording handler
-            if mint_id in self.stream_manager.recording_handlers:
-                del self.stream_manager.recording_handlers[mint_id]
             
             return result
             
@@ -173,17 +171,17 @@ class AioRTCRecordingService:
 
 class StreamRecorder:
     """
-    Individual stream recorder using shared StreamManager.
-    Handles AV1 recording without separate WebRTC connection.
+    Individual stream recorder for AV1 recording.
+    Uses MediaRecorder to record directly from WebRTC stream.
     """
     
     def __init__(self, mint_id: str, stream_info, output_dir: Path, 
-                 config: Dict[str, Any], stream_manager: StreamManager):
+                 config: Dict[str, Any], room):
         self.mint_id = mint_id
         self.stream_info = stream_info
         self.output_dir = output_dir
         self.config = config
-        self.stream_manager = stream_manager
+        self.room = room
         
         # Recording state
         self.is_recording = False
@@ -201,7 +199,7 @@ class StreamRecorder:
         return self.output_dir / filename
 
     async def start(self) -> Dict[str, Any]:
-        """Start recording using MediaRecorder."""
+        """Start recording using MediaRecorder connected to LiveKit WebRTC tracks."""
         try:
             if self.is_recording:
                 return {"success": False, "error": "Recording already started"}
@@ -215,6 +213,13 @@ class StreamRecorder:
                 video_bitrate=self.config["video_bitrate"],
                 audio_bitrate=self.config["audio_bitrate"]
             )
+            
+            # Connect MediaRecorder to LiveKit WebRTC tracks
+            for participant in self.room.remote_participants.values():
+                for track_publication in participant.track_publications.values():
+                    if track_publication.track:
+                        # Add the track to the recorder
+                        self.recorder.addTrack(track_publication.track)
             
             # Start recording
             await self.recorder.start()
@@ -254,20 +259,6 @@ class StreamRecorder:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def handle_frame(self, frame_type: str, frame_data) -> None:
-        """Handle frame data from shared StreamManager."""
-        if not self.is_recording or not self.recorder:
-            return
-        
-        try:
-            if frame_type == "video":
-                # Handle video frame
-                await self.recorder.record_video_frame(frame_data)
-            elif frame_type == "audio":
-                # Handle audio frame  
-                await self.recorder.record_audio_frame(frame_data)
-        except Exception as e:
-            print(f"Error handling {frame_type} frame: {e}")
 
     async def get_status(self) -> Dict[str, Any]:
         """Get current recording status."""

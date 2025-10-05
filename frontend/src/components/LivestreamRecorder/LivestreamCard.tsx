@@ -144,30 +144,6 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
           }}
         />
 
-        {/* Three dots menu */}
-        <IconButton
-          size="small"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleContextMenu(e);
-          }}
-          sx={{
-            position: "absolute",
-            top: 8,
-            left: 8,
-            color: "#6B6B6B",
-            backgroundColor: "rgba(255, 255, 255, 0.9)",
-            width: 32,
-            height: 32,
-            "&:hover": {
-              backgroundColor: "rgba(255, 255, 255, 1)",
-              color: "#000000",
-            },
-            transition: "all 0.2s ease-in-out",
-          }}
-        >
-          <MoreVertIcon fontSize="small" />
-        </IconButton>
 
         {/* Hover overlay REC */}
         <Box
@@ -208,7 +184,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         </Box>
       </Box>
 
-      <CardContent sx={{ p: 2 }}>
+      <CardContent sx={{ p: 2, position: "relative" }}>
         <Typography variant="subtitle1" noWrap sx={{ fontWeight: 600 }}>
           {item.name}
         </Typography>
@@ -246,6 +222,40 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               {isRecording ? "Recording..." : "Ready to Record"}
             </Typography>
           </Box>
+        </Box>
+
+        {/* Action Buttons - positioned like VideoAnalysisList */}
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mt: 1.5,
+          }}
+        >
+          <Box sx={{ display: "flex", gap: 1 }}>
+            {/* Empty space for left side - could add chips here later */}
+          </Box>
+
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleContextMenu(e);
+            }}
+            sx={{
+              color: "#6B6B6B",
+              width: 28,
+              height: 28,
+              "&:hover": {
+                backgroundColor: "#F5F5F5",
+                color: "#000000",
+              },
+              transition: "all 0.2s ease-in-out",
+            }}
+          >
+            <MoreVertIcon fontSize="small" />
+          </IconButton>
         </Box>
       </CardContent>
 

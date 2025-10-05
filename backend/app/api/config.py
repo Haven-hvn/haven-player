@@ -78,13 +78,13 @@ def get_or_create_config(db: Session) -> AppConfig:
         db.refresh(config)
     return config
 
-@router.get("/config/", response_model=ConfigResponse)
+@router.get("/", response_model=ConfigResponse)
 def get_config(db: Session = Depends(get_db)) -> AppConfig:
     """Get current application configuration"""
     config = get_or_create_config(db)
     return config
 
-@router.put("/config/", response_model=ConfigResponse)
+@router.put("/", response_model=ConfigResponse)
 def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) -> AppConfig:
     """Update application configuration"""
     config = get_or_create_config(db)
@@ -101,7 +101,7 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     db.refresh(config)
     return config
 
-@router.get("/config/available-models/", response_model=AvailableModelsResponse)
+@router.get("/available-models/", response_model=AvailableModelsResponse)
 def get_available_models() -> dict:
     """Get list of available visual language models"""
     # For now, only one model is available

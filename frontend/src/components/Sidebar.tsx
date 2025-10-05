@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Box, IconButton, Typography, Divider, Collapse } from "@mui/material";
 import {
   Explore as ExploreIcon,
@@ -12,7 +12,9 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   AcUnit as BrainIcon,
+  LiveTv as LiveTvIcon,
 } from "@mui/icons-material";
+import { useLocation, useNavigate } from "react-router-dom";
 
 interface SidebarProps {
   onRefresh?: () => void;
@@ -20,23 +22,42 @@ interface SidebarProps {
   onHelp?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ onRefresh, onSettings, onHelp }) => {
-  const [sectionsExpanded, setSectionsExpanded] = useState({
+type SectionsState = { main: boolean; personal: boolean };
+type NavItem = { icon: React.ElementType; label: string; path: string; active: boolean };
+
+const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
+  const { onRefresh, onSettings, onHelp } = props;
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [sectionsExpanded, setSectionsExpanded] = useState<SectionsState>({
     main: true,
     personal: true,
   });
 
   const toggleSection = (section: "main" | "personal") => {
-    setSectionsExpanded((prev) => ({
+    setSectionsExpanded((prev: SectionsState) => ({
       ...prev,
       [section]: !prev[section],
     }));
   };
 
-  const navigationItems = [
-    { icon: ExploreIcon, label: "Dashboard", active: true },
-    { icon: AssetsIcon, label: "Assets", active: false },
-  ];
+  const navigationItems: NavItem[] = useMemo(
+    () => [
+      {
+        icon: ExploreIcon,
+        label: "Dashboard",
+        path: "/",
+        active: location.pathname === "/",
+      },
+      {
+        icon: LiveTvIcon,
+        label: "Livestream Recorder",
+        path: "/livestream-recorder",
+        active: location.pathname === "/livestream-recorder",
+      },
+    ],
+    [location.pathname]
+  );
 
   const personalItems = [
     { icon: MyVideosIcon, label: "My Videos", active: false },
@@ -126,7 +147,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onRefresh, onSettings, onHelp }) => {
 
         <Collapse in={sectionsExpanded.main}>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-            {navigationItems.map((item, index) => (
+            {navigationItems.map((item: NavItem, index: number) => (
               <Box
                 key={index}
                 sx={{
@@ -147,6 +168,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onRefresh, onSettings, onHelp }) => {
                     borderColor: "#E8E8E8",
                   },
                 }}
+                onClick={() => navigate(item.path)}
               >
                 <item.icon
                   sx={{

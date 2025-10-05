@@ -20,6 +20,7 @@ import {
   getVideoJobs,
   JobProgress,
 } from "@/services/api";
+import LivestreamRecorderPage from "@/components/LivestreamRecorder/LivestreamRecorderPage";
 
 const modernTheme = createTheme({
   palette: {
@@ -584,6 +585,46 @@ const App: React.FC = () => {
         <Router>
           <Routes>
             <Route path="/" element={<MainApp />} />
+            <Route
+              path="/livestream-recorder"
+              element={
+                <Box
+                  sx={{
+                    display: "flex",
+                    height: "100vh",
+                    backgroundColor: "#FFFFFF",
+                    borderRadius: "16px",
+                    overflow: "hidden",
+                    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
+                    margin: "8px",
+                    border: "1px solid #F0F0F0",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
+                      borderRight: "1px solid #E8E8E8",
+                    }}
+                  >
+                    <Sidebar />
+                  </Box>
+
+                  <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                    <Box
+                      sx={{
+                        flexGrow: 1,
+                        backgroundColor: "#FFFFFF",
+                        padding: "16px",
+                        height: "100%",
+                        overflow: "auto",
+                      }}
+                    >
+                      <LivestreamRecorderPage />
+                    </Box>
+                  </Box>
+                </Box>
+              }
+            />
             <Route path="/player/:videoPath" element={<VideoPlayer />} />
           </Routes>
         </Router>

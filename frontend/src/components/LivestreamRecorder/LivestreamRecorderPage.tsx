@@ -1,49 +1,25 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Typography, CircularProgress } from "@mui/material";
 import LivestreamGrid from "./LivestreamGrid";
-import { LivestreamItem } from "./LivestreamCard";
+import { StreamInfo } from "@/types/video";
+import { streamService } from "@/services/api";
 import { LiveTv as LiveTvIcon } from "@mui/icons-material";
 
-const PUMP_FUN_URL =
-  "https://frontend-api-v3.pump.fun/coins/currently-live?offset=0&limit=60&sort=currently_live&order=DESC&includeNsfw=true";
-
-const RECORD_SIM_MS = 30_000; // 30s simulated recording fill
-
 const LivestreamRecorderPage: React.FC = () => {
-  const [items, setItems] = useState<LivestreamItem[]>([]);
+  const [items, setItems] = useState<StreamInfo[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [recordingMints, setRecordingMints] = useState<Set<string>>(new Set());
-  const [progressByMint, setProgressByMint] = useState<Record<string, number>>(
-    {}
-  );
   const [hiddenMints, setHiddenMints] = useState<Set<string>>(new Set());
 
-  // Fetch currently live streams
+  // Fetch popular live streams from backend
   useEffect(() => {
     let isMounted = true;
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch(PUMP_FUN_URL);
-        if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
-        const data: unknown = await res.json();
-        if (!Array.isArray(data)) throw new Error("Unexpected response shape");
-        const parsed: LivestreamItem[] = data
-          .filter((d) =>
-            d && typeof d === "object" && "mint" in d && "name" in d
-          )
-          .map((d: any) => ({
-            mint: String(d.mint),
-            name: String(d.name ?? "Unnamed"),
-            symbol: String(d.symbol ?? ""),
-            thumbnail: String(d.thumbnail ?? ""),
-            num_participants: Number(d.num_participants ?? 0),
-            last_reply: Number(d.last_reply ?? 0),
-            usd_market_cap: Number(d.usd_market_cap ?? 0),
-          }));
+        const streams = await streamService.getPopular(20);
         if (isMounted) {
-          setItems(parsed);
+          setItems(streams);
           setError(null);
         }
       } catch (e: any) {
@@ -57,46 +33,12 @@ const LivestreamRecorderPage: React.FC = () => {
     };
   }, []);
 
-  // Simulate recording progress
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setProgressByMint((prev) => {
-        const next: Record<string, number> = { ...prev };
-        recordingMints.forEach((mint) => {
-          const current = next[mint] ?? 0;
-          const increment = 100 / (RECORD_SIM_MS / 200); // update at 200ms steps
-          const updated = Math.min(100, current + increment);
-          next[mint] = updated;
-        });
-        return next;
-      });
-    }, 200);
-    return () => clearInterval(interval);
-  }, [recordingMints]);
-
-  const handleToggleRecord = (mint: string) => {
-    setRecordingMints((prev) => {
-      const updated = new Set(prev);
-      if (updated.has(mint)) {
-        updated.delete(mint);
-        setProgressByMint((p) => {
-          const { [mint]: _, ...rest } = p;
-          return rest;
-        });
-      } else {
-        updated.add(mint);
-        setProgressByMint((p) => ({ ...p, [mint]: 0 }));
-      }
-      return updated;
-    });
-  };
-
   const handleHide = (mint: string) => {
     setHiddenMints((prev) => new Set([...prev, mint]));
   };
 
   // Filter out hidden livestreams
-  const visibleItems = items.filter((item) => !hiddenMints.has(item.mint));
+  const visibleItems = items.filter((item) => !hiddenMints.has(item.mint_id));
 
   if (loading) {
     return (
@@ -151,9 +93,6 @@ const LivestreamRecorderPage: React.FC = () => {
       </Box>
       <LivestreamGrid
         items={visibleItems}
-        recordingMints={recordingMints}
-        progressByMint={progressByMint}
-        onToggleRecord={handleToggleRecord}
         onHide={handleHide}
       />
     </Box>

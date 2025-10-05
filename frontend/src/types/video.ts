@@ -31,4 +31,55 @@ export interface TimestampCreate {
   start_time: number;
   end_time: number | null;
   confidence: number;
+}
+
+// Stream-related types matching backend StreamInfo model
+export interface StreamInfo {
+  mint_id: string;
+  name: string;
+  symbol: string;
+  description?: string;
+  image_uri?: string;
+  thumbnail?: string;
+  creator?: string;
+  market_cap?: number;
+  usd_market_cap?: number;
+  num_participants: number;
+  is_currently_live: boolean;
+  created_timestamp?: number;
+  last_trade_timestamp?: number;
+  nsfw: boolean;
+  website?: string;
+  twitter?: string;
+  telegram?: string;
+  recording: boolean;
+}
+
+// Recording-related types
+export interface RecordingStatus {
+  mint_id: string;
+  is_recording: boolean;
+  duration_seconds: number;
+  output_format: string;
+  video_quality: string;
+  started_at?: string;
+  file_path?: string;
+}
+
+export interface StartRecordingRequest {
+  mint_id: string;
+  output_format: string;
+  video_quality: string;
+}
+
+export interface StopRecordingRequest {
+  mint_id: string;
+}
+
+export interface StartSessionRequest {
+  mint_id: string;
+}
+
+export interface StopSessionRequest {
+  mint_id: string;
 } 

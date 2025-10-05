@@ -19,32 +19,19 @@ import {
   MoreVert as MoreVertIcon,
   RemoveCircleOutline as RemoveIcon,
 } from "@mui/icons-material";
-
-export type LivestreamItem = {
-  mint: string;
-  name: string;
-  symbol: string;
-  thumbnail: string;
-  num_participants: number;
-  last_reply: number;
-  usd_market_cap: number;
-};
+import { StreamInfo } from "@/types/video";
+import { useRecording } from "@/hooks/useRecording";
 
 type LivestreamCardProps = {
-  item: LivestreamItem;
-  isRecording: boolean;
-  progress: number; // 0..100
-  onToggleRecord: (mint: string) => void;
+  item: StreamInfo;
   onHide: (mint: string) => void;
 };
 
 const LivestreamCard: React.FC<LivestreamCardProps> = ({
   item,
-  isRecording,
-  progress,
-  onToggleRecord,
   onHide,
 }) => {
+  const { isRecording, progress, startRecording, stopRecording, isLoading, error } = useRecording(item.mint_id);
   const [imageError, setImageError] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     mouseX: number;
@@ -54,9 +41,9 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
 
   const marketCapLabel = useMemo(() => {
     try {
-      return `$${item.usd_market_cap.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+      return `$${(item.usd_market_cap ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
     } catch {
-      return `$${Math.round(item.usd_market_cap)}`;
+      return `$${Math.round(item.usd_market_cap ?? 0)}`;
     }
   }, [item.usd_market_cap]);
 
@@ -77,7 +64,20 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
   };
 
   const handleHideClick = () => {
-    onHide(item.mint);
+    onHide(item.mint_id);
+    handleClose();
+  };
+
+  const handleToggleRecord = async () => {
+    if (isRecording) {
+      await stopRecording();
+    } else {
+      await startRecording();
+    }
+  };
+
+  const handleStopRecording = async () => {
+    await stopRecording();
     handleClose();
   };
 
@@ -173,7 +173,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         <Box
           role="button"
           aria-label={isRecording ? "Stop recording" : "Start recording"}
-          onClick={() => onToggleRecord(item.mint)}
+          onClick={handleToggleRecord}
           sx={{
             position: "absolute",
             inset: 0,
@@ -187,7 +187,8 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               opacity: 1,
               background: "rgba(0,0,0,0.6)",
             },
-            cursor: "pointer",
+            cursor: isLoading ? "not-allowed" : "pointer",
+            pointerEvents: isLoading ? "none" : "auto",
           }}
         >
           <Box
@@ -202,7 +203,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
             }}
           >
-            <FiberManualRecordIcon sx={{ color: "#FF4D4D", animation: "pulse 1.5s infinite" }} />
+            <FiberManualRecordIcon sx={{ color: "#FF4D4D", animation: isRecording ? "pulse 1.5s infinite" : "none" }} />
           </Box>
         </Box>
       </Box>
@@ -278,6 +279,33 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         },
       }}
     >
+      {isRecording && (
+        <MenuItem
+          onClick={handleStopRecording}
+          sx={{
+            fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+            fontSize: "14px",
+            color: "#FF4D4D",
+            "&:hover": {
+              backgroundColor: "#FFEBEE",
+            },
+          }}
+        >
+          <ListItemIcon>
+            <FiberManualRecordIcon sx={{ color: "#FF4D4D", fontSize: 20 }} />
+          </ListItemIcon>
+          <ListItemText
+            primary="Stop Recording"
+            sx={{
+              "& .MuiTypography-root": {
+                fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                fontSize: "14px",
+                fontWeight: 400,
+              },
+            }}
+          />
+        </MenuItem>
+      )}
       <MenuItem
         onClick={handleHideClick}
         sx={{

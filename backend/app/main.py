@@ -32,7 +32,7 @@ async def on_startup() -> None:
 app.include_router(videos.router, prefix="/api/videos", tags=["videos"])
 app.include_router(config.router, prefix="/api/config", tags=["config"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
-app.include_router(pumpfun_streams.router, prefix="/api/pumpfun", tags=["pumpfun"])
+app.include_router(pumpfun_streams.router, prefix="/api/live", tags=["live"])
 app.include_router(live_sessions.router, prefix="/api/live-sessions", tags=["live-sessions"])
 app.include_router(recording.router, prefix="/api/recording", tags=["recording"])
 

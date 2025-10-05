@@ -13,6 +13,7 @@ class ConfigUpdate(BaseModel):
     llm_base_url: str
     llm_model: str
     max_batch_size: int
+    livekit_url: str
 
     @field_validator('analysis_tags')
     @classmethod
@@ -43,6 +44,15 @@ class ConfigUpdate(BaseModel):
         if v < 1 or v > 10:
             raise ValueError('Max batch size must be between 1 and 10')
         return v
+    
+    @field_validator('livekit_url')
+    @classmethod
+    def validate_livekit_url(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError('LiveKit URL cannot be empty')
+        if not v.startswith(('ws://', 'wss://')):
+            raise ValueError('LiveKit URL must start with ws:// or wss://')
+        return v.strip()
 
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -52,6 +62,7 @@ class ConfigResponse(BaseModel):
     llm_base_url: str
     llm_model: str
     max_batch_size: int
+    livekit_url: str
     updated_at: datetime
 
 class AvailableModelsResponse(BaseModel):
@@ -83,6 +94,7 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     config.llm_base_url = config_update.llm_base_url
     config.llm_model = config_update.llm_model
     config.max_batch_size = config_update.max_batch_size
+    config.livekit_url = config_update.livekit_url
     config.updated_at = datetime.now(timezone.utc)
     
     db.commit()

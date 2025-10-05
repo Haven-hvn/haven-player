@@ -33,6 +33,7 @@ interface AppConfig {
   llm_base_url: string;
   llm_model: string;
   max_batch_size: number;
+  livekit_url: string;
   updated_at: string;
 }
 
@@ -55,6 +56,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     llm_base_url: "http://localhost:1234",
     llm_model: "HuggingFaceTB/SmolVLM-Instruct",
     max_batch_size: 1,
+    livekit_url: "wss://pump-prod-tg2x8veh.livekit.cloud",
   });
   const [availableModels, setAvailableModels] = useState<string[]>([]);
 
@@ -78,6 +80,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         llm_base_url: data.llm_base_url,
         llm_model: data.llm_model,
         max_batch_size: data.max_batch_size,
+        livekit_url: data.livekit_url,
       });
     } catch (err) {
       setError(
@@ -488,6 +491,80 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
                   </Select>
                 </FormControl>
               </Box>
+            </Box>
+
+            <Divider sx={{ backgroundColor: "#F0F0F0" }} />
+
+            <Box>
+              <Box
+                sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}
+              >
+                <Box
+                  sx={{
+                    width: 24,
+                    height: 24,
+                    backgroundColor: "#2196F3",
+                    borderRadius: "6px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <ServerIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
+                </Box>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    color: "#000000",
+                    fontWeight: 500,
+                    fontSize: "16px",
+                  }}
+                >
+                  LiveKit Configuration
+                </Typography>
+              </Box>
+
+              <TextField
+                fullWidth
+                label="LiveKit URL"
+                value={config.livekit_url}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    livekit_url: e.target.value,
+                  }))
+                }
+                placeholder="wss://pump-prod-tg2x8veh.livekit.cloud"
+                helperText="WebSocket URL for LiveKit server connection"
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    backgroundColor: "#FAFAFA",
+                    borderRadius: "8px",
+                    color: "#000000",
+                    "& fieldset": {
+                      borderColor: "#E0E0E0",
+                    },
+                    "&:hover fieldset": {
+                      borderColor: "#BDBDBD",
+                    },
+                    "&.Mui-focused fieldset": {
+                      borderColor: "#000000",
+                      borderWidth: "2px",
+                    },
+                  },
+                  "& .MuiInputLabel-root": {
+                    color: "#6B6B6B",
+                    fontSize: "14px",
+                  },
+                  "& .MuiInputLabel-root.Mui-focused": {
+                    color: "#000000",
+                  },
+                  "& .MuiFormHelperText-root": {
+                    color: "#6B6B6B",
+                    fontSize: "12px",
+                  },
+                }}
+              />
             </Box>
 
             <Divider sx={{ backgroundColor: "#F0F0F0" }} />

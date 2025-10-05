@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording
+from app.models.base import init_db
 
 app = FastAPI(
     title="Haven Player API",
@@ -21,6 +22,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Ensure database tables exist on startup
+@app.on_event("startup")
+async def on_startup() -> None:
+    init_db()
 
 # Include routers
 app.include_router(videos.router, prefix="/api/videos", tags=["videos"])

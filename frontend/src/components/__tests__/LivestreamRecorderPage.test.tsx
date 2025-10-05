@@ -14,8 +14,11 @@ describe('LivestreamRecorderPage', () => {
   });
 
   it('renders empty state when no streams', async () => {
-    // @ts-expect-error - override global fetch in test scope
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    const mockFetch: jest.MockedFunction<typeof fetch> = jest
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => [] } as unknown as Response);
+
+    globalThis.fetch = mockFetch;
 
     renderWithTheme(<LivestreamRecorderPage />);
 
@@ -24,8 +27,7 @@ describe('LivestreamRecorderPage', () => {
   });
 
   it('renders header count and grid when streams exist', async () => {
-    // @ts-expect-error - override global fetch in test scope
-    global.fetch = jest.fn().mockResolvedValue({
+    const mockFetch: jest.MockedFunction<typeof fetch> = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => [
         {
@@ -47,7 +49,9 @@ describe('LivestreamRecorderPage', () => {
           usd_market_cap: 200,
         },
       ],
-    });
+    } as unknown as Response);
+
+    globalThis.fetch = mockFetch;
 
     renderWithTheme(<LivestreamRecorderPage />);
 

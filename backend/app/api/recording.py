@@ -139,3 +139,17 @@ async def get_supported_formats():
             }
         }
     }
+
+
+@router.get("/decoder-status", response_model=Dict[str, Any])
+async def get_decoder_status():
+    """
+    Get decoder capabilities and status.
+    Shows which hardware decoders are available and recommended settings.
+    """
+    try:
+        result = recording_service.get_decoder_status()
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

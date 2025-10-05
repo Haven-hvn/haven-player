@@ -5,6 +5,7 @@ Handles AV1 recording with proper WebRTC connection management.
 
 import asyncio
 import json
+import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime, timezone
@@ -17,6 +18,9 @@ from aiortc.codecs import get_encoder
 
 from app.services.stream_manager import StreamManager
 from app.models.database import get_db
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class AioRTCRecordingService:
@@ -33,13 +37,23 @@ class AioRTCRecordingService:
         # Active recordings
         self.active_recordings: Dict[str, 'StreamRecorder'] = {}
         
-        # Default recording configuration
+        # Decoder fallback configuration
+        self.decoder_fallbacks = {
+            "h264": ["h264_cuvid", "h264_qsv", "h264_videotoolbox", "h264"],
+            "h265": ["hevc_cuvid", "hevc_qsv", "hevc_videotoolbox", "hevc"],
+            "vp8": ["vp8_cuvid", "vp8"],
+            "vp9": ["vp9_cuvid", "vp9"]
+        }
+        
+        # Default recording configuration with fallback support
         self.default_config = {
             "video_codec": "libaom-av1",
             "audio_codec": "aac",
             "video_bitrate": "2000k",
             "audio_bitrate": "128k",
-            "format": "mp4"
+            "format": "mp4",
+            "use_hardware_decoder": True,
+            "fallback_to_software": True
         }
         
         # Quality presets
@@ -81,8 +95,15 @@ class AioRTCRecordingService:
             if not room:
                 return {"success": False, "error": "No active LiveKit room found"}
             
-            # Create recording configuration
+            # Create recording configuration with decoder capabilities
             config = self._get_recording_config(output_format, video_quality)
+            
+            # Detect decoder capabilities and adjust config
+            decoder_capabilities = self._detect_decoder_capabilities()
+            if not decoder_capabilities.get("nvidia_cuvid", False):
+                logger.info("NVIDIA CUVID not available, using software decoders")
+                config["use_hardware_decoder"] = False
+                config["fallback_to_software"] = True
             
             # Create stream recorder with LiveKit room
             recorder = StreamRecorder(
@@ -142,6 +163,19 @@ class AioRTCRecordingService:
             recordings[mint_id] = await recorder.get_status()
         return {"success": True, "recordings": recordings}
 
+    def get_decoder_status(self) -> Dict[str, Any]:
+        """Get decoder capabilities and status."""
+        capabilities = self._detect_decoder_capabilities()
+        return {
+            "success": True,
+            "decoder_capabilities": capabilities,
+            "recommended_config": {
+                "use_hardware_decoder": capabilities.get("nvidia_cuvid", False),
+                "fallback_to_software": True,
+                "safe_mode": not capabilities.get("nvidia_cuvid", False)
+            }
+        }
+
     def _get_recording_config(self, output_format: str, video_quality: str) -> Dict[str, Any]:
         """Get recording configuration based on format and quality."""
         config = self.default_config.copy()
@@ -168,6 +202,65 @@ class AioRTCRecordingService:
         
         return config
 
+    def _get_safe_decoder_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get a safe decoder configuration with fallbacks for hardware decoder failures.
+        """
+        safe_config = config.copy()
+        
+        # If hardware decoder is enabled, try to use safe fallbacks
+        if config.get("use_hardware_decoder", True):
+            # Add FFmpeg options to handle decoder failures gracefully
+            safe_config["ffmpeg_options"] = {
+                "hwaccel": "auto",  # Try hardware acceleration but fallback to software
+                "hwaccel_output_format": "auto",
+                "error_correction": "ignore",  # Ignore decoder errors and continue
+                "threads": "0",  # Use all available threads
+                "preset": "fast"  # Use fast preset for better compatibility
+            }
+            
+            # Add error handling for NVDEC failures
+            safe_config["ffmpeg_input_options"] = [
+                "-hwaccel", "auto",
+                "-hwaccel_output_format", "auto",
+                "-err_detect", "ignore_err",
+                "-threads", "0"
+            ]
+        
+        return safe_config
+
+    def _detect_decoder_capabilities(self) -> Dict[str, bool]:
+        """
+        Detect available decoder capabilities to avoid NVDEC errors.
+        """
+        capabilities = {
+            "nvidia_cuvid": False,
+            "intel_qsv": False,
+            "apple_videotoolbox": False,
+            "software": True  # Software decoders are always available
+        }
+        
+        try:
+            # Try to detect NVIDIA CUVID support
+            import subprocess
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-decoders"], 
+                capture_output=True, 
+                text=True, 
+                timeout=5
+            )
+            if "h264_cuvid" in result.stdout:
+                capabilities["nvidia_cuvid"] = True
+            if "h264_qsv" in result.stdout:
+                capabilities["intel_qsv"] = True
+            if "h264_videotoolbox" in result.stdout:
+                capabilities["apple_videotoolbox"] = True
+                
+        except Exception as e:
+            logger.warning(f"Could not detect decoder capabilities: {e}")
+        
+        return capabilities
+
 
 class StreamRecorder:
     """
@@ -192,6 +285,33 @@ class StreamRecorder:
         # Get output filename
         self.output_path = self._get_output_filename()
 
+    def _get_safe_decoder_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get a safe decoder configuration with fallbacks for hardware decoder failures.
+        """
+        safe_config = config.copy()
+        
+        # If hardware decoder is enabled, try to use safe fallbacks
+        if config.get("use_hardware_decoder", True):
+            # Add FFmpeg options to handle decoder failures gracefully
+            safe_config["ffmpeg_options"] = {
+                "hwaccel": "auto",  # Try hardware acceleration but fallback to software
+                "hwaccel_output_format": "auto",
+                "error_correction": "ignore",  # Ignore decoder errors and continue
+                "threads": "0",  # Use all available threads
+                "preset": "fast"  # Use fast preset for better compatibility
+            }
+            
+            # Add error handling for NVDEC failures
+            safe_config["ffmpeg_input_options"] = [
+                "-hwaccel", "auto",
+                "-hwaccel_output_format", "auto",
+                "-err_detect", "ignore_err",
+                "-threads", "0"
+            ]
+        
+        return safe_config
+
     def _get_output_filename(self) -> Path:
         """Generate output filename based on mint_id and timestamp."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -204,15 +324,39 @@ class StreamRecorder:
             if self.is_recording:
                 return {"success": False, "error": "Recording already started"}
             
-            # Create MediaRecorder
-            self.recorder = MediaRecorder(
-                str(self.output_path),
-                format=self.config["format"],
-                video_codec=self.config["video_codec"],
-                audio_codec=self.config["audio_codec"],
-                video_bitrate=self.config["video_bitrate"],
-                audio_bitrate=self.config["audio_bitrate"]
-            )
+            # Get safe decoder configuration
+            safe_config = self._get_safe_decoder_config(self.config)
+            
+            # Create MediaRecorder with error handling
+            try:
+                self.recorder = MediaRecorder(
+                    str(self.output_path),
+                    format=safe_config["format"],
+                    video_codec=safe_config["video_codec"],
+                    audio_codec=safe_config["audio_codec"],
+                    video_bitrate=safe_config["video_bitrate"],
+                    audio_bitrate=safe_config["audio_bitrate"],
+                    options=safe_config.get("ffmpeg_options", {})
+                )
+            except Exception as decoder_error:
+                logger.warning(f"Hardware decoder failed, falling back to software: {decoder_error}")
+                # Fallback to software-only configuration
+                fallback_config = safe_config.copy()
+                fallback_config["video_codec"] = "libx264"  # Use software H.264
+                fallback_config["ffmpeg_options"] = {
+                    "preset": "fast",
+                    "threads": "0"
+                }
+                
+                self.recorder = MediaRecorder(
+                    str(self.output_path),
+                    format=fallback_config["format"],
+                    video_codec=fallback_config["video_codec"],
+                    audio_codec=fallback_config["audio_codec"],
+                    video_bitrate=fallback_config["video_bitrate"],
+                    audio_bitrate=fallback_config["audio_bitrate"],
+                    options=fallback_config.get("ffmpeg_options", {})
+                )
             
             # Connect MediaRecorder to LiveKit WebRTC tracks
             for participant in self.room.remote_participants.values():
@@ -221,8 +365,34 @@ class StreamRecorder:
                         # Add the track to the recorder
                         self.recorder.addTrack(track_publication.track)
             
-            # Start recording
-            await self.recorder.start()
+            # Start recording with error handling
+            try:
+                await self.recorder.start()
+            except Exception as start_error:
+                logger.error(f"Failed to start recording: {start_error}")
+                # Try with minimal configuration
+                if "NVDEC" in str(start_error) or "cuvid" in str(start_error).lower():
+                    logger.info("NVDEC error detected, retrying with software decoder")
+                    # Force software decoder
+                    self.recorder = MediaRecorder(
+                        str(self.output_path),
+                        format="mp4",
+                        video_codec="libx264",
+                        audio_codec="aac",
+                        video_bitrate="1000k",
+                        audio_bitrate="128k",
+                        options={"preset": "fast", "threads": "0"}
+                    )
+                    
+                    # Re-add tracks
+                    for participant in self.room.remote_participants.values():
+                        for track_publication in participant.track_publications.values():
+                            if track_publication.track:
+                                self.recorder.addTrack(track_publication.track)
+                    
+                    await self.recorder.start()
+                else:
+                    raise start_error
             
             self.is_recording = True
             self.start_time = datetime.now(timezone.utc)
@@ -234,6 +404,7 @@ class StreamRecorder:
             }
             
         except Exception as e:
+            logger.error(f"Recording start failed: {e}")
             return {"success": False, "error": str(e)}
 
     async def stop(self) -> Dict[str, Any]:

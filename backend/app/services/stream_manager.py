@@ -12,7 +12,7 @@ import livekit.rtc as rtc
 from livekit import api
 
 from app.services.pumpfun_service import PumpFunService
-from app.models.config import Config
+from app.models.config import AppConfig
 from app.models.database import get_db
 
 
@@ -34,7 +34,7 @@ class StreamManager:
     """
     
     def __init__(self):
-        self.config: Optional[Config] = None
+        self.config: Optional[AppConfig] = None
         self.pumpfun_service = PumpFunService()
         
         # Active streams
@@ -55,7 +55,7 @@ class StreamManager:
             
         db = next(get_db())
         try:
-            config = db.query(Config).first()
+            config = db.query(AppConfig).first()
             if not config:
                 raise ValueError("No configuration found in database")
             self.config = config

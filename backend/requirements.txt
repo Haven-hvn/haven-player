@@ -9,11 +9,11 @@ httpx==0.25.2
 vlm-engine==0.3.0
 livekit==1.0.13
 opencv-python==4.10.0.84
-av==15.1.0
+av==11.0.0
 websockets==13.1
 ImageHash==4.3.2
 livekit-api==1.0.5
 Pillow==10.0.0
 # aiortc dependencies for AV1 recording
 aiortc==1.6.0
-aiofiles==23.2.1
+aiofiles==24.1.0

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import String, Integer, Text
+from sqlalchemy import String, Integer, Text, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
@@ -15,6 +15,11 @@ class AppConfig(Base):
     llm_model: Mapped[str] = mapped_column(String, default="HuggingFaceTB/SmolVLM-Instruct")
     # Processing Configuration
     max_batch_size: Mapped[int] = mapped_column(Integer, default=1)
+    # LiveKit Configuration
+    livekit_url: Mapped[str] = mapped_column(String, default="ws://pump-prod-tg2x8veh.livekit.cloud")
+    livekit_api_key: Mapped[str] = mapped_column(String, default="")
+    livekit_api_secret: Mapped[str] = mapped_column(String, default="")
+    recording_directory: Mapped[str] = mapped_column(String, default="~/.haven-player/recordings")
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -25,5 +30,9 @@ class AppConfig(Base):
             'llm_base_url': self.llm_base_url,
             'llm_model': self.llm_model,
             'max_batch_size': self.max_batch_size,
+            'livekit_url': self.livekit_url,
+            'livekit_api_key': self.livekit_api_key,
+            'livekit_api_secret': self.livekit_api_secret,
+            'recording_directory': self.recording_directory,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         } 

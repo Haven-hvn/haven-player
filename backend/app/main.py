@@ -1,28 +1,50 @@
+"""
+FastAPI application with shared stream management.
+"""
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import videos, config, jobs
-from app.models.base import init_db
 
-app = FastAPI(title="Haven Player API", version="1.0.0")
+from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording
 
-# Configure CORS
+app = FastAPI(
+    title="Haven Player API",
+    description="API for Haven Player with shared stream management",
+    version="2.0.0"
+)
+
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Include routers
-app.include_router(videos.router, prefix="/api", tags=["videos"])
-app.include_router(config.router, prefix="/api", tags=["config"])
-app.include_router(jobs.router, prefix="/api", tags=["jobs"])
+app.include_router(videos.router, prefix="/api/videos", tags=["videos"])
+app.include_router(config.router, prefix="/api/config", tags=["config"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+app.include_router(pumpfun_streams.router, prefix="/api/pumpfun", tags=["pumpfun"])
+app.include_router(live_sessions.router, prefix="/api/live-sessions", tags=["live-sessions"])
+app.include_router(recording.router, prefix="/api/recording", tags=["recording"])
 
-@app.on_event("startup")
-async def startup_event():
-    init_db()
 
 @app.get("/")
 async def root():
-    return {"message": "Haven Player API is running"}
+    return {
+        "message": "Haven Player API with Shared Stream Management",
+        "version": "2.0.0",
+        "features": [
+            "Shared WebRTC connection management",
+            "Live streaming with WebSocket",
+            "AV1 recording with aiortc",
+            "Pump.fun integration"
+        ]
+    }
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "version": "2.0.0"}

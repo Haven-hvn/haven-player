@@ -62,7 +62,7 @@ export const videoService = {
 
 // Job-related API functions
 export const startAnalysisJob = async (videoPath: string): Promise<JobCreateResponse> => {
-  const response = await api.post<JobCreateResponse>(`/videos/${encodeURIComponent(videoPath)}/analyze`);
+  const response = await api.post<JobCreateResponse>(`/jobs/videos/${encodeURIComponent(videoPath)}/analyze`);
   return response.data;
 };
 
@@ -72,7 +72,7 @@ export const getJobProgress = async (jobId: number): Promise<JobProgress> => {
 };
 
 export const getVideoJobs = async (videoPath: string): Promise<JobProgress[]> => {
-  const response = await api.get<JobProgress[]>(`/videos/${encodeURIComponent(videoPath)}/jobs`);
+  const response = await api.get<JobProgress[]>(`/jobs/videos/${encodeURIComponent(videoPath)}/jobs`);
   return response.data;
 };
 

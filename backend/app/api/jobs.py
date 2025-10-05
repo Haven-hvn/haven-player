@@ -34,14 +34,17 @@ def start_analysis_job(
     db: Session = Depends(get_db)
 ) -> dict:
     """Start a new analysis job for the specified video."""
+    # Normalize path - add leading slash if missing (frontend strips it to avoid double slashes)
+    normalized_path = video_path if video_path.startswith('/') else f'/{video_path}'
+    
     # Check if video exists
-    video = db.query(Video).filter(Video.path == video_path).first()
+    video = db.query(Video).filter(Video.path == normalized_path).first()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
     
     # Check if there's already an active job for this video
     existing_job = db.query(AnalysisJob).filter(
-        AnalysisJob.video_path == video_path,
+        AnalysisJob.video_path == normalized_path,
         AnalysisJob.status.in_(['pending', 'processing'])
     ).first()
     
@@ -52,14 +55,14 @@ def start_analysis_job(
         )
     
     # Create new job
-    job = AnalysisJob(video_path=video_path)
+    job = AnalysisJob(video_path=normalized_path)
     db.add(job)
     db.commit()
     db.refresh(job)
     
     # Start async processing
     background_tasks.add_task(
-        lambda: asyncio.run(process_video_async(job.id, video_path))
+        lambda: asyncio.run(process_video_async(job.id, normalized_path))
     )
     
     return {"job_id": job.id, "status": "started"}
@@ -78,12 +81,15 @@ def get_video_jobs(
     db: Session = Depends(get_db)
 ) -> List[AnalysisJob]:
     """Get all jobs for a specific video."""
-    video = db.query(Video).filter(Video.path == video_path).first()
+    # Normalize path - add leading slash if missing (frontend strips it to avoid double slashes)
+    normalized_path = video_path if video_path.startswith('/') else f'/{video_path}'
+    
+    video = db.query(Video).filter(Video.path == normalized_path).first()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
     
     jobs = db.query(AnalysisJob).filter(
-        AnalysisJob.video_path == video_path
+        AnalysisJob.video_path == normalized_path
     ).order_by(AnalysisJob.created_at.desc()).all()
     
     return jobs

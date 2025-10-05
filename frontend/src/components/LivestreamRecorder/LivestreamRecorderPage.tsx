@@ -17,6 +17,7 @@ const LivestreamRecorderPage: React.FC = () => {
   const [progressByMint, setProgressByMint] = useState<Record<string, number>>(
     {}
   );
+  const [hiddenMints, setHiddenMints] = useState<Set<string>>(new Set());
 
   // Fetch currently live streams
   useEffect(() => {
@@ -90,6 +91,13 @@ const LivestreamRecorderPage: React.FC = () => {
     });
   };
 
+  const handleHide = (mint: string) => {
+    setHiddenMints((prev) => new Set([...prev, mint]));
+  };
+
+  // Filter out hidden livestreams
+  const visibleItems = items.filter((item) => !hiddenMints.has(item.mint));
+
   if (loading) {
     return (
       <Box sx={{ p: 4, display: "flex", alignItems: "center", gap: 2 }}>
@@ -107,7 +115,7 @@ const LivestreamRecorderPage: React.FC = () => {
     );
   }
 
-  if (items.length === 0) {
+  if (visibleItems.length === 0) {
     return (
       <Box
         sx={{
@@ -138,14 +146,15 @@ const LivestreamRecorderPage: React.FC = () => {
           Livestream Recorder
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          {items.length} Live Streams
+          {visibleItems.length} Live Streams
         </Typography>
       </Box>
       <LivestreamGrid
-        items={items}
+        items={visibleItems}
         recordingMints={recordingMints}
         progressByMint={progressByMint}
         onToggleRecord={handleToggleRecord}
+        onHide={handleHide}
       />
     </Box>
   );

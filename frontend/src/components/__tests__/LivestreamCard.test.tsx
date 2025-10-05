@@ -26,6 +26,7 @@ describe('LivestreamCard', () => {
         isRecording={false}
         progress={0}
         onToggleRecord={jest.fn()}
+        onHide={jest.fn()}
       />
     );
 
@@ -37,12 +38,14 @@ describe('LivestreamCard', () => {
 
   it('calls onToggleRecord when REC overlay is clicked', () => {
     const onToggle = jest.fn();
+    const onHide = jest.fn();
     renderWithTheme(
       <LivestreamCard
         item={mockItem}
         isRecording={false}
         progress={0}
         onToggleRecord={onToggle}
+        onHide={onHide}
       />
     );
 
@@ -58,6 +61,7 @@ describe('LivestreamCard', () => {
         isRecording
         progress={10}
         onToggleRecord={jest.fn()}
+        onHide={jest.fn()}
       />
     );
 
@@ -71,6 +75,7 @@ describe('LivestreamCard', () => {
         isRecording={false}
         progress={0}
         onToggleRecord={jest.fn()}
+        onHide={jest.fn()}
       />
     );
 
@@ -78,6 +83,29 @@ describe('LivestreamCard', () => {
     // Trigger onError
     fireEvent.error(img);
     expect(screen.getByLabelText('No stream image')).toBeInTheDocument();
+  });
+
+  it('calls onHide when hide menu item is clicked', () => {
+    const onHide = jest.fn();
+    renderWithTheme(
+      <LivestreamCard
+        item={mockItem}
+        isRecording={false}
+        progress={0}
+        onToggleRecord={jest.fn()}
+        onHide={onHide}
+      />
+    );
+
+    // Click the three dots menu
+    const menuButton = screen.getByRole('button', { name: /more/i });
+    fireEvent.click(menuButton);
+
+    // Click the hide menu item
+    const hideMenuItem = screen.getByText('Hide livestream from list');
+    fireEvent.click(hideMenuItem);
+
+    expect(onHide).toHaveBeenCalledWith('mint-1');
   });
 });
 

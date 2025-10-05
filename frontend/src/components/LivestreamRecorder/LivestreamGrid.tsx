@@ -7,6 +7,7 @@ type LivestreamGridProps = {
   recordingMints: Set<string>;
   progressByMint: Record<string, number>;
   onToggleRecord: (mint: string) => void;
+  onHide: (mint: string) => void;
 };
 
 const LivestreamGrid: React.FC<LivestreamGridProps> = ({
@@ -14,6 +15,7 @@ const LivestreamGrid: React.FC<LivestreamGridProps> = ({
   recordingMints,
   progressByMint,
   onToggleRecord,
+  onHide,
 }) => {
   return (
     <Box sx={{ p: 2 }}>
@@ -25,6 +27,7 @@ const LivestreamGrid: React.FC<LivestreamGridProps> = ({
               isRecording={recordingMints.has(item.mint)}
               progress={progressByMint[item.mint] ?? 0}
               onToggleRecord={onToggleRecord}
+              onHide={onHide}
             />
           </Grid>
         ))}

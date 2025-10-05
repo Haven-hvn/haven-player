@@ -8,10 +8,16 @@ import {
   Typography,
   Chip,
   IconButton,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
 } from "@mui/material";
 import {
   LiveTv as LiveTvIcon,
   FiberManualRecord as FiberManualRecordIcon,
+  MoreVert as MoreVertIcon,
+  RemoveCircleOutline as RemoveIcon,
 } from "@mui/icons-material";
 
 export type LivestreamItem = {
@@ -29,6 +35,7 @@ type LivestreamCardProps = {
   isRecording: boolean;
   progress: number; // 0..100
   onToggleRecord: (mint: string) => void;
+  onHide: (mint: string) => void;
 };
 
 const LivestreamCard: React.FC<LivestreamCardProps> = ({
@@ -36,8 +43,13 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
   isRecording,
   progress,
   onToggleRecord,
+  onHide,
 }) => {
   const [imageError, setImageError] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    mouseX: number;
+    mouseY: number;
+  } | null>(null);
   const progressWidth = `${Math.max(0, Math.min(100, progress))}%`;
 
   const marketCapLabel = useMemo(() => {
@@ -48,22 +60,45 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     }
   }, [item.usd_market_cap]);
 
+  const handleContextMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    setContextMenu(
+      contextMenu === null
+        ? {
+            mouseX: event.clientX + 2,
+            mouseY: event.clientY - 6,
+          }
+        : null
+    );
+  };
+
+  const handleClose = () => {
+    setContextMenu(null);
+  };
+
+  const handleHideClick = () => {
+    onHide(item.mint);
+    handleClose();
+  };
+
   return (
-    <Card
-      elevation={0}
-      sx={{
-        borderRadius: "12px",
-        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
-        border: "1px solid #F0F0F0",
-        overflow: "hidden",
-        position: "relative",
-        transition: "all 0.2s ease-in-out",
-        "&:hover": {
-          boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
-          transform: "translateY(-2px)",
-        },
-      }}
-    >
+    <>
+      <Card
+        elevation={0}
+        onContextMenu={handleContextMenu}
+        sx={{
+          borderRadius: "12px",
+          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
+          border: "1px solid #F0F0F0",
+          overflow: "hidden",
+          position: "relative",
+          transition: "all 0.2s ease-in-out",
+          "&:hover": {
+            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+            transform: "translateY(-2px)",
+          },
+        }}
+      >
       <Box sx={{ position: "relative" }}>
         {imageError || !item.thumbnail ? (
           <Box
@@ -108,6 +143,31 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
             fontWeight: 600,
           }}
         />
+
+        {/* Three dots menu */}
+        <IconButton
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleContextMenu(e);
+          }}
+          sx={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            color: "#6B6B6B",
+            backgroundColor: "rgba(255, 255, 255, 0.9)",
+            width: 32,
+            height: 32,
+            "&:hover": {
+              backgroundColor: "rgba(255, 255, 255, 1)",
+              color: "#000000",
+            },
+            transition: "all 0.2s ease-in-out",
+          }}
+        >
+          <MoreVertIcon fontSize="small" />
+        </IconButton>
 
         {/* Hover overlay REC */}
         <Box
@@ -196,6 +256,55 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         }
       `}</style>
     </Card>
+
+    {/* Context Menu */}
+    <Menu
+      open={contextMenu !== null}
+      onClose={handleClose}
+      anchorReference="anchorPosition"
+      anchorPosition={
+        contextMenu !== null
+          ? { top: contextMenu.mouseY, left: contextMenu.mouseX }
+          : undefined
+      }
+      slotProps={{
+        paper: {
+          sx: {
+            borderRadius: "8px",
+            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+            border: "1px solid #E0E0E0",
+            minWidth: 180,
+          },
+        },
+      }}
+    >
+      <MenuItem
+        onClick={handleHideClick}
+        sx={{
+          fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+          fontSize: "14px",
+          color: "#FF4D4D",
+          "&:hover": {
+            backgroundColor: "#FFEBEE",
+          },
+        }}
+      >
+        <ListItemIcon>
+          <RemoveIcon sx={{ color: "#FF4D4D", fontSize: 20 }} />
+        </ListItemIcon>
+        <ListItemText
+          primary="Hide livestream from list"
+          sx={{
+            "& .MuiTypography-root": {
+              fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+              fontSize: "14px",
+              fontWeight: 400,
+            },
+          }}
+        />
+      </MenuItem>
+    </Menu>
+  </>
   );
 };
 

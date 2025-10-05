@@ -16,7 +16,7 @@ class AppConfig(Base):
     # Processing Configuration
     max_batch_size: Mapped[int] = mapped_column(Integer, default=1)
     # LiveKit Configuration
-    livekit_url: Mapped[str] = mapped_column(String, default="ws://pump-prod-tg2x8veh.livekit.cloud")
+    livekit_url: Mapped[str] = mapped_column(String, default="wss://pump-prod-tg2x8veh.livekit.cloud")
     livekit_api_key: Mapped[str] = mapped_column(String, default="")
     livekit_api_secret: Mapped[str] = mapped_column(String, default="")
     recording_directory: Mapped[str] = mapped_column(String, default="~/.haven-player/recordings")

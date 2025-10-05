@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording
 from app.models.base import init_db
+from app.models.database import SessionLocal
+from app.models.config import AppConfig
 
 app = FastAPI(
     title="Haven Player API",
@@ -26,7 +28,26 @@ app.add_middleware(
 # Ensure database tables exist on startup
 @app.on_event("startup")
 async def on_startup() -> None:
+    # Initialize database tables
     init_db()
+    
+    # Create default configuration if none exists
+    db = SessionLocal()
+    try:
+        config = db.query(AppConfig).first()
+        if not config:
+            print("Creating default AppConfig...")
+            config = AppConfig()
+            db.add(config)
+            db.commit()
+            db.refresh(config)
+            print(f"✅ Created default config with ID: {config.id}")
+        else:
+            print(f"✅ AppConfig already exists with ID: {config.id}")
+    except Exception as e:
+        print(f"❌ Error initializing config: {e}")
+    finally:
+        db.close()
 
 # Include routers
 app.include_router(videos.router, prefix="/api/videos", tags=["videos"])

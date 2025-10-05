@@ -66,7 +66,7 @@ async def root():
         "features": [
             "Shared WebRTC connection management",
             "Live streaming with WebSocket",
-            "AV1 recording with aiortc",
+            "Native LiveKit recording with PyAV",
             "Pump.fun integration"
         ]
     }

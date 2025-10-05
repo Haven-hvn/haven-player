@@ -4,6 +4,7 @@ Manages single WebRTC connection for both streaming and recording.
 """
 
 import asyncio
+import logging
 from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,9 @@ from livekit import api
 from app.services.pumpfun_service import PumpFunService
 from app.models.config import AppConfig
 from app.models.database import get_db
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -184,18 +188,23 @@ class StreamManager:
             if not mint_id:
                 return
 
-            # Set up track handlers
-            if track.kind == rtc.TrackKind.KIND_VIDEO:
-                @track.on("frame_received")
-                def on_video_frame(frame: rtc.VideoFrame):
-                    if mint_id in self.video_frame_handlers:
-                        self.video_frame_handlers[mint_id](frame)
-
-            elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                @track.on("frame_received")
-                def on_audio_frame(frame: rtc.AudioFrame):
-                    if mint_id in self.audio_frame_handlers:
-                        self.audio_frame_handlers[mint_id](frame)
+            # Set up track handlers - LiveKit tracks don't support event decorators
+            # Recording will work through MediaRecorder's direct track subscription
+            # Frame handlers are optional and only needed for real-time streaming
+            try:
+                if track.kind == rtc.TrackKind.KIND_VIDEO:
+                    logger.info(f"Video track subscribed for {mint_id}")
+                    # Note: LiveKit RemoteVideoTrack doesn't support on() decorator
+                    # MediaRecorder will handle track recording directly
+                    
+                elif track.kind == rtc.TrackKind.KIND_AUDIO:
+                    logger.info(f"Audio track subscribed for {mint_id}")
+                    # Note: LiveKit RemoteAudioTrack doesn't support on() decorator
+                    # MediaRecorder will handle track recording directly
+                            
+            except Exception as e:
+                print(f"Error setting up track handlers: {e}")
+                # Continue without frame handlers - recording will still work
 
         @self.room.on("disconnected")
         def on_disconnected():

@@ -6,17 +6,17 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 
-from app.services.aiortc_recording_service import AioRTCRecordingService
+from app.services.livekit_recording_service import LiveKitRecordingService
 
 # Initialize the recording service
-recording_service = AioRTCRecordingService()
+recording_service = LiveKitRecordingService()
 
 router = APIRouter()
 
 
 class StartRecordingRequest(BaseModel):
     mint_id: str
-    output_format: str = "av1"  # av1, h264, vp9
+    output_format: str = "av1"  # h264, av1, svtav1, vp9
     video_quality: str = "medium"  # low, medium, high
 
 
@@ -30,7 +30,7 @@ async def start_recording(request: StartRecordingRequest):
     Start recording a pump.fun stream using shared StreamManager.
     
     - **mint_id**: Pump.fun mint ID of the stream to record
-    - **output_format**: Output format (av1, h264, vp9)
+    - **output_format**: Output codec (h264, av1, svtav1, vp9)
     - **video_quality**: Video quality preset (low, medium, high)
     
     Note: Requires an active stream session first via /api/live-sessions/start
@@ -108,48 +108,59 @@ async def get_supported_formats():
     return {
         "success": True,
         "formats": {
-            "av1": {
-                "description": "AV1 codec (recommended)",
-                "codec": "libaom-av1",
-                "container": "mp4"
-            },
             "h264": {
-                "description": "H.264 codec",
-                "codec": "libx264", 
-                "container": "mp4"
+                "description": "H.264/AVC - Fast, compatible, good quality (recommended)",
+                "video_codec": "libx264",
+                "audio_codec": "aac",
+                "container": "mp4",
+                "encoding_speed": "fast",
+                "file_size": "medium"
+            },
+            "av1": {
+                "description": "AV1 - Best compression, excellent quality, slower encoding",
+                "video_codec": "libaom-av1",
+                "audio_codec": "aac",
+                "container": "mp4",
+                "encoding_speed": "slow",
+                "file_size": "small",
+                "note": "30-50% better compression than H.264, but takes longer to encode"
+            },
+            "svtav1": {
+                "description": "SVT-AV1 - Faster AV1 encoder, good quality",
+                "video_codec": "libsvtav1",
+                "audio_codec": "aac",
+                "container": "mp4",
+                "encoding_speed": "medium",
+                "file_size": "small",
+                "note": "Faster than libaom-av1 while maintaining good quality"
             },
             "vp9": {
-                "description": "VP9 codec",
-                "codec": "libvpx-vp9",
-                "container": "webm"
+                "description": "VP9 - Good compression, WebM format",
+                "video_codec": "libvpx-vp9",
+                "audio_codec": "opus",
+                "container": "webm",
+                "encoding_speed": "medium",
+                "file_size": "small"
             }
         },
         "quality_presets": {
             "low": {
-                "video_bitrate": "1000k",
-                "audio_bitrate": "64k"
+                "video_bitrate": "1000000",
+                "audio_bitrate": "64000",
+                "resolution": "1280x720",
+                "description": "720p, suitable for previews"
             },
             "medium": {
-                "video_bitrate": "2000k",
-                "audio_bitrate": "128k"
+                "video_bitrate": "2000000",
+                "audio_bitrate": "128000",
+                "resolution": "1920x1080",
+                "description": "1080p, balanced quality (recommended)"
             },
             "high": {
-                "video_bitrate": "4000k",
-                "audio_bitrate": "192k"
+                "video_bitrate": "4000000",
+                "audio_bitrate": "192000",
+                "resolution": "1920x1080",
+                "description": "1080p, maximum quality"
             }
         }
     }
-
-
-@router.get("/decoder-status", response_model=Dict[str, Any])
-async def get_decoder_status():
-    """
-    Get decoder capabilities and status.
-    Shows which hardware decoders are available and recommended settings.
-    """
-    try:
-        result = recording_service.get_decoder_status()
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

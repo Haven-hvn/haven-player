@@ -78,7 +78,7 @@ class StreamManager:
                 return {"success": False, "error": f"No stream found for mint_id: {mint_id}"}
 
             # Get LiveKit token
-            token = await self.pumpfun_service.get_livekit_token(mint_id)
+            token = await self.pumpfun_service.get_livestream_token(mint_id)
             if not token:
                 return {"success": False, "error": "Failed to get LiveKit token"}
 

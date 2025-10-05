@@ -102,7 +102,7 @@ def process_ai_analysis_file(video_path: str, db: Session) -> bool:
     
     return False
 
-@router.get("/videos/", response_model=List[VideoResponse])
+@router.get("/", response_model=List[VideoResponse])
 def get_videos(
     skip: int = 0,
     limit: int = 100,
@@ -111,7 +111,7 @@ def get_videos(
     videos = db.query(Video).order_by(Video.position.desc(), Video.created_at.desc()).offset(skip).limit(limit).all()
     return videos
 
-@router.post("/videos/", response_model=VideoResponse)
+@router.post("/", response_model=VideoResponse)
 async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Video:
     # Get max position
     max_position = db.query(Video).order_by(Video.position.desc()).first()
@@ -169,7 +169,7 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
     db.refresh(db_video)
     return db_video
 
-@router.post("/videos/{video_path:path}/timestamps/", response_model=TimestampResponse)
+@router.post("/{video_path:path}/timestamps/", response_model=TimestampResponse)
 def create_timestamp(
     video_path: str,
     timestamp: TimestampCreate,
@@ -191,7 +191,7 @@ def create_timestamp(
     db.refresh(db_timestamp)
     return db_timestamp
 
-@router.get("/videos/{video_path:path}/timestamps/", response_model=List[TimestampResponse])
+@router.get("/{video_path:path}/timestamps/", response_model=List[TimestampResponse])
 def get_video_timestamps(
     video_path: str,
     db: Session = Depends(get_db)
@@ -202,7 +202,7 @@ def get_video_timestamps(
     
     return db.query(Timestamp).filter(Timestamp.video_path == video_path).all()
 
-@router.delete("/videos/{video_path:path}")
+@router.delete("/{video_path:path}")
 def delete_video(video_path: str, db: Session = Depends(get_db)) -> dict:
     video = db.query(Video).filter(Video.path == video_path).first()
     if not video:
@@ -212,7 +212,7 @@ def delete_video(video_path: str, db: Session = Depends(get_db)) -> dict:
     db.commit()
     return {"message": "Video deleted successfully"}
 
-@router.put("/videos/{video_path:path}/move-to-front")
+@router.put("/{video_path:path}/move-to-front")
 def move_to_front(video_path: str, db: Session = Depends(get_db)) -> dict:
     video = db.query(Video).filter(Video.path == video_path).first()
     if not video:

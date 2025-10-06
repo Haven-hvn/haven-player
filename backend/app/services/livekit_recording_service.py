@@ -568,13 +568,13 @@ class StreamRecorder:
             self.video_stream.pix_fmt = 'yuv420p'
             self.video_stream.bit_rate = self.config['video_bitrate']
             
-            # Let PyAV/FFmpeg choose the timebase automatically based on framerate
-            # This is the most reliable approach - FFmpeg knows best
+            # Use a fixed timebase that gives plenty of headroom for timestamp calculations
+            # 1/90000 is the MPEG transport stream standard and is proven to work
+            # This prevents overflow even in very long recordings
             from fractions import Fraction
-            # Don't set time_base explicitly - let FFmpeg handle it
-            # self.video_stream.time_base will be set automatically during encoding
-            self.video_time_base = None  # Will be set by encoder
-            logger.info(f"[{self.mint_id}] Video timebase will be set automatically by encoder")
+            self.video_stream.time_base = Fraction(1, 90000)
+            self.video_time_base = self.video_stream.time_base
+            logger.info(f"[{self.mint_id}] Video timebase set to 1/90000 (MPEG-TS standard)")
             
             # Apply codec-specific options
             if 'crf' in self.config:
@@ -606,10 +606,11 @@ class StreamRecorder:
             )
             self.audio_stream.bit_rate = self.config['audio_bitrate']
             
-            # Let PyAV/FFmpeg set audio timebase automatically too
-            # Audio timing is sample-based and will be handled correctly by encoder
-            self.audio_time_base = None
-            logger.info(f"[{self.mint_id}] Audio timebase will be set automatically by encoder")
+            # Set audio timebase to sample rate (standard for audio)
+            # 1/48000 gives one unit per audio sample, which is the standard approach
+            self.audio_stream.time_base = Fraction(1, 48000)
+            self.audio_time_base = self.audio_stream.time_base
+            logger.info(f"[{self.mint_id}] Audio timebase set to 1/48000 (sample-based)")
             
             logger.info(f"Setup output container for {self.mint_id}")
             
@@ -1033,13 +1034,18 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
                     return
             
-            # Set PTS - simple frame-based incrementing
-            # Let FFmpeg handle timebase conversions automatically
-            av_frame.pts = self.video_frame_count  # Use frame number as PTS
+            # Set PTS in 90000 timebase units
+            # PTS = frame_number * (90000 / fps)
+            fps = self.config.get('fps', 30)
+            pts_per_frame = 90000 // fps  # 3000 at 30fps, 1500 at 60fps
+            av_frame.pts = self.video_frame_count * pts_per_frame
             
             # Log PTS periodically to monitor for issues
             if self.video_frame_count % 300 == 0 and self.video_frame_count > 0:
-                logger.info(f"[{self.mint_id}] Video frame {self.video_frame_count}, PTS: {av_frame.pts}")
+                # Max safe PTS: 2^31 = 2,147,483,647 = ~23850 seconds = 6.6 hours at 30fps
+                max_safe_pts = 2147483647
+                pts_percentage = (av_frame.pts / max_safe_pts) * 100
+                logger.info(f"[{self.mint_id}] Video frame {self.video_frame_count}, PTS: {av_frame.pts} ({pts_percentage:.2f}% of limit)")
             
             # Encode and write
             try:

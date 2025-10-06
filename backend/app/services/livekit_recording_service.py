@@ -569,10 +569,13 @@ class StreamRecorder:
             self.video_stream.pix_fmt = 'yuv420p'
             self.video_stream.bit_rate = self.config['video_bitrate']
             
-            # Set explicit timebase for video (1/fps for frame-based timing)
+            # Set explicit timebase for video - use 1/1000 (milliseconds) instead of 1/fps
+            # This gives us much more headroom before hitting the 32-bit DTS limit
+            # 1/fps timebase can overflow quickly in MP4's internal calculations
             from fractions import Fraction
-            self.video_stream.time_base = Fraction(1, self.config['fps'])
+            self.video_stream.time_base = Fraction(1, 1000)  # 1ms precision
             self.video_time_base = self.video_stream.time_base
+            logger.info(f"[{self.mint_id}] Video timebase set to 1/1000 (milliseconds)")
             
             # Apply codec-specific options
             if 'crf' in self.config:
@@ -604,9 +607,11 @@ class StreamRecorder:
             )
             self.audio_stream.bit_rate = self.config['audio_bitrate']
             
-            # Set explicit timebase for audio (1/sample_rate for sample-based timing)
+            # Set explicit timebase for audio (keep 1/sample_rate for accurate timing)
+            # Audio uses samples as PTS units, which is standard and safe
             self.audio_stream.time_base = Fraction(1, 48000)
             self.audio_time_base = self.audio_stream.time_base
+            logger.info(f"[{self.mint_id}] Audio timebase set to 1/48000 (sample-based)")
             
             logger.info(f"Setup output container for {self.mint_id}")
             
@@ -1030,9 +1035,20 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
                     return
             
-            # Set PTS (using frame-based timing with video timebase)
+            # Set PTS using millisecond timebase (1/1000)
+            # Calculate PTS in milliseconds: frame_number * (1000 / fps)
+            fps = self.config.get('fps', 30)
+            pts_increment_ms = int(1000 / fps)  # ~33ms at 30fps
+            
             av_frame.pts = self.last_video_pts
-            self.last_video_pts += 1  # Increment by 1 frame in video timebase units
+            self.last_video_pts += pts_increment_ms  # Increment by milliseconds per frame
+            
+            # Log PTS periodically to detect overflow early
+            if self.video_frame_count % 300 == 0 and self.video_frame_count > 0:
+                # Calculate max safe PTS (leave headroom before 2^31)
+                max_safe_pts = 2000000000  # ~23 days at 1ms resolution
+                pts_percentage = (self.last_video_pts / max_safe_pts) * 100
+                logger.info(f"[{self.mint_id}] Video PTS: {self.last_video_pts}ms ({pts_percentage:.1f}% of safe limit)")
             
             # Encode and write
             try:
@@ -1147,6 +1163,14 @@ class StreamRecorder:
                         # Log first few packets to verify PTS/DTS are increasing
                         if self.audio_frame_count < 5:
                             logger.info(f"[{self.mint_id}] Audio packet {self.audio_frame_count}: PTS={packet.pts}, DTS={packet.dts}")
+                        
+                        # Periodically log audio PTS to detect overflow
+                        if self.audio_frame_count % 1000 == 0 and self.audio_frame_count > 0:
+                            # Max safe PTS in samples at 48kHz: ~44,739 seconds = 12.4 hours
+                            max_safe_samples = 2000000000
+                            pts_percentage = (packet.pts / max_safe_samples) * 100 if packet.pts else 0
+                            logger.info(f"[{self.mint_id}] Audio PTS: {packet.pts} samples ({pts_percentage:.1f}% of safe limit)")
+                        
                         self.output_container.mux(packet)
                 except OSError as os_error:
                     # Handle "Invalid argument" errors from non-monotonic timestamps

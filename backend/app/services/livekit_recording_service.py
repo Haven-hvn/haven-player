@@ -585,6 +585,18 @@ class StreamRecorder:
                     self.video_stream.options = {}
                 self.video_stream.options['preset'] = str(self.config['preset'])
             
+            # H.264-specific options to prevent negative DTS and timestamp issues
+            if self.config['video_codec'] == 'libx264':
+                if not self.video_stream.options:
+                    self.video_stream.options = {}
+                # Disable B-frames to prevent negative DTS
+                self.video_stream.options['x264opts'] = 'bframes=0'
+                # Set GOP size (keyframe interval) - 2 seconds worth of frames
+                self.video_stream.options['g'] = str(self.config.get('fps', 30) * 2)
+                # Use zero-latency tuning for real-time encoding
+                self.video_stream.options['tune'] = 'zerolatency'
+                logger.info(f"[{self.mint_id}] H.264 options: no B-frames, GOP={self.video_stream.options['g']}, zero-latency tuning")
+            
             # AV1-specific options
             if self.config['video_codec'] in ['libaom-av1', 'libsvtav1']:
                 if not self.video_stream.options:

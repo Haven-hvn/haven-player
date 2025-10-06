@@ -740,6 +740,9 @@ class StreamRecorder:
             num_channels = frame.num_channels
             samples = frame.data
             
+            # Debug logging for audio frame properties
+            logger.debug(f"[{self.mint_id}] Audio frame: rate={sample_rate}, channels={num_channels}, data_type={type(samples)}, data_len={len(samples) if hasattr(samples, '__len__') else 'unknown'}")
+            
             # Convert memoryview to proper numpy array with correct dtype
             if hasattr(samples, 'dtype'):
                 # Already a numpy array
@@ -753,29 +756,41 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Failed to convert audio buffer: {e}")
                     return
             
-            # Reshape if needed for multi-channel audio
-            if num_channels > 1:
-                try:
+            # PyAV requires 2D array even for mono audio
+            # Reshape to 2D format: (samples, channels)
+            try:
+                if num_channels > 1:
+                    # Multi-channel: reshape to (samples, channels)
                     audio_data = audio_data.reshape(-1, num_channels)
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Failed to reshape audio data for {num_channels} channels: {e}")
-                    return
+                else:
+                    # Mono: reshape to (samples, 1) for 2D format
+                    audio_data = audio_data.reshape(-1, 1)
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] Failed to reshape audio data for {num_channels} channels: {e}")
+                return
             
-            # Create PyAV AudioFrame
-            av_frame = av.AudioFrame.from_ndarray(
-                audio_data,
-                format='s16',
-                layout='stereo' if num_channels == 2 else 'mono'
-            )
-            av_frame.sample_rate = sample_rate
-            
-            # Set PTS
-            av_frame.pts = self.last_audio_pts
-            self.last_audio_pts += len(audio_data)
-            
-            # Encode and write
-            for packet in self.audio_stream.encode(av_frame):
-                self.output_container.mux(packet)
+            # Create PyAV AudioFrame with proper 2D array
+            try:
+                av_frame = av.AudioFrame.from_ndarray(
+                    audio_data,
+                    format='s16',
+                    layout='stereo' if num_channels == 2 else 'mono'
+                )
+                av_frame.sample_rate = sample_rate
+                
+                # Set PTS
+                av_frame.pts = self.last_audio_pts
+                self.last_audio_pts += len(audio_data)
+                
+                # Encode and write
+                for packet in self.audio_stream.encode(av_frame):
+                    self.output_container.mux(packet)
+                    
+            except Exception as av_error:
+                logger.error(f"[{self.mint_id}] PyAV AudioFrame creation failed: {av_error}")
+                logger.error(f"[{self.mint_id}] Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}")
+                logger.error(f"[{self.mint_id}] Expected 2D array, got ndim: {audio_data.ndim}")
+                return
                 
         except Exception as e:
             logger.error(f"Error writing audio frame: {e}")

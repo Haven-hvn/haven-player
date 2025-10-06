@@ -532,12 +532,6 @@ class StreamRecorder:
             # and reduces memory buffer sizes
             options = {
                 'threads': 'auto',
-                # Reduce buffer sizes to minimize memory usage (especially important for Windows)
-                'max_interleave_delta': '0',  # Disable interleaving delays
-                'flush_packets': '1',  # Flush packets immediately
-                # Use fragmented MP4 to avoid timestamp overflow issues in long recordings
-                # Fragmented MP4 writes metadata incrementally, avoiding 32-bit DTS limits
-                'movflags': 'frag_keyframe+empty_moov+default_base_moof',
             }
             
             # Create output container with software-only and memory-efficient options
@@ -977,8 +971,24 @@ class StreamRecorder:
             
             # Encode and write
             try:
+                packet_count = 0
                 for packet in self.video_stream.encode(av_frame):
                     self.output_container.mux(packet)
+                    packet_count += 1
+                
+                # Log first few successful muxes to confirm writing is working
+                if self.video_frame_count < 5:
+                    logger.info(f"[{self.mint_id}] Frame {self.video_frame_count} encoded and muxed ({packet_count} packets)")
+            except AssertionError as assert_error:
+                # Handle FFmpeg assertion failures during muxing (e.g., DTS overflow)
+                error_str = str(assert_error)
+                logger.error(f"[{self.mint_id}] Assertion error muxing video packet at frame {self.video_frame_count}: {error_str}")
+                if "next_dts" in error_str.lower() or "0x7fffffff" in error_str:
+                    logger.error(f"[{self.mint_id}] DTS overflow detected - timestamps exceeded 32-bit limit")
+                    logger.error(f"[{self.mint_id}] Current PTS: {self.last_video_pts}, Frame count: {self.video_frame_count}")
+                    # Stop recording to prevent further corruption
+                    raise RuntimeError("Recording stopped due to timestamp overflow")
+                raise
             except Exception as mux_error:
                 logger.error(f"[{self.mint_id}] Error muxing video packet at frame {self.video_frame_count}: {mux_error}")
                 raise

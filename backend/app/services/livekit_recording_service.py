@@ -289,7 +289,8 @@ class StreamRecorder:
         # Frame tracking
         self.video_frame_count = 0
         self.audio_frame_count = 0
-        # PTS is calculated directly from frame counts - no separate tracking needed
+        self.last_video_pts = 0
+        self.last_audio_pts = 0
         
         # Timebase tracking for proper A/V sync
         # Video uses stream time_base, audio uses sample-based PTS
@@ -568,13 +569,10 @@ class StreamRecorder:
             self.video_stream.pix_fmt = 'yuv420p'
             self.video_stream.bit_rate = self.config['video_bitrate']
             
-            # Use a fixed timebase that gives plenty of headroom for timestamp calculations
-            # 1/90000 is the MPEG transport stream standard and is proven to work
-            # This prevents overflow even in very long recordings
+            # Set explicit timebase for video (1/fps for frame-based timing)
             from fractions import Fraction
-            self.video_stream.time_base = Fraction(1, 90000)
+            self.video_stream.time_base = Fraction(1, self.config['fps'])
             self.video_time_base = self.video_stream.time_base
-            logger.info(f"[{self.mint_id}] Video timebase set to 1/90000 (MPEG-TS standard)")
             
             # Apply codec-specific options
             if 'crf' in self.config:
@@ -584,18 +582,6 @@ class StreamRecorder:
                 if 'options' not in dir(self.video_stream) or not self.video_stream.options:
                     self.video_stream.options = {}
                 self.video_stream.options['preset'] = str(self.config['preset'])
-            
-            # H.264-specific options to prevent negative DTS and timestamp issues
-            if self.config['video_codec'] == 'libx264':
-                if not self.video_stream.options:
-                    self.video_stream.options = {}
-                # Disable B-frames to prevent negative DTS
-                self.video_stream.options['x264opts'] = 'bframes=0'
-                # Set GOP size (keyframe interval) - 2 seconds worth of frames
-                self.video_stream.options['g'] = str(self.config.get('fps', 30) * 2)
-                # Use zero-latency tuning for real-time encoding
-                self.video_stream.options['tune'] = 'zerolatency'
-                logger.info(f"[{self.mint_id}] H.264 options: no B-frames, GOP={self.video_stream.options['g']}, zero-latency tuning")
             
             # AV1-specific options
             if self.config['video_codec'] in ['libaom-av1', 'libsvtav1']:
@@ -618,12 +604,9 @@ class StreamRecorder:
             )
             self.audio_stream.bit_rate = self.config['audio_bitrate']
             
-            # Use the SAME timebase as video (1/90000) to prevent MP4 muxer overflow
-            # When audio and video have different timebases, MP4 muxer does conversions
-            # that can overflow during MOOV atom writing
-            self.audio_stream.time_base = Fraction(1, 90000)
+            # Set explicit timebase for audio (1/sample_rate for sample-based timing)
+            self.audio_stream.time_base = Fraction(1, 48000)
             self.audio_time_base = self.audio_stream.time_base
-            logger.info(f"[{self.mint_id}] Audio timebase set to 1/90000 (matches video for MP4 compatibility)")
             
             logger.info(f"Setup output container for {self.mint_id}")
             
@@ -889,14 +872,13 @@ class StreamRecorder:
             width = frame.width
             height = frame.height
             
+            # Log frame dimensions on first frame or if dimensions change
+            if self.video_frame_count == 0:
+                logger.info(f"[{self.mint_id}] First video frame dimensions: {width}x{height}, configured: {self.config['width']}x{self.config['height']}")
+            
             # Get the frame data as numpy array
             # This assumes the frame has a buffer attribute
             buffer = frame.data
-            
-            # Log frame dimensions on first frame or if dimensions change
-            if self.video_frame_count == 0:
-                buffer_size = len(buffer) if hasattr(buffer, '__len__') else 0
-                logger.info(f"[{self.mint_id}] First video frame: reported {width}x{height}, buffer {buffer_size} bytes, target {self.config['width']}x{self.config['height']}")
             
             # Create PyAV VideoFrame with proper format handling
             av_frame = None
@@ -1006,38 +988,25 @@ class StreamRecorder:
                         )
                         del frame_data  # Free memory immediately
                     else:
-                        # YUV format or other - calculate actual dimensions from buffer size
-                        actual_size = len(frame_data)
-                        expected_yuv420_size = width * height * 3 // 2
-                        
-                        if actual_size >= expected_yuv420_size:
-                            # YUV420 format
-                            av_frame = av.VideoFrame(width, height, 'yuv420p')
-                            # Copy data to the frame planes
-                            try:
-                                av_frame.planes[0].update(frame_data[:width * height])
-                                if len(frame_data) > width * height:
-                                    av_frame.planes[1].update(frame_data[width * height:width * height + width * height // 4])
-                                if len(frame_data) > width * height + width * height // 4:
-                                    av_frame.planes[2].update(frame_data[width * height + width * height // 4:])
-                                del frame_data  # Free memory immediately
-                                # Resize if needed
-                                if width != self.config['width'] or height != self.config['height']:
-                                    av_frame = av_frame.reformat(
-                                        format='yuv420p',
-                                        width=self.config['width'],
-                                        height=self.config['height']
-                                    )
-                            except ValueError as ve:
-                                logger.error(f"[{self.mint_id}] YUV plane update failed: {ve}")
-                                logger.error(f"[{self.mint_id}] Frame: {width}x{height}, buffer: {actual_size} bytes, expected: {expected_yuv420_size}")
-                                del frame_data
-                                return
+                        # YUV format or other
+                        av_frame = av.VideoFrame(width, height, 'yuv420p')
+                        # Copy data to the frame planes
+                        if len(frame_data) >= width * height * 3 // 2:
+                            av_frame.planes[0].update(frame_data[:width * height])
+                            if len(frame_data) > width * height:
+                                av_frame.planes[1].update(frame_data[width * height:width * height + width * height // 4])
+                            if len(frame_data) > width * height + width * height // 4:
+                                av_frame.planes[2].update(frame_data[width * height + width * height // 4:])
+                            del frame_data  # Free memory immediately
+                            # Resize if needed
+                            if width != self.config['width'] or height != self.config['height']:
+                                av_frame = av_frame.reformat(
+                                    format='yuv420p',
+                                    width=self.config['width'],
+                                    height=self.config['height']
+                                )
                         else:
-                            # Buffer size doesn't match - might be a different resolution
-                            # Try to detect actual resolution
-                            logger.warning(f"[{self.mint_id}] Frame size mismatch: got {actual_size} bytes for {width}x{height}")
-                            logger.warning(f"[{self.mint_id}] Skipping frame - resolution may have changed")
+                            logger.warning(f"[{self.mint_id}] Frame data too small for YUV format: {len(frame_data)}")
                             del frame_data
                             return
                             
@@ -1047,19 +1016,9 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
                     return
             
-            # Set PTS in 90000 timebase units
-            # PTS = initial_offset + frame_number * (90000 / fps)
-            fps = self.config.get('fps', 30)
-            pts_per_frame = 90000 // fps  # 3000 at 30fps, 1500 at 60fps
-            initial_offset = 3600  # 40ms offset to allow for B-frame DTS calculations
-            av_frame.pts = initial_offset + (self.video_frame_count * pts_per_frame)
-            
-            # Log PTS periodically to monitor for issues
-            if self.video_frame_count % 300 == 0 and self.video_frame_count > 0:
-                # Max safe PTS: 2^31 = 2,147,483,647 = ~23850 seconds = 6.6 hours at 30fps
-                max_safe_pts = 2147483647
-                pts_percentage = (av_frame.pts / max_safe_pts) * 100
-                logger.info(f"[{self.mint_id}] Video frame {self.video_frame_count}, PTS: {av_frame.pts} ({pts_percentage:.2f}% of limit)")
+            # Set PTS (using frame-based timing with video timebase)
+            av_frame.pts = self.last_video_pts
+            self.last_video_pts += 1  # Increment by 1 frame in video timebase units
             
             # Encode and write
             try:
@@ -1156,15 +1115,16 @@ class StreamRecorder:
                 )
                 av_frame.sample_rate = sample_rate
                 
-                # Set PTS in 90000 timebase (same as video)
-                # Convert audio samples to 90000 timebase units
-                # PTS = total_samples * (90000 / sample_rate)
-                total_samples = self.audio_frame_count * samples_per_channel
-                av_frame.pts = int(total_samples * 90000 / sample_rate)
+                # Set PTS - CRITICAL: Ensure strictly increasing timestamps
+                # Use samples as PTS in audio timebase (1/sample_rate)
+                av_frame.pts = self.last_audio_pts
                 
-                # Validate PTS is reasonable
-                if av_frame.pts is None or (self.audio_frame_count > 0 and av_frame.pts < 0):
-                    logger.error(f"[{self.mint_id}] Invalid audio PTS: {av_frame.pts} at frame {self.audio_frame_count}")
+                # IMPORTANT: Increment BEFORE encoding to ensure next frame has higher PTS
+                self.last_audio_pts += samples_per_channel
+                
+                # Validate PTS is actually increasing
+                if self.audio_frame_count > 0 and av_frame.pts <= 0:
+                    logger.error(f"[{self.mint_id}] Invalid audio PTS: {av_frame.pts}")
                     return
                 
                 # Encode and write
@@ -1173,25 +1133,16 @@ class StreamRecorder:
                         # Log first few packets to verify PTS/DTS are increasing
                         if self.audio_frame_count < 5:
                             logger.info(f"[{self.mint_id}] Audio packet {self.audio_frame_count}: PTS={packet.pts}, DTS={packet.dts}")
-                        
-                        # Periodically log audio PTS to detect overflow
-                        if self.audio_frame_count % 1000 == 0 and self.audio_frame_count > 0:
-                            # Max safe PTS in 90000 timebase: 2^31 = 2,147,483,647 = ~6.6 hours
-                            max_safe_pts = 2147483647
-                            pts_percentage = (packet.pts / max_safe_pts) * 100 if packet.pts else 0
-                            logger.info(f"[{self.mint_id}] Audio PTS: {packet.pts} (90kHz units, {pts_percentage:.1f}% of safe limit)")
-                        
                         self.output_container.mux(packet)
                 except OSError as os_error:
                     # Handle "Invalid argument" errors from non-monotonic timestamps
                     error_str = str(os_error)
-                    if "non monotonically increasing" in error_str.lower() or "NOPTS" in error_str:
+                    if "non monotonically increasing" in error_str.lower():
                         logger.error(f"[{self.mint_id}] ❌ AUDIO TIMESTAMP ERROR at frame {self.audio_frame_count}")
-                        logger.error(f"[{self.mint_id}] Frame PTS: {av_frame.pts}, calculated from frame {self.audio_frame_count} * {samples_per_channel}")
+                        logger.error(f"[{self.mint_id}] Frame PTS: {av_frame.pts}, last_audio_pts: {self.last_audio_pts}")
                         logger.error(f"[{self.mint_id}] Samples per channel: {samples_per_channel}, channels: {num_channels}")
-                        logger.error(f"[{self.mint_id}] Container is now in bad state - audio encoding will stop")
-                        # Raise exception to stop audio processing entirely
-                        raise RuntimeError(f"Audio timestamp error - stopping audio encoding")
+                        # Skip this frame and continue
+                        return
                     raise
                 except Exception as mux_error:
                     logger.error(f"[{self.mint_id}] Error muxing audio packet at frame {self.audio_frame_count}: {mux_error}")

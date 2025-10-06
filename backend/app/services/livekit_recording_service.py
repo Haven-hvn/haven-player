@@ -21,8 +21,15 @@ from app.services.stream_manager import StreamManager
 logger = logging.getLogger(__name__)
 
 # Import PyAV with NVDEC error handling
+# Suppress FFmpeg hardware decoder initialization
+import os
+os.environ.setdefault('AV_LOG_FORCE_NOCOLOR', '1')
+os.environ.setdefault('FFREPORT', 'level=0')
+
 try:
     import av
+    # Force PyAV to only use software codecs
+    av.logging.set_level(av.logging.ERROR)
 except Exception as e:
     # If PyAV fails to import due to NVDEC, the environment variables should handle it
     # This shouldn't happen if main.py sets env vars first
@@ -121,23 +128,35 @@ class LiveKitRecordingService:
         Start recording a stream using LiveKit native frame capture.
         """
         try:
+            logger.info(f"📹 Starting recording for mint_id: {mint_id}, format: {output_format}, quality: {video_quality}")
+            
             if mint_id in self.active_recordings:
+                logger.warning(f"⚠️  Recording already active for {mint_id}")
                 return {"success": False, "error": f"Recording already active for {mint_id}"}
             
             # Get stream info from StreamManager
+            logger.info(f"🔍 Looking up stream info for {mint_id}")
             stream_info = await self.stream_manager.get_stream_info(mint_id)
             if not stream_info:
+                logger.error(f"❌ No active stream found for {mint_id}")
                 return {"success": False, "error": f"No active stream found for {mint_id}"}
+            
+            logger.info(f"✅ Stream info found: room={stream_info.room_name}, participant={stream_info.participant_sid}")
             
             # Get the LiveKit room from StreamManager
             room = self.stream_manager.room
             if not room:
+                logger.error(f"❌ No active LiveKit room found")
                 return {"success": False, "error": "No active LiveKit room found"}
+            
+            logger.info(f"✅ LiveKit room available: {room.name}")
             
             # Create recording configuration
             config = self._get_recording_config(output_format, video_quality)
+            logger.info(f"⚙️  Recording config: codec={config.get('video_codec')}, bitrate={config.get('video_bitrate')}")
             
             # Create stream recorder
+            logger.info(f"🎬 Creating StreamRecorder instance")
             recorder = StreamRecorder(
                 mint_id=mint_id,
                 stream_info=stream_info,
@@ -147,9 +166,12 @@ class LiveKitRecordingService:
             )
             
             # Start recording
+            logger.info(f"▶️  Starting recorder...")
             result = await recorder.start()
+            
             if result["success"]:
                 self.active_recordings[mint_id] = recorder
+                logger.info(f"✅ Recording started successfully: {recorder.output_path}")
                 
                 return {
                     "success": True,
@@ -158,10 +180,14 @@ class LiveKitRecordingService:
                     "config": config
                 }
             else:
+                logger.error(f"❌ Recorder failed to start: {result.get('error')}")
                 return result
                 
         except Exception as e:
-            logger.error(f"Failed to start recording for {mint_id}: {e}")
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"❌ Exception during recording start for {mint_id}: {e}")
+            logger.error(f"Full traceback:\n{error_details}")
             return {"success": False, "error": str(e)}
 
     async def stop_recording(self, mint_id: str) -> Dict[str, Any]:
@@ -270,21 +296,52 @@ class StreamRecorder:
     async def start(self) -> Dict[str, Any]:
         """Start recording by subscribing to LiveKit track frames."""
         try:
+            logger.info(f"[{self.mint_id}] StreamRecorder.start() called")
+            
             if self.is_recording:
+                logger.warning(f"[{self.mint_id}] Already recording")
                 return {"success": False, "error": "Recording already started"}
             
             # Find the participant's tracks
+            logger.info(f"[{self.mint_id}] Looking for participant: {self.stream_info.participant_sid}")
+            logger.info(f"[{self.mint_id}] Available participants: {list(self.room.remote_participants.keys())}")
+            
             participant = None
             for p in self.room.remote_participants.values():
+                logger.info(f"[{self.mint_id}] Checking participant: {p.sid} ({p.identity})")
                 if p.sid == self.stream_info.participant_sid:
                     participant = p
+                    logger.info(f"[{self.mint_id}] ✅ Found matching participant!")
                     break
             
             if not participant:
+                logger.error(f"[{self.mint_id}] ❌ Participant {self.stream_info.participant_sid} not found in room")
                 return {"success": False, "error": "Participant not found in room"}
             
-            # Setup PyAV output container
-            self._setup_output_container()
+            # Log available tracks
+            logger.info(f"[{self.mint_id}] Participant has {len(participant.track_publications)} track publications")
+            for track_pub in participant.track_publications.values():
+                logger.info(f"[{self.mint_id}]   - Track: {track_pub.kind}, subscribed: {track_pub.subscribed}, track exists: {track_pub.track is not None}")
+            
+            # Setup PyAV output container with error handling for CUDA issues
+            logger.info(f"[{self.mint_id}] Setting up PyAV output container...")
+            try:
+                self._setup_output_container()
+                logger.info(f"[{self.mint_id}] ✅ Output container setup complete")
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                error_msg = str(e)
+                logger.error(f"[{self.mint_id}] ❌ Failed to setup output container: {e}")
+                logger.error(f"[{self.mint_id}] Traceback:\n{error_details}")
+                
+                if "CUDA" in error_msg or "NVDEC" in error_msg or "nvidia" in error_msg.lower():
+                    logger.error(f"[{self.mint_id}] CUDA/NVIDIA hardware decoder error detected")
+                    return {
+                        "success": False, 
+                        "error": "Recording failed: NVIDIA hardware decoder initialization error. Please restart server with CUDA disabled."
+                    }
+                raise
             
             # Subscribe to video frames
             video_track = None
@@ -372,8 +429,19 @@ class StreamRecorder:
     def _setup_output_container(self) -> None:
         """Setup PyAV output container and streams."""
         try:
-            # Create output container
-            self.output_container = av.open(str(self.output_path), mode='w')
+            logger.info(f"[{self.mint_id}] Opening output file: {self.output_path}")
+            
+            # Force software-only mode for PyAV
+            # This prevents PyAV from trying to use hardware decoders
+            options = {
+                'hwaccel': 'none',
+                'threads': 'auto'
+            }
+            
+            # Create output container with software-only options
+            logger.info(f"[{self.mint_id}] Creating PyAV container with format: {self.config['format']}")
+            self.output_container = av.open(str(self.output_path), mode='w', options=options)
+            logger.info(f"[{self.mint_id}] ✅ Container opened successfully")
             
             # Add video stream
             self.video_stream = self.output_container.add_stream(

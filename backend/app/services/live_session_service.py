@@ -94,7 +94,10 @@ class LiveSessionService:
                 db.close()
 
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
             print(f"Error starting session for {mint_id}: {e}")
+            print(f"Full traceback:\n{error_details}")
             return {"success": False, "error": str(e)}
 
     async def stop_session(self, mint_id: str) -> Dict[str, Any]:

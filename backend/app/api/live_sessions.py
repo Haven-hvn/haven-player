@@ -43,6 +43,10 @@ async def start_live_session(request: StartSessionRequest):
         return result
 
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Live session start error: {e}")
+        print(f"Full traceback:\n{error_details}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

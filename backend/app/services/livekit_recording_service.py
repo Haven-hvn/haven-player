@@ -693,6 +693,10 @@ class StreamRecorder:
             width = frame.width
             height = frame.height
             
+            # Log frame dimensions on first frame or if dimensions change
+            if self.video_frame_count == 0:
+                logger.info(f"[{self.mint_id}] First video frame dimensions: {width}x{height}, configured: {self.config['width']}x{self.config['height']}")
+            
             # Get the frame data as numpy array
             # This assumes the frame has a buffer attribute
             buffer = frame.data
@@ -707,7 +711,12 @@ class StreamRecorder:
                 try:
                     img = frame.to_ndarray(format='argb')
                     av_frame = av.VideoFrame.from_ndarray(img, format='argb')
-                    av_frame = av_frame.reformat(format='yuv420p')
+                    # Reformat to yuv420p and resize if needed
+                    av_frame = av_frame.reformat(
+                        format='yuv420p',
+                        width=self.config['width'],
+                        height=self.config['height']
+                    )
                     # Delete intermediate array immediately
                     del img
                 except Exception as e:
@@ -715,7 +724,12 @@ class StreamRecorder:
                     try:
                         img = frame.to_ndarray(format='rgb24')
                         av_frame = av.VideoFrame.from_ndarray(img, format='rgb24')
-                        av_frame = av_frame.reformat(format='yuv420p')
+                        # Reformat to yuv420p and resize if needed
+                        av_frame = av_frame.reformat(
+                            format='yuv420p',
+                            width=self.config['width'],
+                            height=self.config['height']
+                        )
                         del img
                     except Exception as e2:
                         logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}, {e2}")
@@ -731,40 +745,68 @@ class StreamRecorder:
                         frame_data = buffer
                     else:
                         # Convert memoryview/buffer to numpy array
-                        # Try different data types based on expected frame size
-                        expected_size = width * height * 3  # RGB format
+                        # Try different data types based on actual frame size
                         actual_size = len(buffer)
+                        expected_rgb = width * height * 3  # RGB format
+                        expected_rgba = width * height * 4  # RGBA format
+                        expected_yuv420 = width * height * 3 // 2  # YUV420 format
                         
-                        if actual_size == expected_size:
+                        logger.debug(f"[{self.mint_id}] Frame buffer: {actual_size} bytes, dimensions: {width}x{height}, expected RGB: {expected_rgb}, RGBA: {expected_rgba}, YUV420: {expected_yuv420}")
+                        
+                        if actual_size == expected_rgb:
                             # RGB format
                             frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 3)
-                        elif actual_size == expected_size * 4:
+                        elif actual_size == expected_rgba:
                             # RGBA format
                             frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 4)
-                        elif actual_size == width * height * 3 // 2:
+                        elif actual_size == expected_yuv420:
                             # YUV420 format
                             frame_data = np.frombuffer(buffer, dtype=np.uint8)
                         else:
-                            # Unknown format, try to handle gracefully
-                            logger.warning(f"Unexpected frame size: got {actual_size} bytes, expected {expected_size} for {width}x{height}")
-                            # Try to reshape as RGB if possible
-                            if actual_size >= expected_size:
-                                frame_data = np.frombuffer(buffer, dtype=np.uint8)[:expected_size].reshape(height, width, 3)
+                            # Unknown format - try to detect based on size
+                            # Calculate possible dimensions based on actual size
+                            logger.warning(f"[{self.mint_id}] Unexpected frame size: got {actual_size} bytes for {width}x{height} frame")
+                            logger.warning(f"[{self.mint_id}] Expected: RGB={expected_rgb}, RGBA={expected_rgba}, YUV420={expected_yuv420}")
+                            
+                            # Try to infer format from size
+                            pixels = actual_size // 3
+                            if pixels > 0:
+                                possible_height = int(np.sqrt(pixels * height / width))
+                                possible_width = pixels // possible_height
+                                logger.info(f"[{self.mint_id}] Attempting to reshape as {possible_width}x{possible_height} RGB")
+                                
+                                if possible_width * possible_height * 3 == actual_size:
+                                    frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(possible_height, possible_width, 3)
+                                    # Update width/height to actual values
+                                    width = possible_width
+                                    height = possible_height
+                                else:
+                                    logger.error(f"[{self.mint_id}] Cannot determine frame format, skipping frame")
+                                    return
                             else:
-                                # Skip this frame if it's too small
-                                logger.warning(f"Skipping frame: too small ({actual_size} < {expected_size})")
+                                logger.error(f"[{self.mint_id}] Frame too small, skipping")
                                 return
                     
                     # Create PyAV frame from numpy array
                     if len(frame_data.shape) == 3 and frame_data.shape[2] == 3:
                         # RGB format
                         av_frame = av.VideoFrame.from_ndarray(frame_data, format='rgb24')
-                        av_frame = av_frame.reformat(format='yuv420p')
+                        # Resize and reformat to match configured output
+                        av_frame = av_frame.reformat(
+                            format='yuv420p',
+                            width=self.config['width'],
+                            height=self.config['height']
+                        )
                         del frame_data  # Free memory immediately
                     elif len(frame_data.shape) == 3 and frame_data.shape[2] == 4:
                         # RGBA format
                         av_frame = av.VideoFrame.from_ndarray(frame_data, format='rgba')
-                        av_frame = av_frame.reformat(format='yuv420p')
+                        # Resize and reformat to match configured output
+                        av_frame = av_frame.reformat(
+                            format='yuv420p',
+                            width=self.config['width'],
+                            height=self.config['height']
+                        )
                         del frame_data  # Free memory immediately
                     else:
                         # YUV format or other
@@ -777,13 +819,22 @@ class StreamRecorder:
                             if len(frame_data) > width * height + width * height // 4:
                                 av_frame.planes[2].update(frame_data[width * height + width * height // 4:])
                             del frame_data  # Free memory immediately
+                            # Resize if needed
+                            if width != self.config['width'] or height != self.config['height']:
+                                av_frame = av_frame.reformat(
+                                    format='yuv420p',
+                                    width=self.config['width'],
+                                    height=self.config['height']
+                                )
                         else:
-                            logger.warning(f"Frame data too small for YUV format: {len(frame_data)}")
+                            logger.warning(f"[{self.mint_id}] Frame data too small for YUV format: {len(frame_data)}")
                             del frame_data
                             return
                             
                 except Exception as e:
-                    logger.error(f"Failed to convert frame manually: {e}")
+                    logger.error(f"[{self.mint_id}] Failed to convert frame manually: {e}")
+                    import traceback
+                    logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
                     return
             
             # Set PTS (using frame-based timing with video timebase)

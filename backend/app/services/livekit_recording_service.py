@@ -365,7 +365,7 @@ class StreamRecorder:
                 
                 if attempt < max_retries - 1:
                     logger.info(f"[{self.mint_id}] ⏳ Waiting for tracks... (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(0.5)  # Wait 500ms before retry
+                    await asyncio.sleep(2)  # Wait 2s before retry
             
             if not video_track:
                 logger.error(f"[{self.mint_id}] ❌ No video track found after {max_retries} attempts")
@@ -451,7 +451,6 @@ class StreamRecorder:
             # Force software-only mode for PyAV
             # This prevents PyAV from trying to use hardware decoders
             options = {
-                'hwaccel': 'none',
                 'threads': 'auto'
             }
             

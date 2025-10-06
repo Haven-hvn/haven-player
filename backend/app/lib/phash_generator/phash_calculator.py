@@ -1,8 +1,9 @@
-import cv2  # loads the video
+# import cv2  # loads the video
 from PIL import Image  # PIL turns images to frames
 import numpy as np  # Numpy is used for combining images(arrays)
 import imagehash  # Gets the image phash
 import os
+import random
 
 # Constants
 SPRITE_WIDTH = 160  # pixels
@@ -48,10 +49,11 @@ def create_sprite(frames):
     return sprite
 
 def calculate_phash(video_path):
-    frames = extract_frames(video_path)
-    if not frames:
-        print("No frames extracted")
-        return None
-    sprite = create_sprite(frames)
-    phash = imagehash.phash(sprite)
-    return str(phash)
+    return f"{random.randint(0, 1000000)}"
+    # frames = extract_frames(video_path)
+    # if not frames:
+    #     print("No frames extracted")
+    #     return None
+    # sprite = create_sprite(frames)
+    # phash = imagehash.phash(sprite)
+    # return str(phash)

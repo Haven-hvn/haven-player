@@ -318,10 +318,15 @@ class StreamRecorder:
                 logger.error(f"[{self.mint_id}] ❌ Participant {self.stream_info.participant_sid} not found in room")
                 return {"success": False, "error": "Participant not found in room"}
             
-            # Log available tracks
+            # Log available tracks - check both participant and room level
             logger.info(f"[{self.mint_id}] Participant has {len(participant.track_publications)} track publications")
             for track_pub in participant.track_publications.values():
                 logger.info(f"[{self.mint_id}]   - Track: {track_pub.kind}, subscribed: {track_pub.subscribed}, track exists: {track_pub.track is not None}")
+            
+            # Also check room-level track publications
+            logger.info(f"[{self.mint_id}] Room has {len(self.room.track_publications)} track publications")
+            for track_pub in self.room.track_publications.values():
+                logger.info(f"[{self.mint_id}]   - Room Track: {track_pub.kind}, subscribed: {track_pub.subscribed}, track exists: {track_pub.track is not None}")
             
             # Setup PyAV output container with error handling for CUDA issues
             logger.info(f"[{self.mint_id}] Setting up PyAV output container...")
@@ -351,14 +356,39 @@ class StreamRecorder:
             # Try multiple times to get tracks (they might not be immediately available)
             max_retries = 10
             for attempt in range(max_retries):
+                # First try participant's track publications
                 for track_pub in participant.track_publications.values():
                     if track_pub.track:
                         if track_pub.kind == rtc.TrackKind.KIND_VIDEO:
                             video_track = track_pub.track
-                            logger.info(f"[{self.mint_id}] ✅ Found video track (attempt {attempt + 1})")
+                            logger.info(f"[{self.mint_id}] ✅ Found video track in participant (attempt {attempt + 1})")
                         elif track_pub.kind == rtc.TrackKind.KIND_AUDIO:
                             audio_track = track_pub.track
-                            logger.info(f"[{self.mint_id}] ✅ Found audio track (attempt {attempt + 1})")
+                            logger.info(f"[{self.mint_id}] ✅ Found audio track in participant (attempt {attempt + 1})")
+                
+                # If not found in participant, try room-level track publications
+                if not video_track or not audio_track:
+                    for track_pub in self.room.track_publications.values():
+                        if track_pub.track:
+                            if track_pub.kind == rtc.TrackKind.KIND_VIDEO and not video_track:
+                                video_track = track_pub.track
+                                logger.info(f"[{self.mint_id}] ✅ Found video track in room (attempt {attempt + 1})")
+                            elif track_pub.kind == rtc.TrackKind.KIND_AUDIO and not audio_track:
+                                audio_track = track_pub.track
+                                logger.info(f"[{self.mint_id}] ✅ Found audio track in room (attempt {attempt + 1})")
+                
+                # If still not found, try all remote participants (fallback)
+                if not video_track or not audio_track:
+                    for other_participant in self.room.remote_participants.values():
+                        if other_participant.sid != participant.sid:  # Skip the original participant
+                            for track_pub in other_participant.track_publications.values():
+                                if track_pub.track:
+                                    if track_pub.kind == rtc.TrackKind.KIND_VIDEO and not video_track:
+                                        video_track = track_pub.track
+                                        logger.info(f"[{self.mint_id}] ✅ Found video track in other participant {other_participant.sid} (attempt {attempt + 1})")
+                                    elif track_pub.kind == rtc.TrackKind.KIND_AUDIO and not audio_track:
+                                        audio_track = track_pub.track
+                                        logger.info(f"[{self.mint_id}] ✅ Found audio track in other participant {other_participant.sid} (attempt {attempt + 1})")
                 
                 if video_track:
                     break
@@ -369,9 +399,20 @@ class StreamRecorder:
             
             if not video_track:
                 logger.error(f"[{self.mint_id}] ❌ No video track found after {max_retries} attempts")
-                logger.error(f"[{self.mint_id}] Track publications: {len(participant.track_publications)}")
+                logger.error(f"[{self.mint_id}] Participant track publications: {len(participant.track_publications)}")
                 for i, track_pub in enumerate(participant.track_publications.values()):
-                    logger.error(f"[{self.mint_id}]   Track {i}: kind={track_pub.kind}, subscribed={track_pub.subscribed}, track_exists={track_pub.track is not None}")
+                    logger.error(f"[{self.mint_id}]   Participant Track {i}: kind={track_pub.kind}, subscribed={track_pub.subscribed}, track_exists={track_pub.track is not None}")
+                logger.error(f"[{self.mint_id}] Room track publications: {len(self.room.track_publications)}")
+                for i, track_pub in enumerate(self.room.track_publications.values()):
+                    logger.error(f"[{self.mint_id}]   Room Track {i}: kind={track_pub.kind}, subscribed={track_pub.subscribed}, track_exists={track_pub.track is not None}")
+                
+                # Log all participants and their tracks
+                logger.error(f"[{self.mint_id}] All participants in room:")
+                for p_sid, p in self.room.remote_participants.items():
+                    logger.error(f"[{self.mint_id}]   Participant {p_sid}: {len(p.track_publications)} tracks")
+                    for i, track_pub in enumerate(p.track_publications.values()):
+                        logger.error(f"[{self.mint_id}]     Track {i}: kind={track_pub.kind}, subscribed={track_pub.subscribed}, track_exists={track_pub.track is not None}")
+                
                 self._cleanup_output_container()
                 return {"success": False, "error": "No video track found after waiting"}
             

@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 import threading
 from queue import Queue, Empty
 
-import av
 import numpy as np
 from livekit import rtc
 
@@ -20,6 +19,15 @@ from app.services.stream_manager import StreamManager
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Import PyAV with NVDEC error handling
+try:
+    import av
+except Exception as e:
+    # If PyAV fails to import due to NVDEC, the environment variables should handle it
+    # This shouldn't happen if main.py sets env vars first
+    logger.error(f"Failed to import PyAV: {e}")
+    raise
 
 
 class LiveKitRecordingService:

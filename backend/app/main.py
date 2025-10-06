@@ -2,6 +2,13 @@
 FastAPI application with shared stream management.
 """
 
+# CRITICAL: Disable CUDA/NVDEC before any imports that load FFmpeg/PyAV
+# This prevents NVDEC errors when PyAV initializes
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+os.environ['NVIDIA_VISIBLE_DEVICES'] = ''
+os.environ['DISABLE_HWACCEL'] = '1'
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

@@ -289,8 +289,7 @@ class StreamRecorder:
         # Frame tracking
         self.video_frame_count = 0
         self.audio_frame_count = 0
-        self.last_video_pts = 0
-        self.last_audio_pts = 0
+        self.last_audio_pts = 0  # Audio still needs PTS tracking
         
         # Timebase tracking for proper A/V sync
         # Video uses stream time_base, audio uses sample-based PTS
@@ -569,13 +568,13 @@ class StreamRecorder:
             self.video_stream.pix_fmt = 'yuv420p'
             self.video_stream.bit_rate = self.config['video_bitrate']
             
-            # Set explicit timebase for video - use 1/1000 (milliseconds) instead of 1/fps
-            # This gives us much more headroom before hitting the 32-bit DTS limit
-            # 1/fps timebase can overflow quickly in MP4's internal calculations
+            # Let PyAV/FFmpeg choose the timebase automatically based on framerate
+            # This is the most reliable approach - FFmpeg knows best
             from fractions import Fraction
-            self.video_stream.time_base = Fraction(1, 1000)  # 1ms precision
-            self.video_time_base = self.video_stream.time_base
-            logger.info(f"[{self.mint_id}] Video timebase set to 1/1000 (milliseconds)")
+            # Don't set time_base explicitly - let FFmpeg handle it
+            # self.video_stream.time_base will be set automatically during encoding
+            self.video_time_base = None  # Will be set by encoder
+            logger.info(f"[{self.mint_id}] Video timebase will be set automatically by encoder")
             
             # Apply codec-specific options
             if 'crf' in self.config:
@@ -607,11 +606,10 @@ class StreamRecorder:
             )
             self.audio_stream.bit_rate = self.config['audio_bitrate']
             
-            # Set explicit timebase for audio (keep 1/sample_rate for accurate timing)
-            # Audio uses samples as PTS units, which is standard and safe
-            self.audio_stream.time_base = Fraction(1, 48000)
-            self.audio_time_base = self.audio_stream.time_base
-            logger.info(f"[{self.mint_id}] Audio timebase set to 1/48000 (sample-based)")
+            # Let PyAV/FFmpeg set audio timebase automatically too
+            # Audio timing is sample-based and will be handled correctly by encoder
+            self.audio_time_base = None
+            logger.info(f"[{self.mint_id}] Audio timebase will be set automatically by encoder")
             
             logger.info(f"Setup output container for {self.mint_id}")
             
@@ -1035,20 +1033,13 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
                     return
             
-            # Set PTS using millisecond timebase (1/1000)
-            # Calculate PTS in milliseconds: frame_number * (1000 / fps)
-            fps = self.config.get('fps', 30)
-            pts_increment_ms = int(1000 / fps)  # ~33ms at 30fps
+            # Set PTS - simple frame-based incrementing
+            # Let FFmpeg handle timebase conversions automatically
+            av_frame.pts = self.video_frame_count  # Use frame number as PTS
             
-            av_frame.pts = self.last_video_pts
-            self.last_video_pts += pts_increment_ms  # Increment by milliseconds per frame
-            
-            # Log PTS periodically to detect overflow early
+            # Log PTS periodically to monitor for issues
             if self.video_frame_count % 300 == 0 and self.video_frame_count > 0:
-                # Calculate max safe PTS (leave headroom before 2^31)
-                max_safe_pts = 2000000000  # ~23 days at 1ms resolution
-                pts_percentage = (self.last_video_pts / max_safe_pts) * 100
-                logger.info(f"[{self.mint_id}] Video PTS: {self.last_video_pts}ms ({pts_percentage:.1f}% of safe limit)")
+                logger.info(f"[{self.mint_id}] Video frame {self.video_frame_count}, PTS: {av_frame.pts}")
             
             # Encode and write
             try:

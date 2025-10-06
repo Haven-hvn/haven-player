@@ -616,11 +616,17 @@ class StreamRecorder:
 
     def _cleanup_output_container(self) -> None:
         """Cleanup PyAV output container with memory-safe handling."""
+        import time
+        cleanup_start = time.time()
+        logger.info(f"[{self.mint_id}] ⏱️  _cleanup_output_container() called")
+        
         try:
             if self.output_container:
                 # Force garbage collection BEFORE flushing to free up memory
                 logger.info(f"[{self.mint_id}] Forcing garbage collection before flush...")
                 gc.collect()
+                gc_duration = time.time() - cleanup_start
+                logger.info(f"[{self.mint_id}] GC completed in {gc_duration:.2f}s")
                 
                 # Flush any remaining frames from encoders with memory-safe error handling
                 if self.video_stream:
@@ -689,9 +695,16 @@ class StreamRecorder:
                 
                 # Close container (this handles final flushing automatically)
                 try:
-                    logger.info(f"[{self.mint_id}] Closing output container...")
+                    import time
+                    close_start = time.time()
+                    logger.info(f"[{self.mint_id}] Closing output container (writing MOOV atom)...")
+                    logger.info(f"[{self.mint_id}] This may take a few seconds for large files...")
+                    
+                    # The close() call writes the MOOV atom - this is where it can hang
                     self.output_container.close()
-                    logger.info(f"[{self.mint_id}] Output container closed and flushed to disk")
+                    
+                    close_duration = time.time() - close_start
+                    logger.info(f"[{self.mint_id}] Output container closed and MOOV atom written in {close_duration:.1f}s")
                 except AssertionError as assert_error:
                     # Handle FFmpeg assertion failures (e.g., DTS overflow in movenc.c)
                     error_str = str(assert_error)

@@ -194,19 +194,26 @@ class LiveKitRecordingService:
     async def stop_recording(self, mint_id: str) -> Dict[str, Any]:
         """Stop recording a stream."""
         try:
+            logger.info(f"🛑 Stop recording called for mint_id: {mint_id}")
+            
             if mint_id not in self.active_recordings:
+                logger.warning(f"No active recording found for {mint_id}. Active recordings: {list(self.active_recordings.keys())}")
                 return {"success": False, "error": f"No active recording for {mint_id}"}
             
             recorder = self.active_recordings[mint_id]
+            logger.info(f"Found active recorder for {mint_id}, calling stop...")
             result = await recorder.stop()
             
             # Remove from active recordings
             del self.active_recordings[mint_id]
+            logger.info(f"Removed {mint_id} from active recordings")
             
             return result
             
         except Exception as e:
             logger.error(f"Failed to stop recording for {mint_id}: {e}")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
     async def get_recording_status(self, mint_id: str) -> Dict[str, Any]:
@@ -346,9 +353,11 @@ class StreamRecorder:
                 logger.info(f"[{self.mint_id}]   - Track: {track_pub.kind}, subscribed: {track_pub.subscribed}, track exists: {track_pub.track is not None}")
             
             # Setup PyAV output container with error handling for CUDA issues
+            # Run in executor to avoid blocking the async event loop
             logger.info(f"[{self.mint_id}] Setting up PyAV output container...")
             try:
-                self._setup_output_container()
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._setup_output_container)
                 logger.info(f"[{self.mint_id}] ✅ Output container setup complete")
             except Exception as e:
                 import traceback
@@ -403,7 +412,9 @@ class StreamRecorder:
                     for i, track_pub in enumerate(p.track_publications.values()):
                         logger.error(f"[{self.mint_id}]     Track {i}: kind={track_pub.kind}, subscribed={track_pub.subscribed}, track_exists={track_pub.track is not None}")
                 
-                self._cleanup_output_container()
+                # Cleanup in executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._cleanup_output_container)
                 return {"success": False, "error": "No video track found after waiting"}
             
             # Start encoding task
@@ -421,33 +432,50 @@ class StreamRecorder:
             
         except Exception as e:
             logger.error(f"Recording start failed for {self.mint_id}: {e}")
-            self._cleanup_output_container()
+            # Cleanup in executor to avoid blocking
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._cleanup_output_container)
+            except Exception as cleanup_error:
+                logger.error(f"Error during cleanup: {cleanup_error}")
             return {"success": False, "error": str(e)}
 
     async def stop(self) -> Dict[str, Any]:
         """Stop recording."""
         try:
+            logger.info(f"🛑 [{self.mint_id}] Stop recording requested")
+            
             if not self.is_recording:
+                logger.warning(f"[{self.mint_id}] No active recording to stop")
                 return {"success": False, "error": "No active recording"}
             
             # Signal stop
+            logger.info(f"[{self.mint_id}] Setting stop event...")
             self.stop_event.set()
             
-            # Wait for encoding task to finish
+            # Wait for encoding task to finish with longer timeout for AV1
             if self.encoding_task:
+                logger.info(f"[{self.mint_id}] Waiting for encoding tasks to complete...")
                 try:
-                    await asyncio.wait_for(self.encoding_task, timeout=10.0)
+                    await asyncio.wait_for(self.encoding_task, timeout=15.0)
+                    logger.info(f"[{self.mint_id}] Encoding tasks completed successfully")
                 except asyncio.TimeoutError:
-                    logger.warning(f"Encoding task timeout for {self.mint_id}")
+                    logger.warning(f"[{self.mint_id}] Encoding task timeout after 15s - forcing cancellation")
                     self.encoding_task.cancel()
+                    try:
+                        await self.encoding_task
+                    except asyncio.CancelledError:
+                        logger.info(f"[{self.mint_id}] Encoding task cancelled")
             
-            # Cleanup
-            self._cleanup_output_container()
+            # Cleanup - run in executor to avoid blocking
+            logger.info(f"[{self.mint_id}] Cleaning up output container...")
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._cleanup_output_container)
             
             self.is_recording = False
             end_time = datetime.now(timezone.utc)
             
-            logger.info(f"Stopped recording for {self.mint_id}")
+            logger.info(f"✅ [{self.mint_id}] Recording stopped successfully. Video frames: {self.video_frame_count}, Audio frames: {self.audio_frame_count}")
             
             return {
                 "success": True,
@@ -459,7 +487,9 @@ class StreamRecorder:
             }
             
         except Exception as e:
-            logger.error(f"Recording stop failed for {self.mint_id}: {e}")
+            logger.error(f"❌ [{self.mint_id}] Recording stop failed: {e}")
+            import traceback
+            logger.error(f"[{self.mint_id}] Traceback:\n{traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
     async def get_status(self) -> Dict[str, Any]:
@@ -622,12 +652,16 @@ class StreamRecorder:
             frame_count = 0
             
             async for event in rtc.VideoStream(video_track):
+                # Check stop event before processing each frame
                 if self.stop_event.is_set():
+                    logger.info(f"[{self.mint_id}] Stop event detected in video processing, breaking loop")
                     break
                 
                 frame = event.frame
                 try:
-                    self._write_video_frame(frame)
+                    # Run blocking encoding in executor to keep async loop responsive
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._write_video_frame, frame)
                     self.video_frame_count += 1
                     frame_count += 1
                     
@@ -644,9 +678,11 @@ class StreamRecorder:
                     continue
                 
         except asyncio.CancelledError:
-            logger.info(f"Video frame processing cancelled for {self.mint_id}")
+            logger.info(f"[{self.mint_id}] Video frame processing cancelled")
+            raise
         except Exception as e:
-            logger.error(f"Error processing video frames for {self.mint_id}: {e}")
+            logger.error(f"[{self.mint_id}] Error processing video frames: {e}")
+            raise
         finally:
             logger.info(f"[{self.mint_id}] Video frame processing ended. Total frames: {self.video_frame_count}")
 
@@ -657,12 +693,16 @@ class StreamRecorder:
             frame_count = 0
             
             async for event in rtc.AudioStream(audio_track):
+                # Check stop event before processing each frame
                 if self.stop_event.is_set():
+                    logger.info(f"[{self.mint_id}] Stop event detected in audio processing, breaking loop")
                     break
                 
                 frame = event.frame
                 try:
-                    self._write_audio_frame(frame)
+                    # Run blocking encoding in executor to keep async loop responsive
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._write_audio_frame, frame)
                     self.audio_frame_count += 1
                     frame_count += 1
                     
@@ -676,9 +716,11 @@ class StreamRecorder:
                     continue
                 
         except asyncio.CancelledError:
-            logger.info(f"Audio frame processing cancelled for {self.mint_id}")
+            logger.info(f"[{self.mint_id}] Audio frame processing cancelled")
+            raise
         except Exception as e:
-            logger.error(f"Error processing audio frames for {self.mint_id}: {e}")
+            logger.error(f"[{self.mint_id}] Error processing audio frames: {e}")
+            raise
         finally:
             logger.info(f"[{self.mint_id}] Audio frame processing ended. Total frames: {self.audio_frame_count}")
 

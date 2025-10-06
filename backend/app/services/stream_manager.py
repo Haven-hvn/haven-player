@@ -35,22 +35,37 @@ class StreamManager:
     """
     Shared stream manager for LiveKit connections.
     Manages single WebRTC connection for both streaming and recording.
+    
+    Singleton pattern ensures all services share the same StreamManager instance.
     """
     
+    _instance: Optional['StreamManager'] = None
+    _initialized: bool = False
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
     def __init__(self):
-        self.config: Optional[AppConfig] = None
-        self.pumpfun_service = PumpFunService()
-        
-        # Active streams
-        self.active_streams: Dict[str, StreamInfo] = {}
-        self.room: Optional[rtc.Room] = None
-        
-        # Event handlers
-        self.video_frame_handlers: Dict[str, Callable] = {}
-        self.audio_frame_handlers: Dict[str, Callable] = {}
-        
-        # WebSocket connections for streaming
-        self.active_websockets: Dict[str, set] = {}
+        # Only initialize once (singleton pattern)
+        if not self._initialized:
+            self.config: Optional[AppConfig] = None
+            self.pumpfun_service = PumpFunService()
+            
+            # Active streams
+            self.active_streams: Dict[str, StreamInfo] = {}
+            self.room: Optional[rtc.Room] = None
+            
+            # Event handlers
+            self.video_frame_handlers: Dict[str, Callable] = {}
+            self.audio_frame_handlers: Dict[str, Callable] = {}
+            
+            # WebSocket connections for streaming
+            self.active_websockets: Dict[str, set] = {}
+            
+            StreamManager._initialized = True
+            logger.info("✅ StreamManager singleton initialized")
         
     async def initialize(self) -> None:
         """Initialize the stream manager with configuration."""
@@ -118,6 +133,10 @@ class StreamManager:
             
             self.active_streams[mint_id] = stream_info_obj
             self.active_websockets[mint_id] = set()
+            
+            logger.info(f"✅ Stream stored in StreamManager: {mint_id}")
+            logger.info(f"📊 Total active streams: {len(self.active_streams)}")
+            logger.info(f"📋 Active stream keys: {list(self.active_streams.keys())}")
 
             return {
                 "success": True,
@@ -152,7 +171,14 @@ class StreamManager:
 
     async def get_stream_info(self, mint_id: str) -> Optional[StreamInfo]:
         """Get stream information for a mint_id."""
-        return self.active_streams.get(mint_id)
+        logger.info(f"🔍 Looking up stream info for: {mint_id}")
+        logger.info(f"📋 Available streams: {list(self.active_streams.keys())}")
+        result = self.active_streams.get(mint_id)
+        if result:
+            logger.info(f"✅ Found stream info for {mint_id}")
+        else:
+            logger.error(f"❌ Stream info not found for {mint_id}")
+        return result
 
     def register_video_frame_handler(self, mint_id: str, handler: Callable) -> None:
         """Register a video frame handler for streaming."""

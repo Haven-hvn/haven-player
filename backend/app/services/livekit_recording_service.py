@@ -618,11 +618,12 @@ class StreamRecorder:
             )
             self.audio_stream.bit_rate = self.config['audio_bitrate']
             
-            # Set audio timebase to sample rate (standard for audio)
-            # 1/48000 gives one unit per audio sample, which is the standard approach
-            self.audio_stream.time_base = Fraction(1, 48000)
+            # Use the SAME timebase as video (1/90000) to prevent MP4 muxer overflow
+            # When audio and video have different timebases, MP4 muxer does conversions
+            # that can overflow during MOOV atom writing
+            self.audio_stream.time_base = Fraction(1, 90000)
             self.audio_time_base = self.audio_stream.time_base
-            logger.info(f"[{self.mint_id}] Audio timebase set to 1/48000 (sample-based)")
+            logger.info(f"[{self.mint_id}] Audio timebase set to 1/90000 (matches video for MP4 compatibility)")
             
             logger.info(f"Setup output container for {self.mint_id}")
             
@@ -1155,9 +1156,11 @@ class StreamRecorder:
                 )
                 av_frame.sample_rate = sample_rate
                 
-                # Set PTS - use simple frame-based counting
-                # Audio frame number * samples per frame = total samples = PTS
-                av_frame.pts = self.audio_frame_count * samples_per_channel
+                # Set PTS in 90000 timebase (same as video)
+                # Convert audio samples to 90000 timebase units
+                # PTS = total_samples * (90000 / sample_rate)
+                total_samples = self.audio_frame_count * samples_per_channel
+                av_frame.pts = int(total_samples * 90000 / sample_rate)
                 
                 # Validate PTS is reasonable
                 if av_frame.pts is None or (self.audio_frame_count > 0 and av_frame.pts < 0):
@@ -1173,10 +1176,10 @@ class StreamRecorder:
                         
                         # Periodically log audio PTS to detect overflow
                         if self.audio_frame_count % 1000 == 0 and self.audio_frame_count > 0:
-                            # Max safe PTS in samples at 48kHz: ~44,739 seconds = 12.4 hours
-                            max_safe_samples = 2000000000
-                            pts_percentage = (packet.pts / max_safe_samples) * 100 if packet.pts else 0
-                            logger.info(f"[{self.mint_id}] Audio PTS: {packet.pts} samples ({pts_percentage:.1f}% of safe limit)")
+                            # Max safe PTS in 90000 timebase: 2^31 = 2,147,483,647 = ~6.6 hours
+                            max_safe_pts = 2147483647
+                            pts_percentage = (packet.pts / max_safe_pts) * 100 if packet.pts else 0
+                            logger.info(f"[{self.mint_id}] Audio PTS: {packet.pts} (90kHz units, {pts_percentage:.1f}% of safe limit)")
                         
                         self.output_container.mux(packet)
                 except OSError as os_error:

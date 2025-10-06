@@ -759,6 +759,8 @@ class StreamRecorder:
         try:
             logger.info(f"[{self.mint_id}] Starting video frame processing")
             frame_count = 0
+            consecutive_errors = 0
+            last_successful_frame = 0
             
             async for event in rtc.VideoStream(video_track):
                 # Check stop event before processing each frame
@@ -773,6 +775,8 @@ class StreamRecorder:
                     await loop.run_in_executor(None, self._write_video_frame, frame)
                     self.video_frame_count += 1
                     frame_count += 1
+                    last_successful_frame = frame_count
+                    consecutive_errors = 0  # Reset error counter on success
                     
                     # Log progress every 300 frames (every ~10 seconds at 30fps)
                     if frame_count % 300 == 0:
@@ -782,7 +786,18 @@ class StreamRecorder:
                         logger.info(f"[{self.mint_id}] Processed {frame_count} video frames, file: {file_size_mb:.2f} MB")
                         
                 except Exception as frame_error:
+                    consecutive_errors += 1
                     logger.error(f"[{self.mint_id}] Error processing video frame {frame_count}: {frame_error}")
+                    
+                    # If we get too many consecutive errors, something is seriously wrong
+                    if consecutive_errors >= 10:
+                        logger.error(f"[{self.mint_id}] ❌ CRITICAL: 10 consecutive video encoding failures!")
+                        logger.error(f"[{self.mint_id}] Last successful frame: {last_successful_frame}")
+                        logger.error(f"[{self.mint_id}] Codec: {self.config.get('video_codec')}")
+                        logger.error(f"[{self.mint_id}] This usually indicates encoder crash or timestamp overflow")
+                        logger.error(f"[{self.mint_id}] STOPPING video recording to prevent further issues")
+                        break
+                    
                     # Continue processing other frames
                     continue
                 
@@ -1005,12 +1020,14 @@ class StreamRecorder:
             except AssertionError as assert_error:
                 # Handle FFmpeg assertion failures during muxing (e.g., DTS overflow)
                 error_str = str(assert_error)
-                logger.error(f"[{self.mint_id}] Assertion error muxing video packet at frame {self.video_frame_count}: {error_str}")
-                if "next_dts" in error_str.lower() or "0x7fffffff" in error_str:
-                    logger.error(f"[{self.mint_id}] DTS overflow detected - timestamps exceeded 32-bit limit")
+                logger.error(f"[{self.mint_id}] ❌ ASSERTION ERROR muxing video packet at frame {self.video_frame_count}: {error_str}")
+                if "next_dts" in error_str.lower() or "0x7fffffff" in error_str or "movenc.c" in error_str:
+                    logger.error(f"[{self.mint_id}] 🔴 DTS OVERFLOW - timestamps exceeded MP4 32-bit limit!")
                     logger.error(f"[{self.mint_id}] Current PTS: {self.last_video_pts}, Frame count: {self.video_frame_count}")
-                    # Stop recording to prevent further corruption
-                    raise RuntimeError("Recording stopped due to timestamp overflow")
+                    logger.error(f"[{self.mint_id}] Codec: {self.config.get('video_codec')} - AV1 is particularly prone to this")
+                    logger.error(f"[{self.mint_id}] RECOMMENDATION: Use H.264 codec or record shorter segments")
+                    # Raise exception to stop video encoding
+                    raise RuntimeError(f"MP4 timestamp overflow at frame {self.video_frame_count} - recording stopped")
                 raise
             except Exception as mux_error:
                 logger.error(f"[{self.mint_id}] Error muxing video packet at frame {self.video_frame_count}: {mux_error}")
@@ -1085,15 +1102,35 @@ class StreamRecorder:
                 )
                 av_frame.sample_rate = sample_rate
                 
-                # Set PTS - CRITICAL FIX: use samples_per_channel, not len(audio_data)
-                # After reshaping, len(audio_data) returns num_channels, not sample count!
+                # Set PTS - CRITICAL: Ensure strictly increasing timestamps
+                # Use samples as PTS in audio timebase (1/sample_rate)
                 av_frame.pts = self.last_audio_pts
+                
+                # IMPORTANT: Increment BEFORE encoding to ensure next frame has higher PTS
                 self.last_audio_pts += samples_per_channel
+                
+                # Validate PTS is actually increasing
+                if self.audio_frame_count > 0 and av_frame.pts <= 0:
+                    logger.error(f"[{self.mint_id}] Invalid audio PTS: {av_frame.pts}")
+                    return
                 
                 # Encode and write
                 try:
                     for packet in self.audio_stream.encode(av_frame):
+                        # Log first few packets to verify PTS/DTS are increasing
+                        if self.audio_frame_count < 5:
+                            logger.info(f"[{self.mint_id}] Audio packet {self.audio_frame_count}: PTS={packet.pts}, DTS={packet.dts}")
                         self.output_container.mux(packet)
+                except OSError as os_error:
+                    # Handle "Invalid argument" errors from non-monotonic timestamps
+                    error_str = str(os_error)
+                    if "non monotonically increasing" in error_str.lower():
+                        logger.error(f"[{self.mint_id}] ❌ AUDIO TIMESTAMP ERROR at frame {self.audio_frame_count}")
+                        logger.error(f"[{self.mint_id}] Frame PTS: {av_frame.pts}, last_audio_pts: {self.last_audio_pts}")
+                        logger.error(f"[{self.mint_id}] Samples per channel: {samples_per_channel}, channels: {num_channels}")
+                        # Skip this frame and continue
+                        return
+                    raise
                 except Exception as mux_error:
                     logger.error(f"[{self.mint_id}] Error muxing audio packet at frame {self.audio_frame_count}: {mux_error}")
                     raise

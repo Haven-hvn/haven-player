@@ -297,6 +297,9 @@ class StreamRecorder:
         self.video_time_base = None  # Will be set in _setup_output_container
         self.audio_time_base = None  # Will be set in _setup_output_container
         
+        # Track recording start time for timestamp calculation
+        self.recording_start_time = None
+        
         # Flush tracking - AGGRESSIVE flushing to prevent RAM buildup
         self.frames_since_flush = 0
         self.flush_interval = 15  # Flush every 15 video frames (~0.5 seconds at 30fps) - very aggressive for Windows
@@ -420,6 +423,7 @@ class StreamRecorder:
             # Start encoding task
             self.is_recording = True
             self.start_time = datetime.now(timezone.utc)
+            self.recording_start_time = self.start_time  # For timestamp calculation
             self.encoding_task = asyncio.create_task(self._encoding_loop(video_track, audio_track))
             
             logger.info(f"Started recording for {self.mint_id} to {self.output_path}")
@@ -531,6 +535,9 @@ class StreamRecorder:
                 # Reduce buffer sizes to minimize memory usage (especially important for Windows)
                 'max_interleave_delta': '0',  # Disable interleaving delays
                 'flush_packets': '1',  # Flush packets immediately
+                # Use fragmented MP4 to avoid timestamp overflow issues in long recordings
+                # Fragmented MP4 writes metadata incrementally, avoiding 32-bit DTS limits
+                'movflags': 'frag_keyframe+empty_moov+default_base_moof',
             }
             
             # Create output container with software-only and memory-efficient options
@@ -624,6 +631,13 @@ class StreamRecorder:
                         except Exception as retry_error:
                             logger.error(f"[{self.mint_id}] Retry failed: {retry_error}")
                             logger.warning(f"[{self.mint_id}] Video may be incomplete but will attempt to save")
+                    except OSError as e:
+                        # Handle "End of file" errors from avcodec_send_frame
+                        error_str = str(e)
+                        if "End of file" in error_str or "541478725" in error_str:
+                            logger.info(f"[{self.mint_id}] Video encoder already flushed (End of file received)")
+                        else:
+                            logger.warning(f"[{self.mint_id}] OSError flushing video encoder: {e}")
                     except Exception as e:
                         logger.warning(f"[{self.mint_id}] Error flushing video encoder: {e}")
                 
@@ -646,6 +660,13 @@ class StreamRecorder:
                         except Exception as retry_error:
                             logger.error(f"[{self.mint_id}] Retry failed: {retry_error}")
                             logger.warning(f"[{self.mint_id}] Audio may be incomplete but will attempt to save")
+                    except OSError as e:
+                        # Handle "End of file" errors from avcodec_send_frame
+                        error_str = str(e)
+                        if "End of file" in error_str or "541478725" in error_str:
+                            logger.info(f"[{self.mint_id}] Audio encoder already flushed (End of file received)")
+                        else:
+                            logger.warning(f"[{self.mint_id}] OSError flushing audio encoder: {e}")
                     except Exception as e:
                         logger.warning(f"[{self.mint_id}] Error flushing audio encoder: {e}")
                 
@@ -654,6 +675,14 @@ class StreamRecorder:
                     logger.info(f"[{self.mint_id}] Closing output container...")
                     self.output_container.close()
                     logger.info(f"[{self.mint_id}] Output container closed and flushed to disk")
+                except AssertionError as assert_error:
+                    # Handle FFmpeg assertion failures (e.g., DTS overflow in movenc.c)
+                    error_str = str(assert_error)
+                    logger.error(f"[{self.mint_id}] Assertion error closing container: {error_str}")
+                    logger.warning(f"[{self.mint_id}] This may be due to timestamp overflow in long recordings")
+                    logger.info(f"[{self.mint_id}] File may still be playable despite the error")
+                    # Container is likely already closed/corrupted, just clear the reference
+                    self.output_container = None
                 except Exception as close_error:
                     logger.error(f"[{self.mint_id}] Error closing container: {close_error}")
                     # Try to force close even if it fails

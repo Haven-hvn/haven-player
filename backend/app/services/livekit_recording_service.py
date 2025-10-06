@@ -479,10 +479,27 @@ class StreamRecorder:
             gc.collect()  # Second pass to catch circular references
             logger.info(f"[{self.mint_id}] Pre-cleanup complete")
             
-            # Cleanup - run in executor to avoid blocking
+            # Cleanup - run in executor with GENEROUS TIMEOUT to avoid blocking
+            # AV1 encoder flush can take 30-60 seconds, H.264 is much faster (1-2 seconds)
             logger.info(f"[{self.mint_id}] Cleaning up output container...")
+            codec = self.config.get('video_codec', 'unknown')
+            timeout_seconds = 60.0 if 'av1' in codec.lower() else 30.0
+            logger.info(f"[{self.mint_id}] Using {timeout_seconds}s timeout for {codec} encoder flush")
+            
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._cleanup_output_container)
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self._cleanup_output_container),
+                    timeout=timeout_seconds
+                )
+                logger.info(f"[{self.mint_id}] Cleanup completed successfully")
+            except asyncio.TimeoutError:
+                logger.error(f"[{self.mint_id}] ⚠️  Cleanup timeout after {timeout_seconds}s")
+                logger.error(f"[{self.mint_id}] This is unusual - encoder may be hung")
+                logger.error(f"[{self.mint_id}] Recommendation: Use H.264 codec instead of AV1 for faster/more reliable recording")
+                # Don't force close - let the user restart the server to recover
+                # The file should still be partially playable
+                raise RuntimeError(f"Recording cleanup hung for {timeout_seconds}s - server restart recommended")
             
             self.is_recording = False
             end_time = datetime.now(timezone.utc)
@@ -608,12 +625,15 @@ class StreamRecorder:
                 # Flush any remaining frames from encoders with memory-safe error handling
                 if self.video_stream:
                     try:
-                        logger.info(f"[{self.mint_id}] Flushing video encoder...")
+                        import time
+                        flush_start = time.time()
+                        logger.info(f"[{self.mint_id}] Flushing video encoder (this may take 5-10 seconds for AV1)...")
                         packet_count = 0
                         for packet in self.video_stream.encode(None):  # Flush encoder
                             self.output_container.mux(packet)
                             packet_count += 1
-                        logger.info(f"[{self.mint_id}] Video encoder flushed {packet_count} packets")
+                        flush_duration = time.time() - flush_start
+                        logger.info(f"[{self.mint_id}] Video encoder flushed {packet_count} packets in {flush_duration:.1f}s")
                     except MemoryError as e:
                         logger.error(f"[{self.mint_id}] MemoryError flushing video encoder: {e}")
                         logger.warning(f"[{self.mint_id}] Forcing memory cleanup and retrying...")
@@ -637,12 +657,15 @@ class StreamRecorder:
                 
                 if self.audio_stream:
                     try:
+                        import time
+                        flush_start = time.time()
                         logger.info(f"[{self.mint_id}] Flushing audio encoder...")
                         packet_count = 0
                         for packet in self.audio_stream.encode(None):  # Flush encoder
                             self.output_container.mux(packet)
                             packet_count += 1
-                        logger.info(f"[{self.mint_id}] Audio encoder flushed {packet_count} packets")
+                        flush_duration = time.time() - flush_start
+                        logger.info(f"[{self.mint_id}] Audio encoder flushed {packet_count} packets in {flush_duration:.1f}s")
                     except MemoryError as e:
                         logger.error(f"[{self.mint_id}] MemoryError flushing audio encoder: {e}")
                         logger.warning(f"[{self.mint_id}] Forcing memory cleanup and retrying...")

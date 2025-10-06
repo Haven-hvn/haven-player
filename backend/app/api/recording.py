@@ -16,7 +16,7 @@ router = APIRouter()
 
 class StartRecordingRequest(BaseModel):
     mint_id: str
-    output_format: str = "av1"  # h264, av1, svtav1, vp9
+    output_format: str = "h264"  # h264, av1, svtav1, vp9 (h264 recommended for reliability)
     video_quality: str = "medium"  # low, medium, high
 
 
@@ -119,12 +119,13 @@ async def get_supported_formats():
         "success": True,
         "formats": {
             "h264": {
-                "description": "H.264/AVC - Fast, compatible, good quality (recommended)",
+                "description": "H.264/AVC - Fast, compatible, good quality (RECOMMENDED - most reliable)",
                 "video_codec": "libx264",
                 "audio_codec": "aac",
                 "container": "mp4",
                 "encoding_speed": "fast",
-                "file_size": "medium"
+                "file_size": "medium",
+                "note": "Best choice for real-time recording - fast, stable, and widely compatible"
             },
             "av1": {
                 "description": "AV1 - Best compression, excellent quality, slower encoding",

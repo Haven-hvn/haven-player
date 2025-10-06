@@ -70,7 +70,7 @@ export const useRecording = (mintId: string): UseRecordingReturn => {
       // Step 2: Start recording
       const recordingRequest: StartRecordingRequest = {
         mint_id: mintId,
-        output_format: 'av1',
+        output_format: 'h264',  // H.264 is faster and more reliable than AV1
         video_quality: 'medium',
       };
 

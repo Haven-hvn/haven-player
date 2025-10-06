@@ -343,20 +343,37 @@ class StreamRecorder:
                     }
                 raise
             
-            # Subscribe to video frames
+            # Subscribe to video frames with retry logic
+            logger.info(f"[{self.mint_id}] Extracting video/audio tracks...")
             video_track = None
             audio_track = None
             
-            for track_pub in participant.track_publications.values():
-                if track_pub.track:
-                    if track_pub.kind == rtc.TrackKind.KIND_VIDEO:
-                        video_track = track_pub.track
-                    elif track_pub.kind == rtc.TrackKind.KIND_AUDIO:
-                        audio_track = track_pub.track
+            # Try multiple times to get tracks (they might not be immediately available)
+            max_retries = 10
+            for attempt in range(max_retries):
+                for track_pub in participant.track_publications.values():
+                    if track_pub.track:
+                        if track_pub.kind == rtc.TrackKind.KIND_VIDEO:
+                            video_track = track_pub.track
+                            logger.info(f"[{self.mint_id}] ✅ Found video track (attempt {attempt + 1})")
+                        elif track_pub.kind == rtc.TrackKind.KIND_AUDIO:
+                            audio_track = track_pub.track
+                            logger.info(f"[{self.mint_id}] ✅ Found audio track (attempt {attempt + 1})")
+                
+                if video_track:
+                    break
+                
+                if attempt < max_retries - 1:
+                    logger.info(f"[{self.mint_id}] ⏳ Waiting for tracks... (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(0.5)  # Wait 500ms before retry
             
             if not video_track:
+                logger.error(f"[{self.mint_id}] ❌ No video track found after {max_retries} attempts")
+                logger.error(f"[{self.mint_id}] Track publications: {len(participant.track_publications)}")
+                for i, track_pub in enumerate(participant.track_publications.values()):
+                    logger.error(f"[{self.mint_id}]   Track {i}: kind={track_pub.kind}, subscribed={track_pub.subscribed}, track_exists={track_pub.track is not None}")
                 self._cleanup_output_container()
-                return {"success": False, "error": "No video track found"}
+                return {"success": False, "error": "No video track found after waiting"}
             
             # Start encoding task
             self.is_recording = True

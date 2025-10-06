@@ -552,34 +552,66 @@ class StreamRecorder:
     async def _process_video_frames(self, video_track: rtc.RemoteVideoTrack) -> None:
         """Process video frames from LiveKit track."""
         try:
+            logger.info(f"[{self.mint_id}] Starting video frame processing")
+            frame_count = 0
+            
             async for event in rtc.VideoStream(video_track):
                 if self.stop_event.is_set():
                     break
                 
                 frame = event.frame
-                self._write_video_frame(frame)
-                self.video_frame_count += 1
+                try:
+                    self._write_video_frame(frame)
+                    self.video_frame_count += 1
+                    frame_count += 1
+                    
+                    # Log progress every 100 frames
+                    if frame_count % 100 == 0:
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} video frames")
+                        
+                except Exception as frame_error:
+                    logger.error(f"[{self.mint_id}] Error processing video frame {frame_count}: {frame_error}")
+                    # Continue processing other frames
+                    continue
                 
         except asyncio.CancelledError:
             logger.info(f"Video frame processing cancelled for {self.mint_id}")
         except Exception as e:
             logger.error(f"Error processing video frames for {self.mint_id}: {e}")
+        finally:
+            logger.info(f"[{self.mint_id}] Video frame processing ended. Total frames: {self.video_frame_count}")
 
     async def _process_audio_frames(self, audio_track: rtc.RemoteAudioTrack) -> None:
         """Process audio frames from LiveKit track."""
         try:
+            logger.info(f"[{self.mint_id}] Starting audio frame processing")
+            frame_count = 0
+            
             async for event in rtc.AudioStream(audio_track):
                 if self.stop_event.is_set():
                     break
                 
                 frame = event.frame
-                self._write_audio_frame(frame)
-                self.audio_frame_count += 1
+                try:
+                    self._write_audio_frame(frame)
+                    self.audio_frame_count += 1
+                    frame_count += 1
+                    
+                    # Log progress every 1000 frames (audio frames are more frequent)
+                    if frame_count % 1000 == 0:
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} audio frames")
+                        
+                except Exception as frame_error:
+                    logger.error(f"[{self.mint_id}] Error processing audio frame {frame_count}: {frame_error}")
+                    # Continue processing other frames
+                    continue
                 
         except asyncio.CancelledError:
             logger.info(f"Audio frame processing cancelled for {self.mint_id}")
         except Exception as e:
             logger.error(f"Error processing audio frames for {self.mint_id}: {e}")
+        finally:
+            logger.info(f"[{self.mint_id}] Audio frame processing ended. Total frames: {self.audio_frame_count}")
 
     def _write_video_frame(self, frame: rtc.VideoFrame) -> None:
         """Write a video frame to the output file."""
@@ -596,20 +628,94 @@ class StreamRecorder:
             # This assumes the frame has a buffer attribute
             buffer = frame.data
             
-            # Create PyAV VideoFrame
-            av_frame = av.VideoFrame(width, height, 'yuv420p')
+            # Create PyAV VideoFrame with proper format handling
+            av_frame = None
             
             # Convert buffer to the right format
             # Note: This is a simplified version - actual conversion depends on LiveKit frame format
             if hasattr(frame, 'to_ndarray'):
                 # If LiveKit provides numpy conversion
-                img = frame.to_ndarray(format='rgb24')
-                av_frame = av.VideoFrame.from_ndarray(img, format='rgb24')
-                av_frame = av_frame.reformat(format='yuv420p')
-            else:
+                try:
+                    # Try different formats to find the best one
+                    for format_name in ['rgb24', 'bgr24', 'rgba', 'bgra']:
+                        try:
+                            img = frame.to_ndarray(format=format_name)
+                            av_frame = av.VideoFrame.from_ndarray(img, format=format_name)
+                            av_frame = av_frame.reformat(format='yuv420p')
+                            logger.debug(f"[{self.mint_id}] Successfully converted frame using {format_name}")
+                            break
+                        except Exception as format_error:
+                            logger.debug(f"[{self.mint_id}] Failed to convert with {format_name}: {format_error}")
+                            continue
+                    else:
+                        # All formats failed
+                        logger.warning(f"[{self.mint_id}] Failed to convert frame using any format")
+                        av_frame = None
+                except Exception as e:
+                    logger.warning(f"[{self.mint_id}] Failed to convert frame using to_ndarray: {e}")
+                    # Fall back to manual conversion
+                    av_frame = None
+            
+            if av_frame is None:
                 # Manual conversion from buffer
-                # This needs to be adjusted based on actual LiveKit frame format
-                av_frame.planes[0].update(buffer)
+                # Handle different frame formats and sizes
+                try:
+                    # Convert buffer to numpy array
+                    if hasattr(buffer, 'dtype'):
+                        # Already a numpy array
+                        frame_data = buffer
+                    else:
+                        # Convert memoryview/buffer to numpy array
+                        # Try different data types based on expected frame size
+                        expected_size = width * height * 3  # RGB format
+                        actual_size = len(buffer)
+                        
+                        if actual_size == expected_size:
+                            # RGB format
+                            frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 3)
+                        elif actual_size == expected_size * 4:
+                            # RGBA format
+                            frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 4)
+                        elif actual_size == width * height * 3 // 2:
+                            # YUV420 format
+                            frame_data = np.frombuffer(buffer, dtype=np.uint8)
+                        else:
+                            # Unknown format, try to handle gracefully
+                            logger.warning(f"Unexpected frame size: got {actual_size} bytes, expected {expected_size} for {width}x{height}")
+                            # Try to reshape as RGB if possible
+                            if actual_size >= expected_size:
+                                frame_data = np.frombuffer(buffer, dtype=np.uint8)[:expected_size].reshape(height, width, 3)
+                            else:
+                                # Skip this frame if it's too small
+                                logger.warning(f"Skipping frame: too small ({actual_size} < {expected_size})")
+                                return
+                    
+                    # Create PyAV frame from numpy array
+                    if len(frame_data.shape) == 3 and frame_data.shape[2] == 3:
+                        # RGB format
+                        av_frame = av.VideoFrame.from_ndarray(frame_data, format='rgb24')
+                        av_frame = av_frame.reformat(format='yuv420p')
+                    elif len(frame_data.shape) == 3 and frame_data.shape[2] == 4:
+                        # RGBA format
+                        av_frame = av.VideoFrame.from_ndarray(frame_data, format='rgba')
+                        av_frame = av_frame.reformat(format='yuv420p')
+                    else:
+                        # YUV format or other
+                        av_frame = av.VideoFrame(width, height, 'yuv420p')
+                        # Copy data to the frame planes
+                        if len(frame_data) >= width * height * 3 // 2:
+                            av_frame.planes[0].update(frame_data[:width * height])
+                            if len(frame_data) > width * height:
+                                av_frame.planes[1].update(frame_data[width * height:width * height + width * height // 4])
+                            if len(frame_data) > width * height + width * height // 4:
+                                av_frame.planes[2].update(frame_data[width * height + width * height // 4:])
+                        else:
+                            logger.warning(f"Frame data too small for YUV format: {len(frame_data)}")
+                            return
+                            
+                except Exception as e:
+                    logger.error(f"Failed to convert frame manually: {e}")
+                    return
             
             # Set PTS
             av_frame.pts = self.last_video_pts
@@ -634,9 +740,30 @@ class StreamRecorder:
             num_channels = frame.num_channels
             samples = frame.data
             
+            # Convert memoryview to proper numpy array with correct dtype
+            if hasattr(samples, 'dtype'):
+                # Already a numpy array
+                audio_data = samples
+            else:
+                # Convert memoryview/buffer to numpy array
+                # LiveKit typically provides 16-bit signed integer samples
+                try:
+                    audio_data = np.frombuffer(samples, dtype=np.int16)
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Failed to convert audio buffer: {e}")
+                    return
+            
+            # Reshape if needed for multi-channel audio
+            if num_channels > 1:
+                try:
+                    audio_data = audio_data.reshape(-1, num_channels)
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Failed to reshape audio data for {num_channels} channels: {e}")
+                    return
+            
             # Create PyAV AudioFrame
             av_frame = av.AudioFrame.from_ndarray(
-                samples,
+                audio_data,
                 format='s16',
                 layout='stereo' if num_channels == 2 else 'mono'
             )
@@ -644,7 +771,7 @@ class StreamRecorder:
             
             # Set PTS
             av_frame.pts = self.last_audio_pts
-            self.last_audio_pts += len(samples)
+            self.last_audio_pts += len(audio_data)
             
             # Encode and write
             for packet in self.audio_stream.encode(av_frame):

@@ -872,13 +872,14 @@ class StreamRecorder:
             width = frame.width
             height = frame.height
             
-            # Log frame dimensions on first frame or if dimensions change
-            if self.video_frame_count == 0:
-                logger.info(f"[{self.mint_id}] First video frame dimensions: {width}x{height}, configured: {self.config['width']}x{self.config['height']}")
-            
             # Get the frame data as numpy array
             # This assumes the frame has a buffer attribute
             buffer = frame.data
+            
+            # Log frame dimensions on first frame or if dimensions change
+            if self.video_frame_count == 0:
+                buffer_size = len(buffer) if hasattr(buffer, '__len__') else 0
+                logger.info(f"[{self.mint_id}] First video frame: reported {width}x{height}, buffer {buffer_size} bytes, target {self.config['width']}x{self.config['height']}")
             
             # Create PyAV VideoFrame with proper format handling
             av_frame = None
@@ -988,25 +989,38 @@ class StreamRecorder:
                         )
                         del frame_data  # Free memory immediately
                     else:
-                        # YUV format or other
-                        av_frame = av.VideoFrame(width, height, 'yuv420p')
-                        # Copy data to the frame planes
-                        if len(frame_data) >= width * height * 3 // 2:
-                            av_frame.planes[0].update(frame_data[:width * height])
-                            if len(frame_data) > width * height:
-                                av_frame.planes[1].update(frame_data[width * height:width * height + width * height // 4])
-                            if len(frame_data) > width * height + width * height // 4:
-                                av_frame.planes[2].update(frame_data[width * height + width * height // 4:])
-                            del frame_data  # Free memory immediately
-                            # Resize if needed
-                            if width != self.config['width'] or height != self.config['height']:
-                                av_frame = av_frame.reformat(
-                                    format='yuv420p',
-                                    width=self.config['width'],
-                                    height=self.config['height']
-                                )
+                        # YUV format or other - calculate actual dimensions from buffer size
+                        actual_size = len(frame_data)
+                        expected_yuv420_size = width * height * 3 // 2
+                        
+                        if actual_size >= expected_yuv420_size:
+                            # YUV420 format
+                            av_frame = av.VideoFrame(width, height, 'yuv420p')
+                            # Copy data to the frame planes
+                            try:
+                                av_frame.planes[0].update(frame_data[:width * height])
+                                if len(frame_data) > width * height:
+                                    av_frame.planes[1].update(frame_data[width * height:width * height + width * height // 4])
+                                if len(frame_data) > width * height + width * height // 4:
+                                    av_frame.planes[2].update(frame_data[width * height + width * height // 4:])
+                                del frame_data  # Free memory immediately
+                                # Resize if needed
+                                if width != self.config['width'] or height != self.config['height']:
+                                    av_frame = av_frame.reformat(
+                                        format='yuv420p',
+                                        width=self.config['width'],
+                                        height=self.config['height']
+                                    )
+                            except ValueError as ve:
+                                logger.error(f"[{self.mint_id}] YUV plane update failed: {ve}")
+                                logger.error(f"[{self.mint_id}] Frame: {width}x{height}, buffer: {actual_size} bytes, expected: {expected_yuv420_size}")
+                                del frame_data
+                                return
                         else:
-                            logger.warning(f"[{self.mint_id}] Frame data too small for YUV format: {len(frame_data)}")
+                            # Buffer size doesn't match - might be a different resolution
+                            # Try to detect actual resolution
+                            logger.warning(f"[{self.mint_id}] Frame size mismatch: got {actual_size} bytes for {width}x{height}")
+                            logger.warning(f"[{self.mint_id}] Skipping frame - resolution may have changed")
                             del frame_data
                             return
                             

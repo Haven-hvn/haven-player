@@ -16,12 +16,16 @@ from app.api import videos, config, jobs, pumpfun_streams, live_sessions, record
 from app.models.base import init_db
 from app.models.database import SessionLocal
 from app.models.config import AppConfig
+from app.services.livekit_recording_service import LiveKitRecordingService
 
 app = FastAPI(
     title="Haven Player API",
     description="API for Haven Player with shared stream management",
     version="2.0.0"
 )
+
+# Reference to recording service for shutdown cleanup
+recording_service: LiveKitRecordingService = recording.recording_service
 
 # CORS middleware
 app.add_middleware(
@@ -55,6 +59,32 @@ async def on_startup() -> None:
         print(f"❌ Error initializing config: {e}")
     finally:
         db.close()
+
+# Graceful shutdown handler
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    """Gracefully stop all recordings on shutdown to ensure videos are saved."""
+    print("🛑 Shutting down - stopping all active recordings...")
+    try:
+        # Get all active recordings
+        result = await recording_service.get_all_recordings()
+        if result.get("success") and result.get("recordings"):
+            print(f"📹 Found {len(result['recordings'])} active recordings to stop")
+            
+            # Stop each recording
+            for mint_id in list(result['recordings'].keys()):
+                print(f"  Stopping recording for {mint_id}...")
+                stop_result = await recording_service.stop_recording(mint_id)
+                if stop_result.get("success"):
+                    print(f"  ✅ Successfully stopped recording for {mint_id}")
+                else:
+                    print(f"  ⚠️  Failed to stop recording for {mint_id}: {stop_result.get('error')}")
+        else:
+            print("📹 No active recordings to stop")
+    except Exception as e:
+        print(f"❌ Error during shutdown cleanup: {e}")
+    
+    print("✅ Shutdown cleanup complete")
 
 # Include routers
 app.include_router(videos.router, prefix="/api/videos", tags=["videos"])

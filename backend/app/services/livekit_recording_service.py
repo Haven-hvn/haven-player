@@ -284,8 +284,21 @@ class StreamRecorder:
         self.last_video_pts = 0
         self.last_audio_pts = 0
         
+        # Flush tracking - flush to disk periodically to avoid RAM buildup
+        self.frames_since_flush = 0
+        self.flush_interval = 100  # Flush every 100 video frames (~3.3 seconds at 30fps)
+        
         # Get output filename
         self.output_path = self._get_output_filename()
+    
+    def __del__(self):
+        """Destructor to ensure cleanup happens even if stop() is not called."""
+        try:
+            if self.output_container:
+                logger.warning(f"[{self.mint_id}] StreamRecorder being destroyed without proper cleanup - forcing cleanup")
+                self._cleanup_output_container()
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Error in destructor cleanup: {e}")
 
     def _get_output_filename(self) -> Path:
         """Generate output filename based on mint_id and timestamp."""
@@ -442,6 +455,11 @@ class StreamRecorder:
 
     async def get_status(self) -> Dict[str, Any]:
         """Get current recording status."""
+        # Get file size if it exists
+        file_size_mb = 0
+        if self.output_path and self.output_path.exists():
+            file_size_mb = self.output_path.stat().st_size / (1024 * 1024)  # Convert to MB
+        
         return {
             "mint_id": self.mint_id,
             "is_recording": self.is_recording,
@@ -449,6 +467,7 @@ class StreamRecorder:
             "output_path": str(self.output_path) if self.output_path else None,
             "video_frames": self.video_frame_count,
             "audio_frames": self.audio_frame_count,
+            "file_size_mb": round(file_size_mb, 2),
             "config": self.config
         }
 
@@ -518,8 +537,31 @@ class StreamRecorder:
         """Cleanup PyAV output container."""
         try:
             if self.output_container:
+                # Flush any remaining frames from encoders
+                if self.video_stream:
+                    try:
+                        for packet in self.video_stream.encode(None):  # Flush encoder
+                            self.output_container.mux(packet)
+                    except Exception as e:
+                        logger.warning(f"[{self.mint_id}] Error flushing video encoder: {e}")
+                
+                if self.audio_stream:
+                    try:
+                        for packet in self.audio_stream.encode(None):  # Flush encoder
+                            self.output_container.mux(packet)
+                    except Exception as e:
+                        logger.warning(f"[{self.mint_id}] Error flushing audio encoder: {e}")
+                
+                # Final flush and close
+                try:
+                    self.output_container.mux()  # Final flush
+                except Exception as e:
+                    logger.warning(f"[{self.mint_id}] Error flushing container: {e}")
+                
                 self.output_container.close()
+                logger.info(f"[{self.mint_id}] Output container closed and flushed to disk")
                 self.output_container = None
+                
             self.video_stream = None
             self.audio_stream = None
         except Exception as e:
@@ -575,7 +617,10 @@ class StreamRecorder:
                     
                     # Log progress every 100 frames
                     if frame_count % 100 == 0:
-                        logger.info(f"[{self.mint_id}] Processed {frame_count} video frames")
+                        file_size_mb = 0
+                        if self.output_path and self.output_path.exists():
+                            file_size_mb = self.output_path.stat().st_size / (1024 * 1024)
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} video frames, file size: {file_size_mb:.2f} MB")
                         
                 except Exception as frame_error:
                     logger.error(f"[{self.mint_id}] Error processing video frame {frame_count}: {frame_error}")
@@ -732,6 +777,13 @@ class StreamRecorder:
             # Encode and write
             for packet in self.video_stream.encode(av_frame):
                 self.output_container.mux(packet)
+            
+            # Periodically flush to disk to prevent RAM buildup
+            self.frames_since_flush += 1
+            if self.frames_since_flush >= self.flush_interval:
+                self.output_container.mux()  # Flush without packet
+                self.frames_since_flush = 0
+                logger.debug(f"[{self.mint_id}] Flushed {self.flush_interval} frames to disk")
                 
         except Exception as e:
             logger.error(f"Error writing video frame: {e}")
@@ -751,12 +803,6 @@ class StreamRecorder:
             # Debug logging for audio frame properties
             logger.debug(f"[{self.mint_id}] Audio frame: rate={sample_rate}, channels={num_channels}, data_type={type(samples)}, data_len={len(samples) if hasattr(samples, '__len__') else 'unknown'}")
             
-            # Log the expected vs actual format
-            if num_channels == 1:
-                logger.debug(f"[{self.mint_id}] Mono audio: PyAV expects 1D array")
-            else:
-                logger.debug(f"[{self.mint_id}] Multi-channel audio: PyAV expects 2D array (samples, channels)")
-            
             # Convert memoryview to proper numpy array with correct dtype
             if hasattr(samples, 'dtype'):
                 # Already a numpy array
@@ -770,17 +816,17 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Failed to convert audio buffer: {e}")
                     return
             
-            # PyAV expects different array formats for different layouts
+            # PyAV expects 2D array format: (samples, channels)
             try:
-                if num_channels > 1:
-                    # Multi-channel: reshape to (samples, channels)
-                    audio_data = audio_data.reshape(-1, num_channels)
-                    layout = 'stereo' if num_channels == 2 else f'{num_channels}ch'
-                else:
-                    # Mono: keep as 1D array for PyAV
-                    # PyAV expects 1D array for mono audio
-                    audio_data = audio_data.flatten()
+                # Reshape to 2D array for PyAV (required for all channel counts)
+                audio_data = audio_data.reshape(-1, num_channels)
+                
+                if num_channels == 1:
                     layout = 'mono'
+                elif num_channels == 2:
+                    layout = 'stereo'
+                else:
+                    layout = f'{num_channels}ch'
             except Exception as e:
                 logger.error(f"[{self.mint_id}] Failed to reshape audio data for {num_channels} channels: {e}")
                 return
@@ -806,7 +852,6 @@ class StreamRecorder:
                 logger.error(f"[{self.mint_id}] PyAV AudioFrame creation failed: {av_error}")
                 logger.error(f"[{self.mint_id}] Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}, ndim: {audio_data.ndim}")
                 logger.error(f"[{self.mint_id}] Channels: {num_channels}, Layout: {layout}")
-                logger.error(f"[{self.mint_id}] For mono audio, PyAV expects 1D array. For stereo, PyAV expects 2D array (samples, channels)")
                 return
                 
         except Exception as e:

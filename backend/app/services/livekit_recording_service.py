@@ -743,6 +743,12 @@ class StreamRecorder:
             # Debug logging for audio frame properties
             logger.debug(f"[{self.mint_id}] Audio frame: rate={sample_rate}, channels={num_channels}, data_type={type(samples)}, data_len={len(samples) if hasattr(samples, '__len__') else 'unknown'}")
             
+            # Log the expected vs actual format
+            if num_channels == 1:
+                logger.debug(f"[{self.mint_id}] Mono audio: PyAV expects 1D array")
+            else:
+                logger.debug(f"[{self.mint_id}] Multi-channel audio: PyAV expects 2D array (samples, channels)")
+            
             # Convert memoryview to proper numpy array with correct dtype
             if hasattr(samples, 'dtype'):
                 # Already a numpy array
@@ -756,25 +762,27 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Failed to convert audio buffer: {e}")
                     return
             
-            # PyAV requires 2D array even for mono audio
-            # Reshape to 2D format: (samples, channels)
+            # PyAV expects different array formats for different layouts
             try:
                 if num_channels > 1:
                     # Multi-channel: reshape to (samples, channels)
                     audio_data = audio_data.reshape(-1, num_channels)
+                    layout = 'stereo' if num_channels == 2 else f'{num_channels}ch'
                 else:
-                    # Mono: reshape to (samples, 1) for 2D format
-                    audio_data = audio_data.reshape(-1, 1)
+                    # Mono: keep as 1D array for PyAV
+                    # PyAV expects 1D array for mono audio
+                    audio_data = audio_data.flatten()
+                    layout = 'mono'
             except Exception as e:
                 logger.error(f"[{self.mint_id}] Failed to reshape audio data for {num_channels} channels: {e}")
                 return
             
-            # Create PyAV AudioFrame with proper 2D array
+            # Create PyAV AudioFrame with correct format
             try:
                 av_frame = av.AudioFrame.from_ndarray(
                     audio_data,
                     format='s16',
-                    layout='stereo' if num_channels == 2 else 'mono'
+                    layout=layout
                 )
                 av_frame.sample_rate = sample_rate
                 
@@ -788,8 +796,9 @@ class StreamRecorder:
                     
             except Exception as av_error:
                 logger.error(f"[{self.mint_id}] PyAV AudioFrame creation failed: {av_error}")
-                logger.error(f"[{self.mint_id}] Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}")
-                logger.error(f"[{self.mint_id}] Expected 2D array, got ndim: {audio_data.ndim}")
+                logger.error(f"[{self.mint_id}] Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}, ndim: {audio_data.ndim}")
+                logger.error(f"[{self.mint_id}] Channels: {num_channels}, Layout: {layout}")
+                logger.error(f"[{self.mint_id}] For mono audio, PyAV expects 1D array. For stereo, PyAV expects 2D array (samples, channels)")
                 return
                 
         except Exception as e:

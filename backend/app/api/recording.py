@@ -64,12 +64,22 @@ async def stop_recording(request: StopRecordingRequest):
         )
 
         if not result["success"]:
-            raise HTTPException(status_code=500, detail=result["error"])
+            error_msg = result.get("error", "Unknown error")
+            # Provide helpful context for memory errors
+            if "memory" in error_msg.lower() or "allocation" in error_msg.lower():
+                error_msg = f"{error_msg}. Try closing other applications to free up memory, or restart the server."
+            raise HTTPException(status_code=500, detail=error_msg)
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_str = str(e)
+        # Provide helpful context for memory errors
+        if "memory" in error_str.lower() or "allocation" in error_str.lower():
+            error_str = f"Memory allocation failed during recording stop: {error_str}. Try closing other applications or restart the server."
+        raise HTTPException(status_code=500, detail=error_str)
 
 
 @router.get("/status/{mint_id}", response_model=Dict[str, Any])

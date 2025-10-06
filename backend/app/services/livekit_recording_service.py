@@ -280,9 +280,9 @@ class StreamRecorder:
         self.video_stream: Optional[av.video.stream.VideoStream] = None
         self.audio_stream: Optional[av.audio.stream.AudioStream] = None
         
-        # Frame processing
-        self.video_frame_queue: Queue[rtc.VideoFrame] = Queue(maxsize=100)
-        self.audio_frame_queue: Queue[rtc.AudioFrame] = Queue(maxsize=200)
+        # Frame processing - REDUCED queue sizes to prevent memory buildup
+        self.video_frame_queue: Queue[rtc.VideoFrame] = Queue(maxsize=30)  # Reduced from 100
+        self.audio_frame_queue: Queue[rtc.AudioFrame] = Queue(maxsize=60)  # Reduced from 200
         self.encoding_task: Optional[asyncio.Task[None]] = None
         self.stop_event = asyncio.Event()
         
@@ -297,9 +297,9 @@ class StreamRecorder:
         self.video_time_base = None  # Will be set in _setup_output_container
         self.audio_time_base = None  # Will be set in _setup_output_container
         
-        # Flush tracking - flush to disk periodically to avoid RAM buildup
+        # Flush tracking - AGGRESSIVE flushing to prevent RAM buildup
         self.frames_since_flush = 0
-        self.flush_interval = 30  # Flush every 30 video frames (~1 second at 30fps) - more aggressive
+        self.flush_interval = 15  # Flush every 15 video frames (~0.5 seconds at 30fps) - very aggressive for Windows
         
         # Get output filename
         self.output_path = self._get_output_filename()
@@ -467,6 +467,14 @@ class StreamRecorder:
                     except asyncio.CancelledError:
                         logger.info(f"[{self.mint_id}] Encoding task cancelled")
             
+            # CRITICAL: Force aggressive memory cleanup BEFORE attempting container cleanup
+            # This helps prevent memory allocation failures during encoder flush on Windows
+            logger.info(f"[{self.mint_id}] Pre-cleanup: Forcing aggressive garbage collection...")
+            gc.collect()
+            await asyncio.sleep(0.1)  # Give GC a moment to complete
+            gc.collect()  # Second pass to catch circular references
+            logger.info(f"[{self.mint_id}] Pre-cleanup complete")
+            
             # Cleanup - run in executor to avoid blocking
             logger.info(f"[{self.mint_id}] Cleaning up output container...")
             loop = asyncio.get_event_loop()
@@ -511,17 +519,21 @@ class StreamRecorder:
         }
 
     def _setup_output_container(self) -> None:
-        """Setup PyAV output container and streams."""
+        """Setup PyAV output container and streams with memory-efficient settings."""
         try:
             logger.info(f"[{self.mint_id}] Opening output file: {self.output_path}")
             
-            # Force software-only mode for PyAV
+            # Force software-only mode with MEMORY-EFFICIENT settings for PyAV
             # This prevents PyAV from trying to use hardware decoders
+            # and reduces memory buffer sizes
             options = {
-                'threads': 'auto'
+                'threads': 'auto',
+                # Reduce buffer sizes to minimize memory usage (especially important for Windows)
+                'max_interleave_delta': '0',  # Disable interleaving delays
+                'flush_packets': '1',  # Flush packets immediately
             }
             
-            # Create output container with software-only options
+            # Create output container with software-only and memory-efficient options
             logger.info(f"[{self.mint_id}] Creating PyAV container with format: {self.config['format']}")
             # Use absolute path to avoid path separator issues
             output_path_str = str(self.output_path.absolute())
@@ -585,33 +597,84 @@ class StreamRecorder:
             raise
 
     def _cleanup_output_container(self) -> None:
-        """Cleanup PyAV output container."""
+        """Cleanup PyAV output container with memory-safe handling."""
         try:
             if self.output_container:
-                # Flush any remaining frames from encoders
+                # Force garbage collection BEFORE flushing to free up memory
+                logger.info(f"[{self.mint_id}] Forcing garbage collection before flush...")
+                gc.collect()
+                
+                # Flush any remaining frames from encoders with memory-safe error handling
                 if self.video_stream:
                     try:
+                        logger.info(f"[{self.mint_id}] Flushing video encoder...")
+                        packet_count = 0
                         for packet in self.video_stream.encode(None):  # Flush encoder
                             self.output_container.mux(packet)
+                            packet_count += 1
+                        logger.info(f"[{self.mint_id}] Video encoder flushed {packet_count} packets")
+                    except MemoryError as e:
+                        logger.error(f"[{self.mint_id}] MemoryError flushing video encoder: {e}")
+                        logger.warning(f"[{self.mint_id}] Forcing memory cleanup and retrying...")
+                        gc.collect()
+                        # Try one more time after cleanup
+                        try:
+                            for packet in self.video_stream.encode(None):
+                                self.output_container.mux(packet)
+                        except Exception as retry_error:
+                            logger.error(f"[{self.mint_id}] Retry failed: {retry_error}")
+                            logger.warning(f"[{self.mint_id}] Video may be incomplete but will attempt to save")
                     except Exception as e:
                         logger.warning(f"[{self.mint_id}] Error flushing video encoder: {e}")
                 
                 if self.audio_stream:
                     try:
+                        logger.info(f"[{self.mint_id}] Flushing audio encoder...")
+                        packet_count = 0
                         for packet in self.audio_stream.encode(None):  # Flush encoder
                             self.output_container.mux(packet)
+                            packet_count += 1
+                        logger.info(f"[{self.mint_id}] Audio encoder flushed {packet_count} packets")
+                    except MemoryError as e:
+                        logger.error(f"[{self.mint_id}] MemoryError flushing audio encoder: {e}")
+                        logger.warning(f"[{self.mint_id}] Forcing memory cleanup and retrying...")
+                        gc.collect()
+                        # Try one more time after cleanup
+                        try:
+                            for packet in self.audio_stream.encode(None):
+                                self.output_container.mux(packet)
+                        except Exception as retry_error:
+                            logger.error(f"[{self.mint_id}] Retry failed: {retry_error}")
+                            logger.warning(f"[{self.mint_id}] Audio may be incomplete but will attempt to save")
                     except Exception as e:
                         logger.warning(f"[{self.mint_id}] Error flushing audio encoder: {e}")
                 
                 # Close container (this handles final flushing automatically)
-                self.output_container.close()
-                logger.info(f"[{self.mint_id}] Output container closed and flushed to disk")
+                try:
+                    logger.info(f"[{self.mint_id}] Closing output container...")
+                    self.output_container.close()
+                    logger.info(f"[{self.mint_id}] Output container closed and flushed to disk")
+                except Exception as close_error:
+                    logger.error(f"[{self.mint_id}] Error closing container: {close_error}")
+                    # Try to force close even if it fails
+                    try:
+                        self.output_container = None
+                    except:
+                        pass
+                
                 self.output_container = None
                 
             self.video_stream = None
             self.audio_stream = None
+            
+            # Final garbage collection after cleanup
+            gc.collect()
+            logger.info(f"[{self.mint_id}] Cleanup complete, memory freed")
+            
         except Exception as e:
-            logger.error(f"Error cleaning up output container: {e}")
+            logger.error(f"[{self.mint_id}] Error cleaning up output container: {e}")
+            import traceback
+            logger.error(f"[{self.mint_id}] Traceback:\n{traceback.format_exc()}")
 
     async def _encoding_loop(
         self, 
@@ -891,6 +954,9 @@ class StreamRecorder:
                 logger.error(f"[{self.mint_id}] Error muxing video packet at frame {self.video_frame_count}: {mux_error}")
                 raise
             
+            # Delete av_frame immediately to free memory
+            del av_frame
+            
             # Periodically force garbage collection to prevent RAM buildup
             self.frames_since_flush += 1
             if self.frames_since_flush >= self.flush_interval:
@@ -898,9 +964,6 @@ class StreamRecorder:
                 # Force garbage collection to free memory
                 gc.collect()
                 logger.debug(f"[{self.mint_id}] Processed {self.flush_interval} frames, freed memory")
-            
-            # Delete av_frame immediately to free memory
-            del av_frame
                 
         except Exception as e:
             logger.error(f"Error writing video frame: {e}")

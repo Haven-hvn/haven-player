@@ -18,6 +18,8 @@ import {
   FiberManualRecord as FiberManualRecordIcon,
   MoreVert as MoreVertIcon,
   RemoveCircleOutline as RemoveIcon,
+  ErrorOutline as ErrorIcon,
+  Close as CloseIcon,
 } from "@mui/icons-material";
 import { StreamInfo } from "@/types/video";
 import { useRecording } from "@/hooks/useRecording";
@@ -72,6 +74,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     if (isRecording) {
       await stopRecording();
     } else {
+      // Clear any previous errors and try recording
       await startRecording();
     }
   };
@@ -144,6 +147,38 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
           }}
         />
 
+        {/* Error indicator */}
+        {error && (
+          <Box
+            sx={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              backgroundColor: "#FFF",
+              borderRadius: "20px",
+              padding: "4px 10px",
+              border: "2px solid #FF4D4D",
+              boxShadow: "0 2px 8px rgba(255, 77, 77, 0.2)",
+            }}
+          >
+            <CloseIcon sx={{ color: "#FF4D4D", fontSize: 18, fontWeight: "bold" }} />
+            <Typography
+              variant="caption"
+              sx={{
+                color: "#FF4D4D",
+                fontWeight: 700,
+                fontSize: "11px",
+                letterSpacing: "0.5px",
+              }}
+            >
+              ERROR
+            </Typography>
+          </Box>
+        )}
+
 
         {/* Hover overlay REC */}
         <Box
@@ -199,7 +234,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
             sx={{
               height: 8,
               borderRadius: 999,
-              backgroundColor: isRecording ? "#FFEBEE" : "#F0F0F0",
+              backgroundColor: error ? "#FFEBEE" : isRecording ? "#FFEBEE" : "#F0F0F0",
               overflow: "hidden",
               position: "relative",
             }}
@@ -217,10 +252,31 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
             />
           </Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.75 }}>
-            <FiberManualRecordIcon sx={{ color: isRecording ? "#FF4D4D" : "#9E9E9E", fontSize: 12 }} />
-            <Typography variant="caption" sx={{ color: isRecording ? "#FF4D4D" : "#9E9E9E" }}>
-              {isRecording ? "Recording..." : "Ready to Record"}
-            </Typography>
+            {error ? (
+              <>
+                <ErrorIcon sx={{ color: "#FF4D4D", fontSize: 14 }} />
+                <Typography 
+                  variant="caption" 
+                  sx={{ 
+                    color: "#FF4D4D",
+                    fontSize: "11px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={error}
+                >
+                  {error}
+                </Typography>
+              </>
+            ) : (
+              <>
+                <FiberManualRecordIcon sx={{ color: isRecording ? "#FF4D4D" : "#9E9E9E", fontSize: 12 }} />
+                <Typography variant="caption" sx={{ color: isRecording ? "#FF4D4D" : "#9E9E9E" }}>
+                  {isRecording ? "Recording..." : "Ready to Record"}
+                </Typography>
+              </>
+            )}
           </Box>
         </Box>
 

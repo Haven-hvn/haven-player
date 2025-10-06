@@ -62,7 +62,9 @@ export const useRecording = (mintId: string): UseRecordingReturn => {
       });
 
       if (!sessionResponse.ok) {
-        throw new Error(`Failed to start session: ${sessionResponse.status}`);
+        const errorData = await sessionResponse.json().catch(() => ({}));
+        const errorMessage = errorData.detail || `Failed to start session: ${sessionResponse.status}`;
+        throw new Error(errorMessage);
       }
 
       // Step 2: Start recording
@@ -81,7 +83,9 @@ export const useRecording = (mintId: string): UseRecordingReturn => {
       });
 
       if (!recordingResponse.ok) {
-        throw new Error(`Failed to start recording: ${recordingResponse.status}`);
+        const errorData = await recordingResponse.json().catch(() => ({}));
+        const errorMessage = errorData.detail || `Failed to start recording: ${recordingResponse.status}`;
+        throw new Error(errorMessage);
       }
 
       setIsRecording(true);

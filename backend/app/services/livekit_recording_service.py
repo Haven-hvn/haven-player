@@ -285,6 +285,11 @@ class StreamRecorder:
         self.last_video_pts = 0
         self.last_audio_pts = 0
         
+        # Timebase tracking for proper A/V sync
+        # Video uses stream time_base, audio uses sample-based PTS
+        self.video_time_base = None  # Will be set in _setup_output_container
+        self.audio_time_base = None  # Will be set in _setup_output_container
+        
         # Flush tracking - flush to disk periodically to avoid RAM buildup
         self.frames_since_flush = 0
         self.flush_interval = 30  # Flush every 30 video frames (~1 second at 30fps) - more aggressive
@@ -305,7 +310,10 @@ class StreamRecorder:
         """Generate output filename based on mint_id and timestamp."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{self.mint_id}_{timestamp}.{self.config['format']}"
-        return self.output_dir / filename
+        output_path = self.output_dir / filename
+        # Ensure we use the native path format
+        logger.info(f"[{self.mint_id}] Output path: {output_path} (native: {output_path.as_posix()})")
+        return output_path
 
     async def start(self) -> Dict[str, Any]:
         """Start recording by subscribing to LiveKit track frames."""
@@ -485,7 +493,10 @@ class StreamRecorder:
             
             # Create output container with software-only options
             logger.info(f"[{self.mint_id}] Creating PyAV container with format: {self.config['format']}")
-            self.output_container = av.open(str(self.output_path), mode='w', options=options)
+            # Use absolute path to avoid path separator issues
+            output_path_str = str(self.output_path.absolute())
+            logger.info(f"[{self.mint_id}] Absolute output path: {output_path_str}")
+            self.output_container = av.open(output_path_str, mode='w', options=options)
             logger.info(f"[{self.mint_id}] ✅ Container opened successfully")
             
             # Add video stream
@@ -497,6 +508,11 @@ class StreamRecorder:
             self.video_stream.height = self.config['height']
             self.video_stream.pix_fmt = 'yuv420p'
             self.video_stream.bit_rate = self.config['video_bitrate']
+            
+            # Set explicit timebase for video (1/fps for frame-based timing)
+            from fractions import Fraction
+            self.video_stream.time_base = Fraction(1, self.config['fps'])
+            self.video_time_base = self.video_stream.time_base
             
             # Apply codec-specific options
             if 'crf' in self.config:
@@ -528,6 +544,10 @@ class StreamRecorder:
             )
             self.audio_stream.bit_rate = self.config['audio_bitrate']
             
+            # Set explicit timebase for audio (1/sample_rate for sample-based timing)
+            self.audio_stream.time_base = Fraction(1, 48000)
+            self.audio_time_base = self.audio_stream.time_base
+            
             logger.info(f"Setup output container for {self.mint_id}")
             
         except Exception as e:
@@ -553,12 +573,7 @@ class StreamRecorder:
                     except Exception as e:
                         logger.warning(f"[{self.mint_id}] Error flushing audio encoder: {e}")
                 
-                # Final flush and close
-                try:
-                    self.output_container.mux()  # Final flush
-                except Exception as e:
-                    logger.warning(f"[{self.mint_id}] Error flushing container: {e}")
-                
+                # Close container (this handles final flushing automatically)
                 self.output_container.close()
                 logger.info(f"[{self.mint_id}] Output container closed and flushed to disk")
                 self.output_container = None
@@ -771,22 +786,25 @@ class StreamRecorder:
                     logger.error(f"Failed to convert frame manually: {e}")
                     return
             
-            # Set PTS
+            # Set PTS (using frame-based timing with video timebase)
             av_frame.pts = self.last_video_pts
-            self.last_video_pts += int(90000 / self.config['fps'])  # 90kHz timebase
+            self.last_video_pts += 1  # Increment by 1 frame in video timebase units
             
             # Encode and write
-            for packet in self.video_stream.encode(av_frame):
-                self.output_container.mux(packet)
+            try:
+                for packet in self.video_stream.encode(av_frame):
+                    self.output_container.mux(packet)
+            except Exception as mux_error:
+                logger.error(f"[{self.mint_id}] Error muxing video packet at frame {self.video_frame_count}: {mux_error}")
+                raise
             
-            # Periodically flush to disk to prevent RAM buildup
+            # Periodically force garbage collection to prevent RAM buildup
             self.frames_since_flush += 1
             if self.frames_since_flush >= self.flush_interval:
-                self.output_container.mux()  # Flush without packet
                 self.frames_since_flush = 0
                 # Force garbage collection to free memory
                 gc.collect()
-                logger.debug(f"[{self.mint_id}] Flushed {self.flush_interval} frames to disk and freed memory")
+                logger.debug(f"[{self.mint_id}] Processed {self.flush_interval} frames, freed memory")
             
             # Delete av_frame immediately to free memory
             del av_frame
@@ -849,13 +867,18 @@ class StreamRecorder:
                 )
                 av_frame.sample_rate = sample_rate
                 
-                # Set PTS
+                # Set PTS - CRITICAL FIX: use samples_per_channel, not len(audio_data)
+                # After reshaping, len(audio_data) returns num_channels, not sample count!
                 av_frame.pts = self.last_audio_pts
-                self.last_audio_pts += len(audio_data)
+                self.last_audio_pts += samples_per_channel
                 
                 # Encode and write
-                for packet in self.audio_stream.encode(av_frame):
-                    self.output_container.mux(packet)
+                try:
+                    for packet in self.audio_stream.encode(av_frame):
+                        self.output_container.mux(packet)
+                except Exception as mux_error:
+                    logger.error(f"[{self.mint_id}] Error muxing audio packet at frame {self.audio_frame_count}: {mux_error}")
+                    raise
                 
                 # Delete frames immediately to free memory
                 del av_frame
@@ -864,7 +887,7 @@ class StreamRecorder:
             except Exception as av_error:
                 logger.error(f"[{self.mint_id}] PyAV AudioFrame creation failed: {av_error}")
                 logger.error(f"[{self.mint_id}] Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}, ndim: {audio_data.ndim}")
-                logger.error(f"[{self.mint_id}] Channels: {num_channels}, Layout: {layout}")
+                logger.error(f"[{self.mint_id}] Channels: {num_channels}, Layout: {layout}, samples_per_channel: {samples_per_channel}")
                 return
                 
         except Exception as e:

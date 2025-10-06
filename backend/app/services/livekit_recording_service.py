@@ -1035,10 +1035,11 @@ class StreamRecorder:
                     return
             
             # Set PTS in 90000 timebase units
-            # PTS = frame_number * (90000 / fps)
+            # PTS = initial_offset + frame_number * (90000 / fps)
             fps = self.config.get('fps', 30)
             pts_per_frame = 90000 // fps  # 3000 at 30fps, 1500 at 60fps
-            av_frame.pts = self.video_frame_count * pts_per_frame
+            initial_offset = 3600  # 40ms offset to allow for B-frame DTS calculations
+            av_frame.pts = initial_offset + (self.video_frame_count * pts_per_frame)
             
             # Log PTS periodically to monitor for issues
             if self.video_frame_count % 300 == 0 and self.video_frame_count > 0:

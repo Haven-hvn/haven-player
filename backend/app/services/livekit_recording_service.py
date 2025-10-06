@@ -289,7 +289,7 @@ class StreamRecorder:
         # Frame tracking
         self.video_frame_count = 0
         self.audio_frame_count = 0
-        self.last_audio_pts = 0  # Audio still needs PTS tracking
+        # PTS is calculated directly from frame counts - no separate tracking needed
         
         # Timebase tracking for proper A/V sync
         # Video uses stream time_base, audio uses sample-based PTS
@@ -1136,16 +1136,13 @@ class StreamRecorder:
                 )
                 av_frame.sample_rate = sample_rate
                 
-                # Set PTS - CRITICAL: Ensure strictly increasing timestamps
-                # Use samples as PTS in audio timebase (1/sample_rate)
-                av_frame.pts = self.last_audio_pts
+                # Set PTS - use simple frame-based counting
+                # Audio frame number * samples per frame = total samples = PTS
+                av_frame.pts = self.audio_frame_count * samples_per_channel
                 
-                # IMPORTANT: Increment BEFORE encoding to ensure next frame has higher PTS
-                self.last_audio_pts += samples_per_channel
-                
-                # Validate PTS is actually increasing
-                if self.audio_frame_count > 0 and av_frame.pts <= 0:
-                    logger.error(f"[{self.mint_id}] Invalid audio PTS: {av_frame.pts}")
+                # Validate PTS is reasonable
+                if av_frame.pts is None or (self.audio_frame_count > 0 and av_frame.pts < 0):
+                    logger.error(f"[{self.mint_id}] Invalid audio PTS: {av_frame.pts} at frame {self.audio_frame_count}")
                     return
                 
                 # Encode and write
@@ -1166,12 +1163,13 @@ class StreamRecorder:
                 except OSError as os_error:
                     # Handle "Invalid argument" errors from non-monotonic timestamps
                     error_str = str(os_error)
-                    if "non monotonically increasing" in error_str.lower():
+                    if "non monotonically increasing" in error_str.lower() or "NOPTS" in error_str:
                         logger.error(f"[{self.mint_id}] ❌ AUDIO TIMESTAMP ERROR at frame {self.audio_frame_count}")
-                        logger.error(f"[{self.mint_id}] Frame PTS: {av_frame.pts}, last_audio_pts: {self.last_audio_pts}")
+                        logger.error(f"[{self.mint_id}] Frame PTS: {av_frame.pts}, calculated from frame {self.audio_frame_count} * {samples_per_channel}")
                         logger.error(f"[{self.mint_id}] Samples per channel: {samples_per_channel}, channels: {num_channels}")
-                        # Skip this frame and continue
-                        return
+                        logger.error(f"[{self.mint_id}] Container is now in bad state - audio encoding will stop")
+                        # Raise exception to stop audio processing entirely
+                        raise RuntimeError(f"Audio timestamp error - stopping audio encoding")
                     raise
                 except Exception as mux_error:
                     logger.error(f"[{self.mint_id}] Error muxing audio packet at frame {self.audio_frame_count}: {mux_error}")

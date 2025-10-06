@@ -816,10 +816,13 @@ class StreamRecorder:
                     logger.error(f"[{self.mint_id}] Failed to convert audio buffer: {e}")
                     return
             
-            # PyAV expects 2D array format: (samples, channels)
+            # PyAV expects 2D array format: (channels, samples) for packed format
             try:
-                # Reshape to 2D array for PyAV (required for all channel counts)
-                audio_data = audio_data.reshape(-1, num_channels)
+                # Reshape to 2D array for PyAV: (channels, samples)
+                # For mono: (1, 480), for stereo: (2, 240)
+                total_samples = len(audio_data)
+                samples_per_channel = total_samples // num_channels
+                audio_data = audio_data.reshape(num_channels, samples_per_channel)
                 
                 if num_channels == 1:
                     layout = 'mono'

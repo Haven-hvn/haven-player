@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import threading
 from queue import Queue, Empty
+import gc
 
 import numpy as np
 from livekit import rtc
@@ -286,7 +287,7 @@ class StreamRecorder:
         
         # Flush tracking - flush to disk periodically to avoid RAM buildup
         self.frames_since_flush = 0
-        self.flush_interval = 100  # Flush every 100 video frames (~3.3 seconds at 30fps)
+        self.flush_interval = 30  # Flush every 30 video frames (~1 second at 30fps) - more aggressive
         
         # Get output filename
         self.output_path = self._get_output_filename()
@@ -615,12 +616,12 @@ class StreamRecorder:
                     self.video_frame_count += 1
                     frame_count += 1
                     
-                    # Log progress every 100 frames
-                    if frame_count % 100 == 0:
+                    # Log progress every 300 frames (every ~10 seconds at 30fps)
+                    if frame_count % 300 == 0:
                         file_size_mb = 0
                         if self.output_path and self.output_path.exists():
                             file_size_mb = self.output_path.stat().st_size / (1024 * 1024)
-                        logger.info(f"[{self.mint_id}] Processed {frame_count} video frames, file size: {file_size_mb:.2f} MB")
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} video frames, file: {file_size_mb:.2f} MB")
                         
                 except Exception as frame_error:
                     logger.error(f"[{self.mint_id}] Error processing video frame {frame_count}: {frame_error}")
@@ -687,27 +688,23 @@ class StreamRecorder:
             # Convert buffer to the right format
             # Note: This is a simplified version - actual conversion depends on LiveKit frame format
             if hasattr(frame, 'to_ndarray'):
-                # If LiveKit provides numpy conversion
+                # If LiveKit provides numpy conversion - use ARGB format (most common)
                 try:
-                    # Try different formats to find the best one
-                    for format_name in ['rgb24', 'bgr24', 'rgba', 'bgra']:
-                        try:
-                            img = frame.to_ndarray(format=format_name)
-                            av_frame = av.VideoFrame.from_ndarray(img, format=format_name)
-                            av_frame = av_frame.reformat(format='yuv420p')
-                            logger.debug(f"[{self.mint_id}] Successfully converted frame using {format_name}")
-                            break
-                        except Exception as format_error:
-                            logger.debug(f"[{self.mint_id}] Failed to convert with {format_name}: {format_error}")
-                            continue
-                    else:
-                        # All formats failed
-                        logger.warning(f"[{self.mint_id}] Failed to convert frame using any format")
-                        av_frame = None
+                    img = frame.to_ndarray(format='argb')
+                    av_frame = av.VideoFrame.from_ndarray(img, format='argb')
+                    av_frame = av_frame.reformat(format='yuv420p')
+                    # Delete intermediate array immediately
+                    del img
                 except Exception as e:
-                    logger.warning(f"[{self.mint_id}] Failed to convert frame using to_ndarray: {e}")
-                    # Fall back to manual conversion
-                    av_frame = None
+                    # Try RGB24 as fallback
+                    try:
+                        img = frame.to_ndarray(format='rgb24')
+                        av_frame = av.VideoFrame.from_ndarray(img, format='rgb24')
+                        av_frame = av_frame.reformat(format='yuv420p')
+                        del img
+                    except Exception as e2:
+                        logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}, {e2}")
+                        av_frame = None
             
             if av_frame is None:
                 # Manual conversion from buffer
@@ -748,10 +745,12 @@ class StreamRecorder:
                         # RGB format
                         av_frame = av.VideoFrame.from_ndarray(frame_data, format='rgb24')
                         av_frame = av_frame.reformat(format='yuv420p')
+                        del frame_data  # Free memory immediately
                     elif len(frame_data.shape) == 3 and frame_data.shape[2] == 4:
                         # RGBA format
                         av_frame = av.VideoFrame.from_ndarray(frame_data, format='rgba')
                         av_frame = av_frame.reformat(format='yuv420p')
+                        del frame_data  # Free memory immediately
                     else:
                         # YUV format or other
                         av_frame = av.VideoFrame(width, height, 'yuv420p')
@@ -762,8 +761,10 @@ class StreamRecorder:
                                 av_frame.planes[1].update(frame_data[width * height:width * height + width * height // 4])
                             if len(frame_data) > width * height + width * height // 4:
                                 av_frame.planes[2].update(frame_data[width * height + width * height // 4:])
+                            del frame_data  # Free memory immediately
                         else:
                             logger.warning(f"Frame data too small for YUV format: {len(frame_data)}")
+                            del frame_data
                             return
                             
                 except Exception as e:
@@ -783,7 +784,12 @@ class StreamRecorder:
             if self.frames_since_flush >= self.flush_interval:
                 self.output_container.mux()  # Flush without packet
                 self.frames_since_flush = 0
-                logger.debug(f"[{self.mint_id}] Flushed {self.flush_interval} frames to disk")
+                # Force garbage collection to free memory
+                gc.collect()
+                logger.debug(f"[{self.mint_id}] Flushed {self.flush_interval} frames to disk and freed memory")
+            
+            # Delete av_frame immediately to free memory
+            del av_frame
                 
         except Exception as e:
             logger.error(f"Error writing video frame: {e}")
@@ -850,6 +856,10 @@ class StreamRecorder:
                 # Encode and write
                 for packet in self.audio_stream.encode(av_frame):
                     self.output_container.mux(packet)
+                
+                # Delete frames immediately to free memory
+                del av_frame
+                del audio_data
                     
             except Exception as av_error:
                 logger.error(f"[{self.mint_id}] PyAV AudioFrame creation failed: {av_error}")

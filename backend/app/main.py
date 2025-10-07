@@ -16,16 +16,16 @@ from app.api import videos, config, jobs, pumpfun_streams, live_sessions, record
 from app.models.base import init_db
 from app.models.database import SessionLocal
 from app.models.config import AppConfig
-from app.services.livekit_recording_service import LiveKitRecordingService
+from app.services.webrtc_recording_service import WebRTCRecordingService
 
 app = FastAPI(
     title="Haven Player API",
-    description="API for Haven Player with shared stream management",
+    description="API for Haven Player with WebRTC-based recording",
     version="2.0.0"
 )
 
 # Reference to recording service for shutdown cleanup
-recording_service: LiveKitRecordingService = recording.recording_service
+recording_service: WebRTCRecordingService = recording.recording_service
 
 # CORS middleware
 app.add_middleware(
@@ -103,7 +103,7 @@ async def root():
         "features": [
             "Shared WebRTC connection management",
             "Live streaming with WebSocket",
-            "Native LiveKit recording with PyAV",
+            "WebRTC-based recording with PyAV",
             "Pump.fun integration"
         ]
     }

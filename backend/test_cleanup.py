@@ -108,7 +108,7 @@ async def main():
     print("\n📋 Architecture Summary:")
     print("   • StreamManager: Single WebRTC connection management")
     print("   • LiveSessionService: WebSocket streaming using shared stream")
-    print("   • LiveKitRecordingService: Native recording using shared stream")
+    print("   • WebRTCRecordingService: WebRTC-based recording using shared stream")
     print("   • No duplicate WebRTC connections")
     print("   • No mint_id dependency in recording service")
     print("   • Clean architecture with no _v2 files")

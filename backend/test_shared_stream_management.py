@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test script for shared stream management architecture.
-Tests the StreamManager, LiveSessionService, and LiveKitRecordingService.
+Tests the StreamManager, LiveSessionService, and WebRTCRecordingService.
 """
 
 import asyncio
@@ -234,7 +234,7 @@ async def main():
         print("\n📋 Architecture Summary:")
         print("   • StreamManager: Single WebRTC connection management")
         print("   • LiveSessionService: WebSocket streaming using shared stream")
-        print("   • LiveKitRecordingService: Native recording using shared stream")
+        print("   • WebRTCRecordingService: WebRTC-based recording using shared stream")
         print("   • No duplicate WebRTC connections")
         print("   • No mint_id dependency in recording service")
     else:

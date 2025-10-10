@@ -968,13 +968,18 @@ class WebRTCRecorder:
     async def _encode_video_frame(self, track_context: TrackContext, frame: rtc.VideoFrame):
         """Encode a video frame."""
         try:
+            if self.encoded_video_count == 0:
+                print(f"[{self.mint_id}] First video frame encode attempt", flush=True)
+            
             if not self.video_stream or not self.output_container:
+                print(f"[{self.mint_id}] Video stream or container not ready: stream={self.video_stream is not None}, container={self.output_container is not None}", flush=True)
                 logger.warning(f"[{self.mint_id}] Video stream or container not ready")
                 return
             
             # Convert LiveKit frame to PyAV frame
             av_frame = await self._convert_video_frame(frame)
             if av_frame is None:
+                print(f"[{self.mint_id}] Video frame conversion returned None", flush=True)
                 logger.warning(f"[{self.mint_id}] Video frame conversion failed")
                 return
             
@@ -1042,11 +1047,13 @@ class WebRTCRecorder:
     async def _convert_video_frame(self, frame: rtc.VideoFrame) -> Optional[av.VideoFrame]:
         """Convert LiveKit video frame to PyAV frame."""
         try:
+            print(f"[{self.mint_id}] _convert_video_frame called", flush=True)
             # Get frame data - try different methods
             img = None
             
             # Method 1: Try to_ndarray with different formats
             if hasattr(frame, 'to_ndarray'):
+                print(f"[{self.mint_id}] Frame has to_ndarray", flush=True)
                 try:
                     img = frame.to_ndarray(format='argb')
                 except:
@@ -1088,12 +1095,16 @@ class WebRTCRecorder:
                     return None
             
             else:
+                print(f"[{self.mint_id}] Video frame has no to_ndarray or data method", flush=True)
                 logger.warning(f"[{self.mint_id}] Video frame conversion not supported - no to_ndarray or data method")
                 return None
             
             if img is None:
+                print(f"[{self.mint_id}] Failed to extract video frame data - img is None", flush=True)
                 logger.warning(f"[{self.mint_id}] Failed to extract video frame data")
                 return None
+            
+            print(f"[{self.mint_id}] Video frame data extracted, shape={img.shape if hasattr(img, 'shape') else 'unknown'}", flush=True)
             
             # Validate frame dimensions and data size
             if not self._validate_video_frame(img, frame):

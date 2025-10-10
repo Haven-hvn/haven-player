@@ -268,36 +268,31 @@ class FFmpegRecorder:
             logger.info(f"[{self.mint_id}] ✅ Subscribed to {track.kind} track {track.sid}")
 
     async def _setup_existing_track_handlers(self, participant: rtc.RemoteParticipant):
-        """Set up frame handlers on tracks that are already subscribed."""
+        """Set up frame handlers using StreamManager pattern."""
         logger.info(f"[{self.mint_id}] Setting up handlers for existing tracks from {participant.sid}")
         
-        # Debug: Check what we're actually getting from track publications
-        logger.info(f"[{self.mint_id}] Participant {participant.sid} has {len(participant.track_publications)} track publications")
+        # Use StreamManager pattern like the existing live session service
+        from app.services.stream_manager import StreamManager
+        stream_manager = StreamManager()
         
+        # Register frame handlers with StreamManager (this is how the working code does it)
+        stream_manager.register_video_frame_handler(self.mint_id, self._on_video_frame)
+        stream_manager.register_audio_frame_handler(self.mint_id, self._on_audio_frame)
+        
+        logger.info(f"[{self.mint_id}] ✅ Frame handlers registered with StreamManager")
+        
+        # Store track references for debugging
         for track_pub in participant.track_publications.values():
-            logger.info(f"[{self.mint_id}] Track publication: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")
-            
             if track_pub.track is None:
-                logger.warning(f"[{self.mint_id}] Track publication {track_pub.sid} has no track object")
                 continue
                 
             track = track_pub.track
-            logger.info(f"[{self.mint_id}] Track object: {type(track)}, kind={track.kind}, sid={track.sid}")
-            logger.info(f"[{self.mint_id}] Track has 'on' method: {hasattr(track, 'on')}")
-            
-            # Try to set up frame handlers and catch any errors
-            try:
-                if track.kind == rtc.TrackKind.KIND_VIDEO:
-                    track.on("frame_received", self._on_video_frame)
-                    self.video_track = track
-                    logger.info(f"[{self.mint_id}] ✅ Video frame handler set up successfully")
-                elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                    track.on("frame_received", self._on_audio_frame)
-                    self.audio_track = track
-                    logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up successfully")
-            except Exception as e:
-                logger.error(f"[{self.mint_id}] Failed to set up frame handler for {track.kind} track: {e}")
-                logger.error(f"[{self.mint_id}] Track type: {type(track)}, attributes: {dir(track)}")
+            if track.kind == rtc.TrackKind.KIND_VIDEO:
+                self.video_track = track
+                logger.info(f"[{self.mint_id}] ✅ Video track reference stored")
+            elif track.kind == rtc.TrackKind.KIND_AUDIO:
+                self.audio_track = track
+                logger.info(f"[{self.mint_id}] ✅ Audio track reference stored")
 
     def _on_track_subscribed(self, track, publication, participant):
         """Handle track subscribed event."""
@@ -309,23 +304,19 @@ class FFmpegRecorder:
             
         logger.info(f"[{self.mint_id}] ✅ Setting up frame handlers for target participant")
         
-        # Debug: Check what we're getting in the track subscribed event
-        logger.info(f"[{self.mint_id}] Track subscribed - track: {type(track)}, publication: {type(publication)}, participant: {type(participant)}")
-        logger.info(f"[{self.mint_id}] Track has 'on' method: {hasattr(track, 'on')}")
+        # Use StreamManager pattern like the existing live session service
+        from app.services.stream_manager import StreamManager
+        stream_manager = StreamManager()
         
-        # Try to set up frame handlers and catch any errors
-        try:
-            if track.kind == rtc.TrackKind.KIND_VIDEO:
-                track.on("frame_received", self._on_video_frame)
-                self.video_track = track
-                logger.info(f"[{self.mint_id}] ✅ Video frame handler set up successfully")
-            elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                track.on("frame_received", self._on_audio_frame)
-                self.audio_track = track
-                logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up successfully")
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Failed to set up frame handler for {track.kind} track: {e}")
-            logger.error(f"[{self.mint_id}] Track type: {type(track)}, attributes: {dir(track)}")
+        # Register frame handlers with StreamManager (this is how the working code does it)
+        if track.kind == rtc.TrackKind.KIND_VIDEO:
+            stream_manager.register_video_frame_handler(self.mint_id, self._on_video_frame)
+            self.video_track = track
+            logger.info(f"[{self.mint_id}] ✅ Video frame handler registered with StreamManager")
+        elif track.kind == rtc.TrackKind.KIND_AUDIO:
+            stream_manager.register_audio_frame_handler(self.mint_id, self._on_audio_frame)
+            self.audio_track = track
+            logger.info(f"[{self.mint_id}] ✅ Audio frame handler registered with StreamManager")
 
     async def _setup_ffmpeg(self):
         """Setup FFmpeg subprocess for recording."""

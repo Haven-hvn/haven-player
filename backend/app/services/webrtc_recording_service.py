@@ -208,13 +208,20 @@ class WebRTCRecordingService:
     [LiveKit Room] → [Subscription Layer] → [Frame Reception Layer] → [Encoding Queue] → [Container Writer]
     """
     
+    _instance_count = 0
+    
     def __init__(self, output_dir: str = "recordings"):
+        WebRTCRecordingService._instance_count += 1
+        self._instance_id = WebRTCRecordingService._instance_count
+        print(f"========== WebRTCRecordingService instance #{self._instance_id} created (id={id(self)}) ==========", flush=True)
+        
         self.stream_manager = StreamManager()
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
         # Active recordings
         self.active_recordings: Dict[str, 'WebRTCRecorder'] = {}
+        print(f"========== Instance #{self._instance_id}: active_recordings dict id={id(self.active_recordings)} ==========", flush=True)
         
         # Default recording configuration
         self.default_config = {
@@ -252,6 +259,8 @@ class WebRTCRecordingService:
         """Start recording a stream using WebRTC best practices."""
         try:
             print(f"\n========== RECORDING SERVICE START CALLED FOR {mint_id} ==========", flush=True)
+            print(f"========== Service instance #{self._instance_id} (id={id(self)}) ==========", flush=True)
+            print(f"========== active_recordings dict id={id(self.active_recordings)} ==========", flush=True)
             logger.info(f"📹 Starting WebRTC recording for mint_id: {mint_id}")
             
             if mint_id in self.active_recordings:
@@ -314,9 +323,11 @@ class WebRTCRecordingService:
     async def stop_recording(self, mint_id: str) -> Dict[str, Any]:
         """Stop recording a stream."""
         try:
+            print(f"========== STOP RECORDING CALLED FOR {mint_id} ==========", flush=True)
             logger.info(f"🛑 Stop WebRTC recording called for mint_id: {mint_id}")
             
             if mint_id not in self.active_recordings:
+                print(f"========== {mint_id} NOT IN active_recordings when stopping ==========", flush=True)
                 logger.warning(f"No active recording found for {mint_id}")
                 return {"success": False, "error": f"No active recording for {mint_id}"}
             
@@ -324,6 +335,7 @@ class WebRTCRecordingService:
             result = await recorder.stop()
             
             # Remove from active recordings
+            print(f"========== REMOVING {mint_id} from active_recordings ==========", flush=True)
             del self.active_recordings[mint_id]
             logger.info(f"Removed {mint_id} from active recordings")
             
@@ -338,6 +350,8 @@ class WebRTCRecordingService:
     async def get_recording_status(self, mint_id: str) -> Dict[str, Any]:
         """Get recording status for a stream."""
         print(f"========== GET STATUS CALLED FOR {mint_id} ==========", flush=True)
+        print(f"========== Service instance #{self._instance_id} (id={id(self)}) ==========", flush=True)
+        print(f"========== active_recordings dict id={id(self.active_recordings)} ==========", flush=True)
         print(f"========== Active recordings: {list(self.active_recordings.keys())} ==========", flush=True)
         
         if mint_id not in self.active_recordings:

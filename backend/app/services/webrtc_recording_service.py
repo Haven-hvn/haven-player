@@ -693,8 +693,11 @@ class WebRTCRecorder:
         start_time = time.time()
         
         while (time.time() - start_time) < timeout:
-            # Check for subscribed tracks from ANY participant (not just the expected one)
+            # Check for subscribed tracks ONLY from the target participant (the streamer)
             for participant in self.room.remote_participants.values():
+                # ONLY process the target participant (the streamer)
+                if participant.sid != self.stream_info.participant_sid:
+                    continue
                 logger.info(f"[{self.mint_id}] Checking participant: {participant.sid}")
                 
                 for track_pub in participant.track_publications.values():
@@ -755,10 +758,16 @@ class WebRTCRecorder:
         """Setup PyAV output container."""
         try:
             logger.info(f"[{self.mint_id}] Setting up PyAV output container")
+            print(f"[{self.mint_id}] Creating output file: {self.output_path}", flush=True)
+            
+            # Ensure output directory exists
+            self.output_path.parent.mkdir(parents=True, exist_ok=True)
             
             # Create output container
             output_path_str = str(self.output_path.absolute())
+            print(f"[{self.mint_id}] Opening container: {output_path_str}", flush=True)
             self.output_container = av.open(output_path_str, mode='w')
+            print(f"[{self.mint_id}] Container opened successfully", flush=True)
             
             # Add video stream if we have video tracks
             video_tracks = [t for t in self.tracks.values() if t.kind == rtc.TrackKind.KIND_VIDEO]

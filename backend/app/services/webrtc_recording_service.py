@@ -786,9 +786,19 @@ class WebRTCRecorder:
                 self.video_stream.pix_fmt = 'yuv420p'
                 self.video_stream.bit_rate = self.config['video_bitrate']
                 
+                # CRITICAL: Set encoder options to output packets immediately
+                # This prevents memory buildup from buffered frames
+                self.video_stream.options = {
+                    'preset': 'ultrafast',  # Fastest encoding
+                    'tune': 'zerolatency',  # No buffering
+                    'g': '30',  # Keyframe every 30 frames (1 second at 30fps)
+                }
+                
                 # Set timebase
                 from fractions import Fraction
                 self.video_stream.time_base = Fraction(1, self.config['fps'])
+                
+                print(f"[{self.mint_id}] Video stream configured with zerolatency", flush=True)
             
             # Add audio stream if we have audio tracks
             audio_tracks = [t for t in self.tracks.values() if t.kind == rtc.TrackKind.KIND_AUDIO]

@@ -998,8 +998,10 @@ class WebRTCRecorder:
                 return
             
             # Set PTS using encoded frame count
-            pts = self.encoded_video_count * 3000  # 3000 units per frame at 30fps
+            # Timebase is 1/fps, so PTS is just the frame number
+            pts = self.encoded_video_count
             av_frame.pts = pts
+            print(f"[{self.mint_id}] Video frame #{self.encoded_video_count}: setting PTS={pts}", flush=True)
             
             # Encode and write
             packets_written = 0
@@ -1045,8 +1047,10 @@ class WebRTCRecorder:
                 return
             
             # Set PTS using encoded frame count
-            pts = self.encoded_audio_count * 1024  # 1024 samples per frame at 48kHz
+            # Timebase is 1/48000, so PTS is in samples
+            pts = self.encoded_audio_count * 1024  # 1024 samples per frame
             av_frame.pts = pts
+            print(f"[{self.mint_id}] Audio frame #{self.encoded_audio_count}: setting PTS={pts}", flush=True)
             
             # Encode and write
             packets_written = 0

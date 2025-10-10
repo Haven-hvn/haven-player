@@ -564,12 +564,20 @@ class WebRTCRecorder:
 
     def _find_participant(self) -> Optional[rtc.RemoteParticipant]:
         """Find the target participant."""
+        # First try to find the exact participant
         for participant in self.room.remote_participants.values():
             if participant.sid == self.stream_info.participant_sid:
-                logger.info(f"[{self.mint_id}] ✅ Found participant: {participant.sid}")
+                logger.info(f"[{self.mint_id}] ✅ Found exact participant: {participant.sid}")
                 return participant
         
-        logger.error(f"[{self.mint_id}] ❌ Participant {self.stream_info.participant_sid} not found")
+        # If not found, use any participant with tracks
+        logger.warning(f"[{self.mint_id}] ⚠️ Exact participant {self.stream_info.participant_sid} not found, using any available participant")
+        for participant in self.room.remote_participants.values():
+            if participant.track_publications:
+                logger.info(f"[{self.mint_id}] ✅ Using participant with tracks: {participant.sid}")
+                return participant
+        
+        logger.error(f"[{self.mint_id}] ❌ No participants with tracks found")
         return None
 
     async def _subscribe_to_tracks(self, participant: rtc.RemoteParticipant):
@@ -604,16 +612,17 @@ class WebRTCRecorder:
     async def _await_track_subscriptions(self):
         """Wait for track subscriptions to be ready."""
         logger.info(f"[{self.mint_id}] Awaiting track subscriptions...")
+        logger.info(f"[{self.mint_id}] Looking for participant: {self.stream_info.participant_sid}")
+        logger.info(f"[{self.mint_id}] Available participants: {list(self.room.remote_participants.keys())}")
         
         timeout = self.timeouts['subscription']
         start_time = time.time()
         
         while (time.time() - start_time) < timeout:
-            # Check for subscribed tracks
+            # Check for subscribed tracks from ANY participant (not just the expected one)
             for participant in self.room.remote_participants.values():
-                if participant.sid != self.stream_info.participant_sid:
-                    continue
-                    
+                logger.info(f"[{self.mint_id}] Checking participant: {participant.sid}")
+                
                 for track_pub in participant.track_publications.values():
                     if (track_pub.subscribed and 
                         track_pub.track is not None and 
@@ -659,6 +668,11 @@ class WebRTCRecorder:
         
         # Timeout - check what we have
         if not self.tracks:
+            logger.error(f"[{self.mint_id}] No tracks found. Available participants: {list(self.room.remote_participants.keys())}")
+            for participant in self.room.remote_participants.values():
+                logger.error(f"[{self.mint_id}] Participant {participant.sid} has {len(participant.track_publications)} track publications")
+                for track_pub in participant.track_publications.values():
+                    logger.error(f"[{self.mint_id}] Track: kind={track_pub.kind}, subscribed={track_pub.subscribed}, track={track_pub.track is not None}")
             raise Exception("No tracks subscribed within timeout")
         
         logger.warning(f"[{self.mint_id}] ⚠️ Subscription timeout, proceeding with {len(self.tracks)} tracks")

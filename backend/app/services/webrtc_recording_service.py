@@ -940,6 +940,7 @@ class WebRTCRecorder:
                 # Log every 100 loops to show we're alive
                 if loop_count % 100 == 0:
                     queue_sizes = {tid: q.size() for tid, q in self.queues.items()}
+                    print(f"[{self.mint_id}] Encoding loop #{loop_count}, encoded: video={self.encoded_video_count}, audio={self.encoded_audio_count}, queue_sizes={queue_sizes}", flush=True)
                     logger.info(f"[{self.mint_id}] Encoding loop #{loop_count}, encoded: video={self.encoded_video_count}, audio={self.encoded_audio_count}, queue_sizes={queue_sizes}")
                 
                 # Process frames from all queues
@@ -972,11 +973,16 @@ class WebRTCRecorder:
             track_context = self.tracks[track_id]
             
             if track_context.kind == rtc.TrackKind.KIND_VIDEO:
+                if self.encoded_video_count < 5:
+                    print(f"[{self.mint_id}] Processing VIDEO frame from {track_id}", flush=True)
                 await self._encode_video_frame(track_context, frame)
             else:
+                if self.encoded_audio_count < 5:
+                    print(f"[{self.mint_id}] Processing AUDIO frame from {track_id}", flush=True)
                 await self._encode_audio_frame(track_context, frame)
                 
         except Exception as e:
+            print(f"[{self.mint_id}] Frame encoding error for {track_id}: {e}", flush=True)
             logger.error(f"[{self.mint_id}] Frame encoding error for {track_id}: {e}")
 
     async def _encode_video_frame(self, track_context: TrackContext, frame: rtc.VideoFrame):

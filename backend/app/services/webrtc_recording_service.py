@@ -246,8 +246,8 @@ class WebRTCRecordingService:
         
         # Queue configuration
         self.queue_config = {
-            'video_max_items': 60,   # ~2 seconds at 30fps
-            'audio_max_items': 200,  # ~250ms at 48kHz
+            'video_max_items': 10,   # ~0.33 seconds at 30fps - keep small to prevent memory issues
+            'audio_max_items': 30,   # ~0.6 seconds at 48kHz - keep small to prevent memory issues
         }
 
     async def start_recording(
@@ -947,15 +947,19 @@ class WebRTCRecorder:
                 for track_id, queue in self.queues.items():
                     frame = queue.get(timeout=0.1)
                     if frame is not None:
-                        await self._encode_frame(track_id, frame)
-                        frames_processed += 1
+                        try:
+                            await self._encode_frame(track_id, frame)
+                            frames_processed += 1
+                        finally:
+                            # Explicitly delete frame to free memory
+                            del frame
                 
                 # If no frames processed, sleep briefly
                 if frames_processed == 0:
                     await asyncio.sleep(0.01)
                 
-                # Periodic cleanup
-                if frames_processed > 0:
+                # Aggressive garbage collection to prevent memory leaks
+                if loop_count % 10 == 0:  # Every 10 loops
                     gc.collect()
             
             logger.info(f"[{self.mint_id}] Frame encoding ended")

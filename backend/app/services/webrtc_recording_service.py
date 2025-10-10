@@ -695,9 +695,14 @@ class WebRTCRecorder:
         while (time.time() - start_time) < timeout:
             # Check for subscribed tracks ONLY from the target participant (the streamer)
             for participant in self.room.remote_participants.values():
+                print(f"[{self.mint_id}] Checking participant {participant.sid} vs target {self.stream_info.participant_sid}", flush=True)
+                
                 # ONLY process the target participant (the streamer)
                 if participant.sid != self.stream_info.participant_sid:
+                    print(f"[{self.mint_id}] Skipping non-target participant {participant.sid}", flush=True)
                     continue
+                    
+                print(f"[{self.mint_id}] FOUND TARGET PARTICIPANT: {participant.sid}", flush=True)
                 logger.info(f"[{self.mint_id}] Checking participant: {participant.sid}")
                 
                 for track_pub in participant.track_publications.values():

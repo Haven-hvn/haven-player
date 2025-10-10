@@ -109,10 +109,19 @@ class MediaClock:
         # Convert to PTS (assuming 1/clock_rate timebase)
         pts = int(rtp_delta)
         
-        # Ensure PTS is monotonically increasing
+        # Ensure PTS is monotonically increasing with proper increment
         last_pts = clock_info.get('last_pts', 0)
         if pts <= last_pts:
-            pts = last_pts + 1
+            # Calculate proper increment based on track type
+            if 'VIDEO' in track_id:
+                pts = last_pts + 3000  # 30fps = 3000 units per frame
+            else:  # Audio
+                pts = last_pts + 1024  # Audio samples per frame
+        else:
+            # Ensure minimum increment to avoid duplicate PTS
+            min_increment = 3000 if 'VIDEO' in track_id else 1024
+            if pts - last_pts < min_increment:
+                pts = last_pts + min_increment
         
         clock_info['last_rtp_timestamp'] = rtp_timestamp
         clock_info['last_pts'] = pts
@@ -873,12 +882,8 @@ class WebRTCRecorder:
             if av_frame is None:
                 return
             
-            # Set PTS using media clock - use frame timestamp if available
-            if hasattr(frame, 'timestamp'):
-                pts = self.media_clock.rtp_to_pts(track_context.track_id, frame.timestamp)
-            else:
-                # Fallback to frame count-based PTS
-                pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 3000)  # 30fps = 3000 units per frame
+            # Set PTS using media clock - use frame count for consistent timing
+            pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 3000)  # 30fps = 3000 units per frame
             av_frame.pts = pts
             
             # Encode and write
@@ -904,12 +909,8 @@ class WebRTCRecorder:
             if av_frame is None:
                 return
             
-            # Set PTS using media clock - use frame timestamp if available
-            if hasattr(frame, 'timestamp'):
-                pts = self.media_clock.rtp_to_pts(track_context.track_id, frame.timestamp)
-            else:
-                # Fallback to frame count-based PTS for audio
-                pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 1024)  # Audio samples per frame
+            # Set PTS using media clock - use frame count for consistent timing
+            pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 1024)  # Audio samples per frame
             av_frame.pts = pts
             
             # Encode and write
@@ -944,30 +945,25 @@ class WebRTCRecorder:
                             logger.warning(f"[{self.mint_id}] Video frame to_ndarray failed with all formats")
                             return None
             
-            # Method 2: Try direct data access
+            # Method 2: Try direct data access with flexible format detection
             elif hasattr(frame, 'data'):
                 try:
                     # Convert raw data to numpy array
                     import numpy as np
                     img = np.frombuffer(frame.data, dtype=np.uint8)
                     
-                    # Calculate proper dimensions based on data size and frame dimensions
+                    # Get frame dimensions
                     if hasattr(frame, 'width') and hasattr(frame, 'height'):
                         width, height = frame.width, frame.height
                         total_pixels = width * height
+                        data_size = len(img)
                         
-                        # Calculate bytes per pixel based on data size
-                        bytes_per_pixel = len(img) // total_pixels
+                        logger.info(f"[{self.mint_id}] Frame data: {data_size} bytes, {width}x{height} pixels")
                         
-                        if bytes_per_pixel in [1, 3, 4]:  # Grayscale, RGB, or ARGB
-                            if bytes_per_pixel == 1:
-                                # Grayscale
-                                img = img.reshape((height, width))
-                            else:
-                                # Color (RGB or ARGB)
-                                img = img.reshape((height, width, bytes_per_pixel))
-                        else:
-                            logger.warning(f"[{self.mint_id}] Unsupported bytes per pixel: {bytes_per_pixel} for {width}x{height}")
+                        # Try multiple format interpretations
+                        img = self._try_flexible_format_conversion(img, width, height, data_size)
+                        if img is None:
+                            logger.warning(f"[{self.mint_id}] Could not convert frame data to any supported format")
                             return None
                     else:
                         logger.warning(f"[{self.mint_id}] Frame missing width/height attributes")
@@ -1101,6 +1097,163 @@ class WebRTCRecorder:
         except Exception as e:
             logger.error(f"[{self.mint_id}] Error validating video frame: {e}")
             return False
+
+    def _try_flexible_format_conversion(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
+        """Try multiple format interpretations for flexible video frame conversion."""
+        import numpy as np
+        
+        total_pixels = width * height
+        
+        # Calculate bytes per pixel
+        bytes_per_pixel = data_size / total_pixels
+        
+        logger.info(f"[{self.mint_id}] Trying format conversion: {bytes_per_pixel:.2f} bytes/pixel")
+        
+        # Try different format interpretations
+        format_attempts = [
+            # Standard formats
+            (1.0, "grayscale", lambda: img_data.reshape((height, width))),
+            (3.0, "RGB", lambda: img_data.reshape((height, width, 3))),
+            (4.0, "ARGB", lambda: img_data.reshape((height, width, 4))),
+            
+            # YUV formats
+            (1.5, "YUV420", self._try_yuv420_conversion),
+            (2.0, "YUV422", self._try_yuv422_conversion),
+            (2.25, "YUV444", self._try_yuv444_conversion),
+            
+            # Packed formats
+            (1.5, "YUV420_packed", self._try_yuv420_packed),
+            (2.0, "YUV422_packed", self._try_yuv422_packed),
+            
+            # Flexible interpretations
+            (None, "flexible", self._try_flexible_interpretation),
+        ]
+        
+        for target_bpp, format_name, conversion_func in format_attempts:
+            try:
+                if target_bpp is None or abs(bytes_per_pixel - target_bpp) < 0.1:
+                    logger.info(f"[{self.mint_id}] Trying {format_name} format")
+                    result = conversion_func(img_data, width, height, data_size)
+                    if result is not None:
+                        logger.info(f"[{self.mint_id}] ✅ Successfully converted using {format_name}")
+                        return result
+            except Exception as e:
+                logger.debug(f"[{self.mint_id}] {format_name} conversion failed: {e}")
+                continue
+        
+        return None
+    
+    def _try_yuv420_conversion(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
+        """Try YUV420 format conversion."""
+        import numpy as np
+        
+        y_size = width * height
+        uv_size = (width // 2) * (height // 2)
+        expected_size = y_size + 2 * uv_size
+        
+        if data_size == expected_size:
+            # Extract Y, U, V planes
+            y_plane = img_data[:y_size].reshape((height, width))
+            u_plane = img_data[y_size:y_size + uv_size].reshape((height // 2, width // 2))
+            v_plane = img_data[y_size + uv_size:].reshape((height // 2, width // 2))
+            
+            # Upsample U and V to full resolution
+            u_upsampled = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)
+            v_upsampled = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)
+            
+            # Convert YUV to RGB
+            r = np.clip(y_plane + 1.402 * (v_upsampled - 128), 0, 255)
+            g = np.clip(y_plane - 0.344136 * (u_upsampled - 128) - 0.714136 * (v_upsampled - 128), 0, 255)
+            b = np.clip(y_plane + 1.772 * (u_upsampled - 128), 0, 255)
+            
+            return np.stack([r, g, b], axis=2).astype(np.uint8)
+        return None
+    
+    def _try_yuv422_conversion(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
+        """Try YUV422 format conversion."""
+        import numpy as np
+        
+        expected_size = width * height * 2
+        if data_size == expected_size:
+            # YUV422: Y plane + interleaved UV
+            y_plane = img_data[:width*height].reshape((height, width))
+            uv_data = img_data[width*height:].reshape((height, width))
+            
+            # Simple conversion - treat as grayscale for now
+            return y_plane.reshape((height, width, 1))
+        return None
+    
+    def _try_yuv444_conversion(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
+        """Try YUV444 format conversion."""
+        import numpy as np
+        
+        expected_size = width * height * 3
+        if data_size == expected_size:
+            # YUV444: Y, U, V planes
+            y_plane = img_data[:width*height].reshape((height, width))
+            u_plane = img_data[width*height:2*width*height].reshape((height, width))
+            v_plane = img_data[2*width*height:].reshape((height, width))
+            
+            # Convert YUV to RGB
+            r = np.clip(y_plane + 1.402 * (v_plane - 128), 0, 255)
+            g = np.clip(y_plane - 0.344136 * (u_plane - 128) - 0.714136 * (v_plane - 128), 0, 255)
+            b = np.clip(y_plane + 1.772 * (u_plane - 128), 0, 255)
+            
+            return np.stack([r, g, b], axis=2).astype(np.uint8)
+        return None
+    
+    def _try_yuv420_packed(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
+        """Try packed YUV420 format conversion."""
+        import numpy as np
+        
+        # Try different packing arrangements
+        if data_size == width * height * 3 // 2:  # YUV420 packed
+            # Assume Y plane first, then interleaved UV
+            y_size = width * height
+            y_plane = img_data[:y_size].reshape((height, width))
+            uv_data = img_data[y_size:]
+            
+            # Create a simple RGB representation
+            return np.stack([y_plane, y_plane, y_plane], axis=2)
+        return None
+    
+    def _try_yuv422_packed(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
+        """Try packed YUV422 format conversion."""
+        import numpy as np
+        
+        if data_size == width * height * 2:
+            # YUV422 packed
+            y_plane = img_data[:width*height].reshape((height, width))
+            return np.stack([y_plane, y_plane, y_plane], axis=2)
+        return None
+    
+    def _try_flexible_interpretation(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
+        """Try flexible interpretation of the data."""
+        import numpy as np
+        
+        # If we can't determine the format, try to create a reasonable image
+        total_pixels = width * height
+        
+        if data_size >= total_pixels:
+            # At least grayscale data available
+            if data_size == total_pixels:
+                # Grayscale
+                return img_data[:total_pixels].reshape((height, width))
+            elif data_size >= total_pixels * 3:
+                # RGB or similar
+                return img_data[:total_pixels*3].reshape((height, width, 3))
+            else:
+                # Partial data - pad or truncate as needed
+                if data_size > total_pixels:
+                    # More data than needed, take first part
+                    return img_data[:total_pixels].reshape((height, width))
+                else:
+                    # Less data than needed, pad with zeros
+                    padded = np.zeros(total_pixels, dtype=np.uint8)
+                    padded[:data_size] = img_data
+                    return padded.reshape((height, width))
+        
+        return None
 
     async def _stop_read_tasks(self):
         """Stop all read tasks."""

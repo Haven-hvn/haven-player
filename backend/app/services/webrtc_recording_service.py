@@ -450,9 +450,12 @@ class WebRTCRecorder:
     async def start(self) -> Dict[str, Any]:
         """Start recording following WebRTC state machine."""
         try:
-            logger.info(f"[{self.mint_id}] Starting WebRTC recording")
+            logger.info(f"[{self.mint_id}] ========== STARTING WEBRTC RECORDING ==========")
+            logger.info(f"[{self.mint_id}] Current state: {self.state.value}")
+            logger.info(f"[{self.mint_id}] Output path: {self.output_path}")
             
             if self.state != RecordingState.DISCONNECTED:
+                logger.error(f"[{self.mint_id}] Cannot start: already in state {self.state.value}")
                 return {"success": False, "error": f"Recording already in state: {self.state.value}"}
             
             # State: DISCONNECTED → CONNECTING
@@ -490,19 +493,29 @@ class WebRTCRecorder:
             logger.info(f"[{self.mint_id}] ✅ Tracks subscribed in {self.stats['subscription_time']:.2f}s")
             
             # Setup PyAV container
+            logger.info(f"[{self.mint_id}] Setting up output container...")
             await self._setup_output_container()
+            logger.info(f"[{self.mint_id}] ✅ Output container ready")
             
             # Send PLI for keyframes
+            logger.info(f"[{self.mint_id}] Requesting keyframes...")
             await self._request_keyframes()
+            logger.info(f"[{self.mint_id}] ✅ Keyframe requests sent")
             
             # Start frame processing
+            logger.info(f"[{self.mint_id}] About to start frame processing tasks...")
             await self._start_frame_processing()
+            logger.info(f"[{self.mint_id}] ✅ Frame processing tasks created")
             
             # State: SUBSCRIBED → RECORDING
             self.state = RecordingState.RECORDING
             self.start_time = datetime.now(timezone.utc)
             
-            logger.info(f"[{self.mint_id}] ✅ Recording started successfully")
+            logger.info(f"[{self.mint_id}] ========== RECORDING STARTED SUCCESSFULLY ==========")
+            logger.info(f"[{self.mint_id}] State: {self.state.value}")
+            logger.info(f"[{self.mint_id}] Tracks: {len(self.tracks)}")
+            logger.info(f"[{self.mint_id}] Read tasks: {len(self.read_tasks)}")
+            logger.info(f"[{self.mint_id}] Encode task: {self.encode_task is not None}")
             
             return {
                 "success": True,

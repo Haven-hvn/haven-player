@@ -112,14 +112,31 @@ class StreamManager:
             
             await self.room.connect(livekit_url, token, connect_options)
             
-            # Get participant SID
+            # Get participant SID - find the participant with published tracks (the streamer)
             participant_sid = None
+            
+            # Wait a moment for participants to fully publish their tracks
+            await asyncio.sleep(0.5)
+            
+            # Find participant with tracks (the actual streamer, not viewers)
             for participant in self.room.remote_participants.values():
-                participant_sid = participant.sid
-                break
+                if len(participant.track_publications) > 0:
+                    participant_sid = participant.sid
+                    logger.info(f"Found streamer participant: {participant_sid} with {len(participant.track_publications)} tracks")
+                    break
+            
+            # Fallback: if no participant has tracks yet, wait and try again
+            if not participant_sid:
+                logger.warning("No participant with tracks found, waiting 2 more seconds...")
+                await asyncio.sleep(2.0)
+                for participant in self.room.remote_participants.values():
+                    if len(participant.track_publications) > 0:
+                        participant_sid = participant.sid
+                        logger.info(f"Found streamer participant (after wait): {participant_sid} with {len(participant.track_publications)} tracks")
+                        break
 
             if not participant_sid:
-                return {"success": False, "error": "No participants found in room"}
+                return {"success": False, "error": "No participants with published tracks found in room"}
 
             # Store stream info
             stream_info_obj = StreamInfo(

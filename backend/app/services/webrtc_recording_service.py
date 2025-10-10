@@ -432,6 +432,10 @@ class WebRTCRecorder:
             'subscription_time': 0.0,
         }
         
+        # Encoded frame counters for PTS calculation
+        self.encoded_video_count = 0
+        self.encoded_audio_count = 0
+        
         # Get output filename
         self.output_path = self._get_output_filename()
     
@@ -886,55 +890,75 @@ class WebRTCRecorder:
         """Encode a video frame."""
         try:
             if not self.video_stream or not self.output_container:
+                logger.warning(f"[{self.mint_id}] Video stream or container not ready")
                 return
             
             # Convert LiveKit frame to PyAV frame
             av_frame = await self._convert_video_frame(frame)
             if av_frame is None:
+                logger.warning(f"[{self.mint_id}] Video frame conversion failed")
                 return
             
-            # Set PTS using simple frame count - more reliable for video
-            pts = track_context.frame_count * 3000  # 3000 units per frame at 30fps
+            # Set PTS using encoded frame count
+            pts = self.encoded_video_count * 3000  # 3000 units per frame at 30fps
             av_frame.pts = pts
             
+            logger.debug(f"[{self.mint_id}] Encoding video frame {self.encoded_video_count}, PTS={pts}")
+            
             # Encode and write
+            packets_written = 0
             for packet in self.video_stream.encode(av_frame):
                 self.output_container.mux(packet)
+                packets_written += 1
             
+            logger.debug(f"[{self.mint_id}] Wrote {packets_written} video packets")
+            
+            # Increment counters
+            self.encoded_video_count += 1
             self.stats['video_frames'] += 1
             
             # Cleanup
             del av_frame
             
         except Exception as e:
-            logger.error(f"[{self.mint_id}] Video frame encoding error: {e}")
+            logger.error(f"[{self.mint_id}] Video frame encoding error: {e}", exc_info=True)
 
     async def _encode_audio_frame(self, track_context: TrackContext, frame: rtc.AudioFrame):
         """Encode an audio frame."""
         try:
             if not self.audio_stream or not self.output_container:
+                logger.warning(f"[{self.mint_id}] Audio stream or container not ready")
                 return
             
             # Convert LiveKit frame to PyAV frame
             av_frame = await self._convert_audio_frame(frame)
             if av_frame is None:
+                logger.warning(f"[{self.mint_id}] Audio frame conversion failed")
                 return
             
-            # Set PTS using simple frame count - more reliable for audio
-            pts = track_context.frame_count * 1024  # 1024 samples per frame at 48kHz
+            # Set PTS using encoded frame count
+            pts = self.encoded_audio_count * 1024  # 1024 samples per frame at 48kHz
             av_frame.pts = pts
             
+            logger.debug(f"[{self.mint_id}] Encoding audio frame {self.encoded_audio_count}, PTS={pts}")
+            
             # Encode and write
+            packets_written = 0
             for packet in self.audio_stream.encode(av_frame):
                 self.output_container.mux(packet)
+                packets_written += 1
             
+            logger.debug(f"[{self.mint_id}] Wrote {packets_written} audio packets")
+            
+            # Increment counters
+            self.encoded_audio_count += 1
             self.stats['audio_frames'] += 1
             
             # Cleanup
             del av_frame
             
         except Exception as e:
-            logger.error(f"[{self.mint_id}] Audio frame encoding error: {e}")
+            logger.error(f"[{self.mint_id}] Audio frame encoding error: {e}", exc_info=True)
 
     async def _convert_video_frame(self, frame: rtc.VideoFrame) -> Optional[av.VideoFrame]:
         """Convert LiveKit video frame to PyAV frame."""
@@ -1396,32 +1420,53 @@ class WebRTCRecorder:
     async def _cleanup_output_container(self):
         """Cleanup PyAV output container."""
         try:
+            logger.info(f"[{self.mint_id}] Cleaning up output container...")
+            logger.info(f"[{self.mint_id}] Encoded frames - Video: {self.encoded_video_count}, Audio: {self.encoded_audio_count}")
+            
             if self.output_container:
                 # Flush encoders
                 if self.video_stream:
                     try:
+                        logger.info(f"[{self.mint_id}] Flushing video encoder...")
+                        packets_flushed = 0
                         for packet in self.video_stream.encode(None):
                             self.output_container.mux(packet)
+                            packets_flushed += 1
+                        logger.info(f"[{self.mint_id}] Flushed {packets_flushed} video packets")
                     except Exception as e:
-                        logger.warning(f"[{self.mint_id}] Error flushing video encoder: {e}")
+                        logger.warning(f"[{self.mint_id}] Error flushing video encoder: {e}", exc_info=True)
                 
                 if self.audio_stream:
                     try:
+                        logger.info(f"[{self.mint_id}] Flushing audio encoder...")
+                        packets_flushed = 0
                         for packet in self.audio_stream.encode(None):
                             self.output_container.mux(packet)
+                            packets_flushed += 1
+                        logger.info(f"[{self.mint_id}] Flushed {packets_flushed} audio packets")
                     except Exception as e:
-                        logger.warning(f"[{self.mint_id}] Error flushing audio encoder: {e}")
+                        logger.warning(f"[{self.mint_id}] Error flushing audio encoder: {e}", exc_info=True)
                 
                 # Close container
+                logger.info(f"[{self.mint_id}] Closing output container...")
                 self.output_container.close()
-                logger.info(f"[{self.mint_id}] ✅ Output container closed")
+                
+                # Check file size
+                if self.output_path and self.output_path.exists():
+                    file_size = self.output_path.stat().st_size
+                    logger.info(f"[{self.mint_id}] ✅ Output container closed. File size: {file_size} bytes ({file_size / (1024*1024):.2f} MB)")
+                else:
+                    logger.warning(f"[{self.mint_id}] Output file does not exist: {self.output_path}")
+                
                 self.output_container = None
+            else:
+                logger.warning(f"[{self.mint_id}] No output container to clean up")
             
             self.video_stream = None
             self.audio_stream = None
             
         except Exception as e:
-            logger.error(f"[{self.mint_id}] Error cleaning up output container: {e}")
+            logger.error(f"[{self.mint_id}] Error cleaning up output container: {e}", exc_info=True)
 
     async def _cleanup(self):
         """Cleanup all resources."""

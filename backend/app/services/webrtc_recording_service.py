@@ -340,20 +340,29 @@ class FFmpegRecorder:
             # Create tasks for video and audio processing (like the working implementation)
             tasks = []
             
+            logger.info(f"[{self.mint_id}] 🔍 Available tracks: video={self.video_track is not None}, audio={self.audio_track is not None}")
+            
             if self.video_track:
                 logger.info(f"[{self.mint_id}] ✅ Starting video stream processing")
-                tasks.append(asyncio.create_task(self._process_video_stream()))
+                logger.info(f"[{self.mint_id}] Video track details: {self.video_track}")
+                video_task = asyncio.create_task(self._process_video_stream())
+                tasks.append(video_task)
+                logger.info(f"[{self.mint_id}] Video task created: {video_task}")
             
             if self.audio_track:
                 logger.info(f"[{self.mint_id}] ✅ Starting audio stream processing")
-                tasks.append(asyncio.create_task(self._process_audio_stream()))
+                audio_task = asyncio.create_task(self._process_audio_stream())
+                tasks.append(audio_task)
+                logger.info(f"[{self.mint_id}] Audio task created: {audio_task}")
             
             if not tasks:
                 logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for processing")
                 return
             
+            logger.info(f"[{self.mint_id}] 🚀 Starting {len(tasks)} processing tasks...")
             # Wait for all tasks to complete
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            logger.info(f"[{self.mint_id}] 📊 Task results: {results}")
             
         except Exception as e:
             logger.error(f"[{self.mint_id}] Frame processing error: {e}")
@@ -364,16 +373,22 @@ class FFmpegRecorder:
         """Process video frames using rtc.VideoStream (proven approach)."""
         try:
             logger.info(f"[{self.mint_id}] 🎥 Starting video stream processing")
+            logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
+            logger.info(f"[{self.mint_id}] Video track type: {type(self.video_track)}")
             frame_count = 0
             
+            logger.info(f"[{self.mint_id}] 🔄 Starting VideoStream iteration...")
             async for event in rtc.VideoStream(self.video_track):
+                logger.info(f"[{self.mint_id}] 📹 VideoStream event received!")
                 if self._shutdown:
                     logger.info(f"[{self.mint_id}] Stop signal received, ending video processing")
                     break
                 
                 frame = event.frame
+                logger.info(f"[{self.mint_id}] 📹 Frame extracted from event: {type(frame)}")
                 try:
                     # Process the frame
+                    logger.info(f"[{self.mint_id}] 📹 Calling _on_video_frame...")
                     await self._on_video_frame(frame)
                     frame_count += 1
                     

@@ -92,6 +92,9 @@ class FFmpegRecorder:
             # State: CONNECTING → SUBSCRIBING
             self.state = RecordingState.SUBSCRIBING
             
+            # Set up room event handler for track subscriptions
+            self.room.on('track_subscribed', self._on_track_subscribed)
+            
             # Wait for tracks to be ready
             await asyncio.sleep(1.0)  # Give tracks time to initialize
             
@@ -234,13 +237,22 @@ class FFmpegRecorder:
             
             self.tracks[track_id] = track_context
             
-            # Set up frame handler
-            if track.kind == rtc.TrackKind.KIND_VIDEO:
-                track.add_video_frame_handler(self._on_video_frame)
-            elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                track.add_audio_frame_handler(self._on_audio_frame)
+            # Frame handlers will be set up when tracks are actually subscribed
             
             logger.info(f"[{self.mint_id}] ✅ Subscribed to {track.kind} track {track.sid}")
+
+    def _on_track_subscribed(self, track, publication, participant):
+        """Handle track subscribed event."""
+        if participant.sid != self.stream_info.participant_sid:
+            return  # Only process tracks from our target participant
+            
+        logger.info(f"[{self.mint_id}] Track subscribed: {track.kind} from {participant.sid}")
+        
+        # Set up frame handlers based on track kind
+        if track.kind == rtc.TrackKind.KIND_VIDEO:
+            track.on('frame_received', self._on_video_frame)
+        elif track.kind == rtc.TrackKind.KIND_AUDIO:
+            track.on('frame_received', self._on_audio_frame)
 
     async def _setup_ffmpeg(self):
         """Setup FFmpeg subprocess for recording."""

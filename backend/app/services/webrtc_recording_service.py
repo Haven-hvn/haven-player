@@ -323,52 +323,98 @@ class FFmpegRecorder:
             self._polling_started = True
 
     async def _poll_frames(self):
-        """Poll tracks for frames using LiveKit's track methods."""
-        logger.info(f"[{self.mint_id}] 🔄 Starting frame polling...")
+        """Process frames using LiveKit's VideoStream and AudioStream (proven approach)."""
+        logger.info(f"[{self.mint_id}] 🔄 Starting frame processing with VideoStream/AudioStream...")
         
-        while not self._shutdown and self.state == RecordingState.SUBSCRIBED:
-            try:
-                # Poll video track for frames
-                if self.video_track:
-                    # Try to get frames using LiveKit's track methods
-                    try:
-                        # Check if track has any available methods for frame access
-                        logger.debug(f"[{self.mint_id}] Video track methods: {[m for m in dir(self.video_track) if not m.startswith('_')]}")
-                        
-                        # Try to access track data directly
-                        if hasattr(self.video_track, 'get_stats'):
-                            stats = self.video_track.get_stats()
-                            logger.debug(f"[{self.mint_id}] Video track stats: {stats}")
-                        
-                        # Simulate frame reception for now (we'll need to find the right LiveKit API)
-                        # This is a placeholder - we need to find the correct LiveKit method
-                        logger.debug(f"[{self.mint_id}] Polling video track for frames...")
-                        
-                    except Exception as e:
-                        logger.debug(f"[{self.mint_id}] Video track polling error: {e}")
+        try:
+            # Create tasks for video and audio processing (like the working implementation)
+            tasks = []
+            
+            if self.video_track:
+                logger.info(f"[{self.mint_id}] ✅ Starting video stream processing")
+                tasks.append(asyncio.create_task(self._process_video_stream()))
+            
+            if self.audio_track:
+                logger.info(f"[{self.mint_id}] ✅ Starting audio stream processing")
+                tasks.append(asyncio.create_task(self._process_audio_stream()))
+            
+            if not tasks:
+                logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for processing")
+                return
+            
+            # Wait for all tasks to complete
+            await asyncio.gather(*tasks, return_exceptions=True)
+            
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Frame processing error: {e}")
+        finally:
+            logger.info(f"[{self.mint_id}] 🛑 Frame processing stopped")
+
+    async def _process_video_stream(self):
+        """Process video frames using rtc.VideoStream (proven approach)."""
+        try:
+            logger.info(f"[{self.mint_id}] 🎥 Starting video stream processing")
+            frame_count = 0
+            
+            async for event in rtc.VideoStream(self.video_track):
+                if self._shutdown:
+                    logger.info(f"[{self.mint_id}] Stop signal received, ending video processing")
+                    break
+                
+                frame = event.frame
+                try:
+                    # Process the frame
+                    await self._on_video_frame(frame)
+                    frame_count += 1
                     
-                # Poll audio track for frames  
-                if self.audio_track:
-                    try:
-                        logger.debug(f"[{self.mint_id}] Audio track methods: {[m for m in dir(self.audio_track) if not m.startswith('_')]}")
+                    # Log progress
+                    if frame_count % 100 == 0:
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} video frames")
                         
-                        if hasattr(self.audio_track, 'get_stats'):
-                            stats = self.audio_track.get_stats()
-                            logger.debug(f"[{self.mint_id}] Audio track stats: {stats}")
-                            
-                        logger.debug(f"[{self.mint_id}] Polling audio track for frames...")
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error processing video frame {frame_count}: {e}")
+                    continue
+                    
+        except asyncio.CancelledError:
+            logger.info(f"[{self.mint_id}] Video stream processing cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Video stream processing error: {e}")
+        finally:
+            logger.info(f"[{self.mint_id}] Video stream processing ended. Total frames: {frame_count}")
+
+    async def _process_audio_stream(self):
+        """Process audio frames using rtc.AudioStream (proven approach)."""
+        try:
+            logger.info(f"[{self.mint_id}] 🎵 Starting audio stream processing")
+            frame_count = 0
+            
+            async for event in rtc.AudioStream(self.audio_track):
+                if self._shutdown:
+                    logger.info(f"[{self.mint_id}] Stop signal received, ending audio processing")
+                    break
+                
+                frame = event.frame
+                try:
+                    # Process the frame
+                    await self._on_audio_frame(frame)
+                    frame_count += 1
+                    
+                    # Log progress
+                    if frame_count % 1000 == 0:
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} audio frames")
                         
-                    except Exception as e:
-                        logger.debug(f"[{self.mint_id}] Audio track polling error: {e}")
-                
-                # Wait before next poll
-                await asyncio.sleep(0.1)  # 10 FPS polling for debugging
-                
-            except Exception as e:
-                logger.error(f"[{self.mint_id}] Frame polling error: {e}")
-                await asyncio.sleep(0.1)  # Wait a bit before retrying
-        
-        logger.info(f"[{self.mint_id}] 🛑 Frame polling stopped")
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error processing audio frame {frame_count}: {e}")
+                    continue
+                    
+        except asyncio.CancelledError:
+            logger.info(f"[{self.mint_id}] Audio stream processing cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Audio stream processing error: {e}")
+        finally:
+            logger.info(f"[{self.mint_id}] Audio stream processing ended. Total frames: {frame_count}")
 
     async def _setup_ffmpeg(self):
         """Setup FFmpeg subprocess for recording."""
@@ -479,7 +525,7 @@ class FFmpegRecorder:
         logger.info(f"[{self.mint_id}] ⚠️  Frame processing started but no direct frame handlers available")
         logger.info(f"[{self.mint_id}] ⚠️  This is a limitation of the current LiveKit API - frames may not be captured")
 
-    def _on_video_frame(self, frame: rtc.VideoFrame):
+    async def _on_video_frame(self, frame: rtc.VideoFrame):
         """Handle video frame from LiveKit."""
         if self._shutdown:
             return
@@ -531,7 +577,7 @@ class FFmpegRecorder:
             import traceback
             logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
 
-    def _on_audio_frame(self, frame: rtc.AudioFrame):
+    async def _on_audio_frame(self, frame: rtc.AudioFrame):
         """Handle audio frame from LiveKit."""
         if self._shutdown:
             return

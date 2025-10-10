@@ -1007,12 +1007,18 @@ class WebRTCRecorder:
             packets_written = 0
             try:
                 for packet in self.video_stream.encode(av_frame):
+                    # Skip packets with negative PTS (encoder priming)
+                    if packet.pts is not None and packet.pts < 0:
+                        print(f"[{self.mint_id}] Skipping video packet with negative PTS={packet.pts}", flush=True)
+                        continue
+                    
                     self.output_container.mux(packet)
                     packets_written += 1
-                    if self.encoded_video_count <= 5:
+                    if self.encoded_video_count <= 10:
                         print(f"[{self.mint_id}] Muxed video packet: size={packet.size}, pts={packet.pts}, dts={packet.dts}", flush=True)
             except Exception as e:
                 print(f"[{self.mint_id}] ERROR muxing video packet: {e}", flush=True)
+                logger.error(f"[{self.mint_id}] Video muxing error", exc_info=True)
                 raise
             
             # Increment counters
@@ -1056,12 +1062,18 @@ class WebRTCRecorder:
             packets_written = 0
             try:
                 for packet in self.audio_stream.encode(av_frame):
+                    # Skip packets with negative PTS (encoder priming)
+                    if packet.pts is not None and packet.pts < 0:
+                        print(f"[{self.mint_id}] Skipping audio packet with negative PTS={packet.pts}", flush=True)
+                        continue
+                    
                     self.output_container.mux(packet)
                     packets_written += 1
-                    if self.encoded_audio_count <= 5:
+                    if self.encoded_audio_count <= 10:
                         print(f"[{self.mint_id}] Muxed audio packet: size={packet.size}, pts={packet.pts}, dts={packet.dts}", flush=True)
             except Exception as e:
                 print(f"[{self.mint_id}] ERROR muxing audio packet: {e}", flush=True)
+                logger.error(f"[{self.mint_id}] Audio muxing error", exc_info=True)
                 raise
             
             # Increment counters

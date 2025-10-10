@@ -936,9 +936,29 @@ class WebRTCRecorder:
                     # Convert raw data to numpy array
                     import numpy as np
                     img = np.frombuffer(frame.data, dtype=np.uint8)
-                    # Reshape based on frame dimensions
+                    
+                    # Calculate proper dimensions based on data size and frame dimensions
                     if hasattr(frame, 'width') and hasattr(frame, 'height'):
-                        img = img.reshape((frame.height, frame.width, -1))
+                        width, height = frame.width, frame.height
+                        total_pixels = width * height
+                        
+                        # Calculate bytes per pixel based on data size
+                        bytes_per_pixel = len(img) // total_pixels
+                        
+                        if bytes_per_pixel in [1, 3, 4]:  # Grayscale, RGB, or ARGB
+                            if bytes_per_pixel == 1:
+                                # Grayscale
+                                img = img.reshape((height, width))
+                            else:
+                                # Color (RGB or ARGB)
+                                img = img.reshape((height, width, bytes_per_pixel))
+                        else:
+                            logger.warning(f"[{self.mint_id}] Unsupported bytes per pixel: {bytes_per_pixel} for {width}x{height}")
+                            return None
+                    else:
+                        logger.warning(f"[{self.mint_id}] Frame missing width/height attributes")
+                        return None
+                        
                 except Exception as e:
                     logger.warning(f"[{self.mint_id}] Video frame data conversion failed: {e}")
                     return None
@@ -957,8 +977,16 @@ class WebRTCRecorder:
                 del img
                 return None
             
-            # Create PyAV frame
-            av_frame = av.VideoFrame.from_ndarray(img, format='argb')
+            # Create PyAV frame with appropriate format
+            if len(img.shape) == 2:  # Grayscale
+                av_frame = av.VideoFrame.from_ndarray(img, format='gray')
+            elif len(img.shape) == 3 and img.shape[2] == 3:  # RGB
+                av_frame = av.VideoFrame.from_ndarray(img, format='rgb24')
+            elif len(img.shape) == 3 and img.shape[2] == 4:  # ARGB
+                av_frame = av.VideoFrame.from_ndarray(img, format='argb')
+            else:
+                logger.warning(f"[{self.mint_id}] Unsupported image format: {img.shape}")
+                return None
             
             # Reformat to yuv420p and resize
             av_frame = av_frame.reformat(
@@ -1028,8 +1056,15 @@ class WebRTCRecorder:
                 logger.warning(f"[{self.mint_id}] Video frame dimensions too large: {width}x{height}")
                 return False
             
-            # Calculate expected data size for ARGB format (4 bytes per pixel)
-            expected_size = width * height * 4
+            # Calculate expected data size based on actual image format
+            if len(img.shape) == 2:  # Grayscale
+                expected_size = width * height
+            elif len(img.shape) == 3:  # Color
+                expected_size = width * height * img.shape[2]
+            else:
+                logger.warning(f"[{self.mint_id}] Unexpected image shape: {img.shape}")
+                return False
+                
             actual_size = img.nbytes
             
             # Allow some tolerance for data size (within 10% of expected)
@@ -1038,7 +1073,7 @@ class WebRTCRecorder:
             max_expected = expected_size * (1 + size_tolerance)
             
             if actual_size < min_expected or actual_size > max_expected:
-                logger.warning(f"[{self.mint_id}] Video frame data size mismatch: expected ~{expected_size} bytes, got {actual_size} bytes for {width}x{height}")
+                logger.warning(f"[{self.mint_id}] Video frame data size mismatch: expected ~{expected_size} bytes, got {actual_size} bytes for {width}x{height} with {img.shape}")
                 return False
             
             # Check for reasonable aspect ratio

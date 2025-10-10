@@ -815,6 +815,7 @@ class WebRTCRecorder:
                 if success:
                     frame_count += 1
                     track_context.frame_count = frame_count
+                    logger.debug(f"[{self.mint_id}] Frame {frame_count} queued for {track_context.track_id}")
                     
                     # Log progress
                     if frame_count % 300 == 0:  # Every 10 seconds at 30fps
@@ -892,8 +893,8 @@ class WebRTCRecorder:
             if av_frame is None:
                 return
             
-            # Set PTS using media clock - use frame count for consistent timing
-            pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 3000)  # 30fps = 3000 units per frame
+            # Set PTS using simple frame count - more reliable for video
+            pts = track_context.frame_count * 3000  # 3000 units per frame at 30fps
             av_frame.pts = pts
             
             # Encode and write
@@ -919,8 +920,8 @@ class WebRTCRecorder:
             if av_frame is None:
                 return
             
-            # Set PTS using media clock - use frame count for consistent timing
-            pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 1024)  # Audio samples per frame
+            # Set PTS using simple frame count - more reliable for audio
+            pts = track_context.frame_count * 1024  # 1024 samples per frame at 48kHz
             av_frame.pts = pts
             
             # Encode and write

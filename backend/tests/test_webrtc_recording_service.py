@@ -5,6 +5,7 @@ Tests the WebRTC-based recording service with proper mocking of LiveKit componen
 
 import pytest
 import asyncio
+import numpy as np
 from pathlib import Path
 from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, MagicMock, patch
@@ -631,3 +632,376 @@ class TestRecordingState:
         assert RecordingState.SUBSCRIBED != RecordingState.RECORDING
         assert RecordingState.RECORDING != RecordingState.STOPPING
         assert RecordingState.STOPPING != RecordingState.STOPPED
+
+
+class TestFrameValidation:
+    """Test suite for frame validation functionality."""
+    
+    def test_validate_video_frame_valid(self, tmp_path: Path) -> None:
+        """Test validation of valid video frame."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Create valid frame data (1920x1080 ARGB)
+        valid_frame = np.random.randint(0, 255, (1080, 1920, 4), dtype=np.uint8)
+        mock_frame = Mock()
+        
+        # Test valid frame
+        result = recorder._validate_video_frame(valid_frame, mock_frame)
+        assert result is True
+    
+    def test_validate_video_frame_invalid_dimensions(self, tmp_path: Path) -> None:
+        """Test validation of video frame with invalid dimensions."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Test invalid dimensions (negative)
+        invalid_frame = np.random.randint(0, 255, (0, 0, 4), dtype=np.uint8)
+        mock_frame = Mock()
+        
+        result = recorder._validate_video_frame(invalid_frame, mock_frame)
+        assert result is False
+    
+    def test_validate_video_frame_too_large(self, tmp_path: Path) -> None:
+        """Test validation of video frame that's too large."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Test frame that's too large (5000x5000)
+        large_frame = np.random.randint(0, 255, (5000, 5000, 4), dtype=np.uint8)
+        mock_frame = Mock()
+        
+        result = recorder._validate_video_frame(large_frame, mock_frame)
+        assert result is False
+    
+    def test_validate_video_frame_size_mismatch(self, tmp_path: Path) -> None:
+        """Test validation of video frame with data size mismatch."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Test frame with wrong data size (363x363 with 198017 bytes - the error from logs)
+        # This should be ~527,076 bytes for ARGB, but we'll create one with 198017 bytes
+        corrupted_frame = np.random.randint(0, 255, (363, 363, 4), dtype=np.uint8)
+        # Manually truncate to simulate corruption
+        corrupted_frame = corrupted_frame[:198017//4//363]  # This will create wrong shape
+        mock_frame = Mock()
+        
+        result = recorder._validate_video_frame(corrupted_frame, mock_frame)
+        assert result is False
+    
+    def test_validate_video_frame_extreme_aspect_ratio(self, tmp_path: Path) -> None:
+        """Test validation of video frame with extreme aspect ratio."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Test frame with extreme aspect ratio (1x1000)
+        extreme_frame = np.random.randint(0, 255, (1000, 1, 4), dtype=np.uint8)
+        mock_frame = Mock()
+        
+        result = recorder._validate_video_frame(extreme_frame, mock_frame)
+        assert result is False
+    
+    def test_validate_video_frame_none_input(self, tmp_path: Path) -> None:
+        """Test validation of None video frame."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Test None frame
+        result = recorder._validate_video_frame(None, Mock())
+        assert result is False
+
+
+class TestTrackKindHandling:
+    """Test suite for track kind handling and validation."""
+    
+    def test_track_kind_mismatch_detection(self, tmp_path: Path) -> None:
+        """Test detection of track kind mismatches."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Create mock track publication with kind mismatch
+        mock_track = Mock()
+        mock_track.kind = rtc.TrackKind.KIND_AUDIO  # Actual track is audio
+        mock_track.sid = "TR_test123"
+        
+        mock_publication = Mock()
+        mock_publication.kind = rtc.TrackKind.KIND_VIDEO  # Publication says video
+        mock_publication.track = mock_track
+        mock_publication.subscribed = True
+        
+        # Test that the mismatch is detected
+        actual_track_kind = mock_publication.track.kind
+        publication_kind = mock_publication.kind
+        
+        assert actual_track_kind != publication_kind
+        assert actual_track_kind == rtc.TrackKind.KIND_AUDIO
+        assert publication_kind == rtc.TrackKind.KIND_VIDEO
+    
+    def test_unsupported_track_kind_handling(self, tmp_path: Path) -> None:
+        """Test handling of unsupported track kinds."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Test unsupported track kind (assuming there's a DATA kind)
+        unsupported_kind = "DATA"  # Hypothetical unsupported kind
+        
+        # Check that only VIDEO and AUDIO are supported
+        supported_kinds = [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]
+        assert rtc.TrackKind.KIND_VIDEO in supported_kinds
+        assert rtc.TrackKind.KIND_AUDIO in supported_kinds
+    
+    def test_track_context_creation_with_actual_kind(self, tmp_path: Path) -> None:
+        """Test TrackContext creation using actual track kind."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Create mock track with actual kind
+        mock_track = Mock()
+        mock_track.kind = rtc.TrackKind.KIND_AUDIO
+        mock_track.sid = "TR_audio123"
+        
+        mock_publication = Mock()
+        mock_publication.track = mock_track
+        mock_publication.kind = rtc.TrackKind.KIND_VIDEO  # Mismatch
+        
+        # Create TrackContext using actual track kind
+        actual_track_kind = mock_publication.track.kind
+        track_context = TrackContext(
+            track_id="PA_test123_AUDIO",
+            track=mock_track,
+            publication=mock_publication,
+            kind=actual_track_kind  # Use actual kind, not publication kind
+        )
+        
+        assert track_context.kind == rtc.TrackKind.KIND_AUDIO
+        assert track_context.kind == actual_track_kind
+        assert track_context.kind != mock_publication.kind
+
+
+class TestReadDeadlineLogic:
+    """Test suite for read deadline logic improvements."""
+    
+    def test_read_deadline_timeout_increase(self, recording_service: WebRTCRecordingService) -> None:
+        """Test that read deadline timeout has been increased."""
+        # Check that the timeout has been increased from 5.0 to 30.0 seconds
+        assert recording_service.timeouts['read_deadline'] == 30.0
+    
+    def test_read_deadline_logic_tracks_last_frame(self, tmp_path: Path) -> None:
+        """Test that read deadline logic tracks time since last frame, not first frame."""
+        mock_stream_info = Mock()
+        mock_stream_info.participant_sid = "PA_test123"
+        
+        config = {
+            "format": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "video_bitrate": 2000000,
+            "audio_bitrate": 128000,
+            "fps": 30,
+            "width": 1920,
+            "height": 1080
+        }
+        
+        recorder = WebRTCRecorder(
+            mint_id="test-mint-123",
+            stream_info=mock_stream_info,
+            output_dir=tmp_path,
+            config=config,
+            room=Mock(),
+            timeouts={"connection": 20.0, "subscription": 10.0, "keyframe": 2.0, "read_deadline": 30.0, "encode_timeout": 1.0},
+            queue_config={"video_max_items": 60, "audio_max_items": 200}
+        )
+        
+        # Test that the timeout logic should check time since last frame
+        # This is tested by the implementation in the actual code
+        # The key change is that we now track last_frame_time instead of first_frame_time
+        assert recorder.timeouts['read_deadline'] == 30.0

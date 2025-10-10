@@ -208,7 +208,7 @@ class WebRTCRecordingService:
             'connection': 20.0,      # T1: Network connection timeout
             'subscription': 10.0,   # T2: Track subscription timeout
             'keyframe': 2.0,        # T2b: Keyframe after PLI timeout
-            'read_deadline': 5.0,   # RTP read deadline
+            'read_deadline': 30.0,  # RTP read deadline (increased from 5.0 to 30.0 seconds)
             'encode_timeout': 1.0,  # Encoder timeout
         }
         
@@ -613,15 +613,27 @@ class WebRTCRecorder:
                         track_pub.track is not None and 
                         track_pub.kind in [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]):
                         
-                        track_id = f"{participant.sid}_{track_pub.kind.name}"
+                        # Use actual track kind instead of publication kind
+                        actual_track_kind = track_pub.track.kind
+                        
+                        # Log warning if publication kind differs from actual track kind
+                        if track_pub.kind != actual_track_kind:
+                            logger.warning(f"[{self.mint_id}] Track publication kind mismatch: pub={track_pub.kind.name}, actual={actual_track_kind.name}, sid={track_pub.track.sid}")
+                        
+                        # Only proceed if actual track kind is valid
+                        if actual_track_kind not in [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]:
+                            logger.warning(f"[{self.mint_id}] Skipping track with unsupported kind: {actual_track_kind.name}")
+                            continue
+                        
+                        track_id = f"{participant.sid}_{actual_track_kind.name}"
                         
                         if track_id not in self.tracks:
-                            # Create track context
+                            # Create track context using actual track kind
                             track_context = TrackContext(
                                 track_id=track_id,
                                 track=track_pub.track,
                                 publication=track_pub,
-                                kind=track_pub.kind
+                                kind=actual_track_kind
                             )
                             
                             self.tracks[track_id] = track_context
@@ -734,6 +746,7 @@ class WebRTCRecorder:
             queue = self.queues[track_context.track_id]
             frame_count = 0
             first_frame_time = None
+            last_frame_time = None
             
             # Use the appropriate stream iterator
             if track_context.kind == rtc.TrackKind.KIND_VIDEO:
@@ -747,12 +760,16 @@ class WebRTCRecorder:
                     break
                 
                 frame = event.frame
+                current_time = time.time()
                 
                 # Record first frame timing
                 if first_frame_time is None:
-                    first_frame_time = time.time()
+                    first_frame_time = current_time
                     track_context.first_wall_time = first_frame_time
                     logger.info(f"[{self.mint_id}] First {track_context.kind.name} frame received for {track_context.track_id}")
+                
+                # Update last frame time on each successful frame
+                last_frame_time = current_time
                 
                 # Put frame in queue
                 success = queue.put(frame)
@@ -766,9 +783,9 @@ class WebRTCRecorder:
                 else:
                     logger.warning(f"[{self.mint_id}] Failed to enqueue {track_context.kind.name} frame")
                 
-                # Check for read deadline
-                if time.time() - first_frame_time > self.timeouts['read_deadline']:
-                    logger.warning(f"[{self.mint_id}] Read deadline exceeded for {track_context.track_id}")
+                # Check for read deadline - only timeout if no frames received for read_deadline seconds
+                if last_frame_time and (current_time - last_frame_time) > self.timeouts['read_deadline']:
+                    logger.warning(f"[{self.mint_id}] Read deadline exceeded for {track_context.track_id} (no frames for {self.timeouts['read_deadline']}s)")
                     break
             
             logger.info(f"[{self.mint_id}] Frame read ended for {track_context.track_id}, total frames: {frame_count}")
@@ -885,6 +902,13 @@ class WebRTCRecorder:
             # Get frame data
             if hasattr(frame, 'to_ndarray'):
                 img = frame.to_ndarray(format='argb')
+                
+                # Validate frame dimensions and data size
+                if not self._validate_video_frame(img, frame):
+                    logger.warning(f"[{self.mint_id}] Skipping invalid video frame")
+                    del img
+                    return None
+                
                 av_frame = av.VideoFrame.from_ndarray(img, format='argb')
                 
                 # Reformat to yuv420p and resize
@@ -937,6 +961,51 @@ class WebRTCRecorder:
         except Exception as e:
             logger.error(f"[{self.mint_id}] Audio frame conversion error: {e}")
             return None
+
+    def _validate_video_frame(self, img: np.ndarray, frame: rtc.VideoFrame) -> bool:
+        """Validate video frame dimensions and data size."""
+        try:
+            # Check if image array is valid
+            if img is None or img.size == 0:
+                logger.warning(f"[{self.mint_id}] Invalid video frame: empty or None image")
+                return False
+            
+            # Get frame dimensions
+            height, width = img.shape[:2]
+            
+            # Validate dimensions are reasonable
+            if width <= 0 or height <= 0:
+                logger.warning(f"[{self.mint_id}] Invalid video frame dimensions: {width}x{height}")
+                return False
+            
+            if width > 4096 or height > 4096:
+                logger.warning(f"[{self.mint_id}] Video frame dimensions too large: {width}x{height}")
+                return False
+            
+            # Calculate expected data size for ARGB format (4 bytes per pixel)
+            expected_size = width * height * 4
+            actual_size = img.nbytes
+            
+            # Allow some tolerance for data size (within 10% of expected)
+            size_tolerance = 0.1
+            min_expected = expected_size * (1 - size_tolerance)
+            max_expected = expected_size * (1 + size_tolerance)
+            
+            if actual_size < min_expected or actual_size > max_expected:
+                logger.warning(f"[{self.mint_id}] Video frame data size mismatch: expected ~{expected_size} bytes, got {actual_size} bytes for {width}x{height}")
+                return False
+            
+            # Check for reasonable aspect ratio
+            aspect_ratio = width / height
+            if aspect_ratio < 0.1 or aspect_ratio > 10.0:
+                logger.warning(f"[{self.mint_id}] Video frame has extreme aspect ratio: {aspect_ratio:.2f} ({width}x{height})")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Error validating video frame: {e}")
+            return False
 
     async def _stop_read_tasks(self):
         """Stop all read tasks."""

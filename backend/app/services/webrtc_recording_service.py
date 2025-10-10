@@ -774,13 +774,48 @@ class WebRTCRecorder:
             
             # Start read task for this track
             task = asyncio.create_task(self._read_track_frames(track_context))
+            task.add_done_callback(lambda t, tid=track_id: self._read_task_done(t, tid))
             self.read_tasks.append(task)
         
         # Start encode task
+        # Create encoding task with exception handler
         self.encode_task = asyncio.create_task(self._encode_frames())
+        self.encode_task.add_done_callback(self._encoding_task_done)
         
-        logger.info(f"[{self.mint_id}] ✅ Frame processing started")
+        logger.info(f"[{self.mint_id}] ✅ Frame processing tasks started")
 
+    def _encoding_task_done(self, task: asyncio.Task):
+        """Callback when encoding task completes or fails."""
+        try:
+            # Check if task raised an exception
+            exception = task.exception()
+            if exception:
+                logger.error(f"[{self.mint_id}] ❌ Encoding task failed with exception: {exception}")
+                import traceback
+                logger.error(f"Traceback:\n{''.join(traceback.format_exception(type(exception), exception, exception.__traceback__))}")
+            else:
+                logger.info(f"[{self.mint_id}] Encoding task completed normally")
+        except asyncio.CancelledError:
+            logger.info(f"[{self.mint_id}] Encoding task was cancelled")
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Error in encoding task callback: {e}")
+    
+    def _read_task_done(self, task: asyncio.Task, track_id: str):
+        """Callback when a read task completes or fails."""
+        try:
+            # Check if task raised an exception
+            exception = task.exception()
+            if exception:
+                logger.error(f"[{self.mint_id}] ❌ Read task for {track_id} failed with exception: {exception}")
+                import traceback
+                logger.error(f"Traceback:\n{''.join(traceback.format_exception(type(exception), exception, exception.__traceback__))}")
+            else:
+                logger.info(f"[{self.mint_id}] Read task for {track_id} completed normally")
+        except asyncio.CancelledError:
+            logger.info(f"[{self.mint_id}] Read task for {track_id} was cancelled")
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Error in read task callback for {track_id}: {e}")
+    
     async def _read_track_frames(self, track_context: TrackContext):
         """Read frames from a track and put them in the queue."""
         try:

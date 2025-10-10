@@ -229,7 +229,7 @@ class WebRTCRecordingService:
             "audio_codec": "aac",
             "video_bitrate": 2000000,  # 2 Mbps
             "audio_bitrate": 128000,   # 128 kbps
-            "format": "mp4",
+            "format": "mkv",  # Use MKV instead of MP4 for streaming support
             "fps": 30,
             "width": 1920,
             "height": 1080,
@@ -971,36 +971,10 @@ class WebRTCRecorder:
                 if loop_count % 10 == 0:  # Every 10 loops
                     gc.collect()
                 
-                # Periodic flush to write buffered data to disk
-                if loop_count % 30 == 0 and self.output_container:  # Every ~1 second
-                    try:
-                        # Force flush buffered packets to disk
-                        # Flush video encoder
-                        if self.video_stream and self.encoded_video_count > 0:
-                            try:
-                                for packet in self.video_stream.encode(None):
-                                    if packet.pts is not None and packet.pts >= 0:
-                                        self.output_container.mux(packet)
-                                        print(f"[{self.mint_id}] Flushed video packet: pts={packet.pts}", flush=True)
-                            except Exception as e:
-                                print(f"[{self.mint_id}] Video flush error: {e}", flush=True)
-                        
-                        # Flush audio encoder
-                        if self.audio_stream and self.encoded_audio_count > 0:
-                            try:
-                                for packet in self.audio_stream.encode(None):
-                                    if packet.pts is not None and packet.pts >= 0:
-                                        self.output_container.mux(packet)
-                                        print(f"[{self.mint_id}] Flushed audio packet: pts={packet.pts}", flush=True)
-                            except Exception as e:
-                                print(f"[{self.mint_id}] Audio flush error: {e}", flush=True)
-                        
-                        # Check file size after flush
-                        if self.output_path and self.output_path.exists():
-                            file_size = self.output_path.stat().st_size
-                            print(f"[{self.mint_id}] Loop #{loop_count}: File size after flush: {file_size} bytes ({file_size/(1024*1024):.2f} MB)", flush=True)
-                    except Exception as e:
-                        print(f"[{self.mint_id}] Error during flush: {e}", flush=True)
+                # Periodic status check (MP4 format buffers everything until close)
+                if loop_count % 100 == 0:
+                    print(f"[{self.mint_id}] Loop #{loop_count}: Frames buffered - video={self.encoded_video_count}, audio={self.encoded_audio_count}", flush=True)
+                    print(f"[{self.mint_id}] Note: MP4 format writes all data when recording stops", flush=True)
             
             logger.info(f"[{self.mint_id}] Frame encoding ended")
             

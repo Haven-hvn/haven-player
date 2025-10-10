@@ -574,11 +574,11 @@ class WebRTCRecorder:
             if track_pub.kind not in [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]:
                 continue
                 
-            logger.info(f"[{self.mint_id}] Found {track_pub.kind.name} track publication")
+            logger.info(f"[{self.mint_id}] Found {track_pub.kind} track publication")
             
             # Explicitly subscribe if not already subscribed
             if not track_pub.subscribed:
-                logger.info(f"[{self.mint_id}] 📡 Subscribing to {track_pub.kind.name} track")
+                logger.info(f"[{self.mint_id}] 📡 Subscribing to {track_pub.kind} track")
                 track_pub.set_subscribed(True)
                 await asyncio.sleep(0.1)  # Brief wait for subscription
             
@@ -590,10 +590,10 @@ class WebRTCRecorder:
                 await asyncio.sleep(0.1)
             
             if not track_pub.subscribed:
-                logger.warning(f"[{self.mint_id}] ⚠️ {track_pub.kind.name} track subscription timeout")
+                logger.warning(f"[{self.mint_id}] ⚠️ {track_pub.kind} track subscription timeout")
                 continue
             
-            logger.info(f"[{self.mint_id}] ✅ {track_pub.kind.name} track subscribed")
+            logger.info(f"[{self.mint_id}] ✅ {track_pub.kind} track subscribed")
 
     async def _await_track_subscriptions(self):
         """Wait for track subscriptions to be ready."""
@@ -618,14 +618,14 @@ class WebRTCRecorder:
                         
                         # Log warning if publication kind differs from actual track kind
                         if track_pub.kind != actual_track_kind:
-                            logger.warning(f"[{self.mint_id}] Track publication kind mismatch: pub={track_pub.kind.name}, actual={actual_track_kind.name}, sid={track_pub.track.sid}")
+                            logger.warning(f"[{self.mint_id}] Track publication kind mismatch: pub={track_pub.kind}, actual={actual_track_kind}, sid={track_pub.track.sid}")
                         
                         # Only proceed if actual track kind is valid
                         if actual_track_kind not in [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]:
-                            logger.warning(f"[{self.mint_id}] Skipping track with unsupported kind: {actual_track_kind.name}")
+                            logger.warning(f"[{self.mint_id}] Skipping track with unsupported kind: {actual_track_kind}")
                             continue
                         
-                        track_id = f"{participant.sid}_{actual_track_kind.name}"
+                        track_id = f"{participant.sid}_{actual_track_kind}"
                         
                         if track_id not in self.tracks:
                             # Create track context using actual track kind
@@ -766,7 +766,7 @@ class WebRTCRecorder:
                 if first_frame_time is None:
                     first_frame_time = current_time
                     track_context.first_wall_time = first_frame_time
-                    logger.info(f"[{self.mint_id}] First {track_context.kind.name} frame received for {track_context.track_id}")
+                    logger.info(f"[{self.mint_id}] First {track_context.kind} frame received for {track_context.track_id}")
                 
                 # Update last frame time on each successful frame
                 last_frame_time = current_time
@@ -779,9 +779,9 @@ class WebRTCRecorder:
                     
                     # Log progress
                     if frame_count % 300 == 0:  # Every 10 seconds at 30fps
-                        logger.info(f"[{self.mint_id}] Processed {frame_count} {track_context.kind.name} frames for {track_context.track_id}")
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} {track_context.kind} frames for {track_context.track_id}")
                 else:
-                    logger.warning(f"[{self.mint_id}] Failed to enqueue {track_context.kind.name} frame")
+                    logger.warning(f"[{self.mint_id}] Failed to enqueue {track_context.kind} frame")
                 
                 # Check for read deadline - only timeout if no frames received for read_deadline seconds
                 if last_frame_time and (current_time - last_frame_time) > self.timeouts['read_deadline']:

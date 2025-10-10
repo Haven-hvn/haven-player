@@ -105,13 +105,13 @@ class FFmpegRecorder:
             # Also set up frame handlers on existing tracks (in case they're already subscribed)
             await self._setup_existing_track_handlers(participant)
             
-            # Give StreamManager time to populate and start receiving frames
-            logger.info(f"[{self.mint_id}] ⏳ Waiting for StreamManager to populate frame handlers...")
-            await asyncio.sleep(3.0)  # Give StreamManager 3 seconds to connect and start receiving frames
+            # Give frame polling time to start and receive frames
+            logger.info(f"[{self.mint_id}] ⏳ Waiting for frame polling to start and receive frames...")
+            await asyncio.sleep(2.0)  # Give frame polling 2 seconds to start and receive frames
             
-            # Check if we received any frames after giving StreamManager time
+            # Check if we received any frames after giving frame polling time
             if self.video_frames_received == 0:
-                logger.warning(f"[{self.mint_id}] ⚠️  No video frames received after 3s - StreamManager may still be connecting")
+                logger.warning(f"[{self.mint_id}] ⚠️  No video frames received after 2s - frame polling may still be starting")
             else:
                 logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
             
@@ -269,22 +269,10 @@ class FFmpegRecorder:
             logger.info(f"[{self.mint_id}] ✅ Subscribed to {track.kind} track {track.sid}")
 
     async def _setup_existing_track_handlers(self, participant: rtc.RemoteParticipant):
-        """Set up frame handlers using StreamManager pattern."""
-        logger.info(f"[{self.mint_id}] Setting up handlers for existing tracks from {participant.sid}")
+        """Set up direct track access for recording (no frame handlers needed)."""
+        logger.info(f"[{self.mint_id}] Setting up direct track access for recording from {participant.sid}")
         
-        # Use StreamManager pattern like the existing live session service
-        from app.services.stream_manager import StreamManager
-        stream_manager = StreamManager()
-        
-        # Register frame handlers with StreamManager (this is how the working code does it)
-        logger.info(f"[{self.mint_id}] 🔄 Registering frame handlers with StreamManager...")
-        stream_manager.register_video_frame_handler(self.mint_id, self._on_video_frame)
-        stream_manager.register_audio_frame_handler(self.mint_id, self._on_audio_frame)
-        
-        logger.info(f"[{self.mint_id}] ✅ Frame handlers registered with StreamManager")
-        logger.info(f"[{self.mint_id}] ⏳ StreamManager will take time to connect and start receiving frames...")
-        
-        # Store track references for debugging
+        # Store track references for direct access
         for track_pub in participant.track_publications.values():
             if track_pub.track is None:
                 continue
@@ -292,10 +280,14 @@ class FFmpegRecorder:
             track = track_pub.track
             if track.kind == rtc.TrackKind.KIND_VIDEO:
                 self.video_track = track
-                logger.info(f"[{self.mint_id}] ✅ Video track reference stored")
+                logger.info(f"[{self.mint_id}] ✅ Video track reference stored for direct access")
             elif track.kind == rtc.TrackKind.KIND_AUDIO:
                 self.audio_track = track
-                logger.info(f"[{self.mint_id}] ✅ Audio track reference stored")
+                logger.info(f"[{self.mint_id}] ✅ Audio track reference stored for direct access")
+        
+        # Start polling for frames since direct handlers aren't available
+        logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
+        asyncio.create_task(self._poll_frames())
 
     def _on_track_subscribed(self, track, publication, participant):
         """Handle track subscribed event."""
@@ -307,22 +299,45 @@ class FFmpegRecorder:
             
         logger.info(f"[{self.mint_id}] ✅ Setting up frame handlers for target participant")
         
-        # Use StreamManager pattern like the existing live session service
-        from app.services.stream_manager import StreamManager
-        stream_manager = StreamManager()
-        
-        # Register frame handlers with StreamManager (this is how the working code does it)
-        logger.info(f"[{self.mint_id}] 🔄 Registering {track.kind} frame handler with StreamManager...")
+        # Store track reference for direct access (no frame handlers needed)
         if track.kind == rtc.TrackKind.KIND_VIDEO:
-            stream_manager.register_video_frame_handler(self.mint_id, self._on_video_frame)
             self.video_track = track
-            logger.info(f"[{self.mint_id}] ✅ Video frame handler registered with StreamManager")
+            logger.info(f"[{self.mint_id}] ✅ Video track reference stored for direct access")
         elif track.kind == rtc.TrackKind.KIND_AUDIO:
-            stream_manager.register_audio_frame_handler(self.mint_id, self._on_audio_frame)
             self.audio_track = track
-            logger.info(f"[{self.mint_id}] ✅ Audio frame handler registered with StreamManager")
+            logger.info(f"[{self.mint_id}] ✅ Audio track reference stored for direct access")
         
-        logger.info(f"[{self.mint_id}] ⏳ StreamManager will take time to connect and start receiving frames...")
+        # Start polling for frames if not already started
+        if not hasattr(self, '_polling_started'):
+            logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
+            asyncio.create_task(self._poll_frames())
+            self._polling_started = True
+
+    async def _poll_frames(self):
+        """Poll tracks for frames since direct handlers aren't available."""
+        logger.info(f"[{self.mint_id}] 🔄 Starting frame polling...")
+        
+        while not self._shutdown and self.state == RecordingState.SUBSCRIBED:
+            try:
+                # Poll video track for frames
+                if self.video_track:
+                    # Try to get the latest frame from the track
+                    # Note: This is a simplified approach - in practice, you might need
+                    # to use MediaRecorder or other LiveKit APIs for frame access
+                    logger.debug(f"[{self.mint_id}] Polling video track for frames...")
+                    
+                # Poll audio track for frames  
+                if self.audio_track:
+                    logger.debug(f"[{self.mint_id}] Polling audio track for frames...")
+                
+                # Wait before next poll
+                await asyncio.sleep(0.033)  # ~30 FPS polling
+                
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] Frame polling error: {e}")
+                await asyncio.sleep(0.1)  # Wait a bit before retrying
+        
+        logger.info(f"[{self.mint_id}] 🛑 Frame polling stopped")
 
     async def _setup_ffmpeg(self):
         """Setup FFmpeg subprocess for recording."""

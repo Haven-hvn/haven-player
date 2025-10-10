@@ -29,7 +29,7 @@ def mock_stream_manager() -> Mock:
     manager.room = Mock(spec=rtc.Room)
     manager.room.name = "test-room"
     manager.room.remote_participants = {}
-    manager.room.is_connected = Mock(return_value=True)
+    manager.room.isconnected = Mock(return_value=True)
     
     # Mock stream info
     mock_stream_info = Mock()
@@ -425,7 +425,7 @@ class TestWebRTCRecorder:
         
         mock_room = Mock()
         mock_room.remote_participants = {}
-        mock_room.is_connected = Mock(return_value=True)
+        mock_room.isconnected = Mock(return_value=True)
         
         recorder = WebRTCRecorder(
             mint_id="test-mint-123",

@@ -431,7 +431,7 @@ class WebRTCRecorder:
             connection_start = time.time()
             
             # Verify room is connected
-            if not self.room.is_connected():
+            if not self.room.isconnected():
                 logger.error(f"[{self.mint_id}] Room not connected")
                 return {"success": False, "error": "Room not connected"}
             

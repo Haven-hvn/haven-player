@@ -819,11 +819,10 @@ class WebRTCRecorder:
                 if success:
                     frame_count += 1
                     track_context.frame_count = frame_count
-                    logger.debug(f"[{self.mint_id}] Frame {frame_count} queued for {track_context.track_id}")
                     
                     # Log progress
-                    if frame_count % 300 == 0:  # Every 10 seconds at 30fps
-                        logger.info(f"[{self.mint_id}] Processed {frame_count} {track_context.kind} frames for {track_context.track_id}")
+                    if frame_count % 30 == 0:  # Every second at 30fps
+                        logger.info(f"[{self.mint_id}] Queued {frame_count} {track_context.kind} frames for {track_context.track_id}")
                 else:
                     logger.warning(f"[{self.mint_id}] Failed to enqueue {track_context.kind} frame")
                 
@@ -844,10 +843,18 @@ class WebRTCRecorder:
     async def _encode_frames(self):
         """Encode frames from queues to the output container."""
         try:
-            logger.info(f"[{self.mint_id}] Starting frame encoding")
+            logger.info(f"[{self.mint_id}] 🎬 Starting frame encoding task")
+            logger.info(f"[{self.mint_id}] Monitoring {len(self.queues)} queues: {list(self.queues.keys())}")
             
+            loop_count = 0
             while not self.stop_event.is_set():
+                loop_count += 1
                 frames_processed = 0
+                
+                # Log every 100 loops to show we're alive
+                if loop_count % 100 == 0:
+                    queue_sizes = {tid: q.size() for tid, q in self.queues.items()}
+                    logger.info(f"[{self.mint_id}] Encoding loop #{loop_count}, encoded: video={self.encoded_video_count}, audio={self.encoded_audio_count}, queue_sizes={queue_sizes}")
                 
                 # Process frames from all queues
                 for track_id, queue in self.queues.items():
@@ -903,19 +910,19 @@ class WebRTCRecorder:
             pts = self.encoded_video_count * 3000  # 3000 units per frame at 30fps
             av_frame.pts = pts
             
-            logger.debug(f"[{self.mint_id}] Encoding video frame {self.encoded_video_count}, PTS={pts}")
-            
             # Encode and write
             packets_written = 0
             for packet in self.video_stream.encode(av_frame):
                 self.output_container.mux(packet)
                 packets_written += 1
             
-            logger.debug(f"[{self.mint_id}] Wrote {packets_written} video packets")
-            
             # Increment counters
             self.encoded_video_count += 1
             self.stats['video_frames'] += 1
+            
+            # Log progress - first 10 frames, then every 30 frames
+            if self.encoded_video_count <= 10 or self.encoded_video_count % 30 == 0:
+                logger.info(f"[{self.mint_id}] ✅ Encoded video frame #{self.encoded_video_count}, PTS={pts}, wrote {packets_written} packets")
             
             # Cleanup
             del av_frame
@@ -940,19 +947,19 @@ class WebRTCRecorder:
             pts = self.encoded_audio_count * 1024  # 1024 samples per frame at 48kHz
             av_frame.pts = pts
             
-            logger.debug(f"[{self.mint_id}] Encoding audio frame {self.encoded_audio_count}, PTS={pts}")
-            
             # Encode and write
             packets_written = 0
             for packet in self.audio_stream.encode(av_frame):
                 self.output_container.mux(packet)
                 packets_written += 1
             
-            logger.debug(f"[{self.mint_id}] Wrote {packets_written} audio packets")
-            
             # Increment counters
             self.encoded_audio_count += 1
             self.stats['audio_frames'] += 1
+            
+            # Log progress - first 10 frames, then every 48 frames
+            if self.encoded_audio_count <= 10 or self.encoded_audio_count % 48 == 0:
+                logger.info(f"[{self.mint_id}] ✅ Encoded audio frame #{self.encoded_audio_count}, PTS={pts}, wrote {packets_written} packets")
             
             # Cleanup
             del av_frame

@@ -1064,6 +1064,16 @@ class WebRTCRecorder:
             self.encoded_video_count += 1
             self.stats['video_frames'] += 1
             
+            # Flush to disk every 30 frames (1 second at 30fps) to ensure MKV writes data
+            if self.encoded_video_count % 30 == 0:
+                try:
+                    # Force file flush - MKV should write clusters to disk
+                    if hasattr(self.output_container, 'file') and hasattr(self.output_container.file, 'flush'):
+                        self.output_container.file.flush()
+                        print(f"[{self.mint_id}] Flushed MKV file at frame {self.encoded_video_count}", flush=True)
+                except Exception as flush_err:
+                    print(f"[{self.mint_id}] Flush warning: {flush_err}", flush=True)
+            
             # Log progress - first 10 frames, then every 30 frames
             if self.encoded_video_count <= 10 or self.encoded_video_count % 30 == 0:
                 logger.info(f"[{self.mint_id}] ✅ Encoded video frame #{self.encoded_video_count}, PTS={pts}, wrote {packets_written} packets")

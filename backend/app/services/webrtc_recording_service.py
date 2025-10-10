@@ -961,6 +961,17 @@ class WebRTCRecorder:
                 # Aggressive garbage collection to prevent memory leaks
                 if loop_count % 10 == 0:  # Every 10 loops
                     gc.collect()
+                
+                # Periodic flush to write buffered data to disk
+                if loop_count % 30 == 0 and self.output_container:  # Every ~1 second
+                    try:
+                        # Note: PyAV doesn't have explicit flush, data writes on close
+                        # But we can check file size
+                        if self.output_path and self.output_path.exists():
+                            file_size = self.output_path.stat().st_size
+                            print(f"[{self.mint_id}] Loop #{loop_count}: File size check: {file_size} bytes", flush=True)
+                    except Exception as e:
+                        print(f"[{self.mint_id}] Error checking file size: {e}", flush=True)
             
             logger.info(f"[{self.mint_id}] Frame encoding ended")
             
@@ -1047,7 +1058,9 @@ class WebRTCRecorder:
             del av_frame
             
         except Exception as e:
+            print(f"[{self.mint_id}] VIDEO ENCODING EXCEPTION: {e}", flush=True)
             logger.error(f"[{self.mint_id}] Video frame encoding error: {e}", exc_info=True)
+            raise  # Re-raise to see if this is killing the encoding task
 
     async def _encode_audio_frame(self, track_context: TrackContext, frame: rtc.AudioFrame):
         """Encode an audio frame."""

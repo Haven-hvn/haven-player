@@ -229,7 +229,7 @@ class WebRTCRecordingService:
             "audio_codec": "aac",
             "video_bitrate": 2000000,  # 2 Mbps
             "audio_bitrate": 128000,   # 128 kbps
-            "format": "mkv",  # Use MKV instead of MP4 for streaming support
+            "format": "mp4",  # MP4 with fragmented mode for incremental writes
             "fps": 30,
             "width": 1920,
             "height": 1080,
@@ -771,7 +771,17 @@ class WebRTCRecorder:
             # Create output container
             output_path_str = str(self.output_path.absolute())
             print(f"[{self.mint_id}] Opening container: {output_path_str}", flush=True)
-            self.output_container = av.open(output_path_str, mode='w')
+            
+            # Configure for fragmented MP4 (fMP4) to write incrementally
+            container_options = {}
+            if self.config['format'] == 'mp4':
+                container_options = {
+                    'movflags': 'frag_keyframe+empty_moov+default_base_moof',  # Fragmented MP4
+                    'frag_duration': '1000000',  # 1 second fragments (in microseconds)
+                }
+                print(f"[{self.mint_id}] Using fragmented MP4 with options: {container_options}", flush=True)
+            
+            self.output_container = av.open(output_path_str, mode='w', options=container_options)
             print(f"[{self.mint_id}] Container opened successfully", flush=True)
             
             # Add video stream if we have video tracks
@@ -1064,15 +1074,7 @@ class WebRTCRecorder:
             self.encoded_video_count += 1
             self.stats['video_frames'] += 1
             
-            # Flush to disk every 30 frames (1 second at 30fps) to ensure MKV writes data
-            if self.encoded_video_count % 30 == 0:
-                try:
-                    # Force file flush - MKV should write clusters to disk
-                    if hasattr(self.output_container, 'file') and hasattr(self.output_container.file, 'flush'):
-                        self.output_container.file.flush()
-                        print(f"[{self.mint_id}] Flushed MKV file at frame {self.encoded_video_count}", flush=True)
-                except Exception as flush_err:
-                    print(f"[{self.mint_id}] Flush warning: {flush_err}", flush=True)
+            # Fragmented MP4 writes automatically, no manual flush needed
             
             # Log progress - first 10 frames, then every 30 frames
             if self.encoded_video_count <= 10 or self.encoded_video_count % 30 == 0:

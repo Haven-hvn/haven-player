@@ -92,7 +92,7 @@ class MediaClock:
             'wrap_count': 0
         }
         
-        logger.info(f"[MediaClock] Registered {track_kind.name} track {track_id} with clock rate {clock_rate}")
+        logger.info(f"[MediaClock] Registered {track_kind} track {track_id} with clock rate {clock_rate}")
     
     def rtp_to_pts(self, track_id: str, rtp_timestamp: int) -> int:
         """Convert RTP timestamp to PTS in stream timebase."""
@@ -109,7 +109,13 @@ class MediaClock:
         # Convert to PTS (assuming 1/clock_rate timebase)
         pts = int(rtp_delta)
         
+        # Ensure PTS is monotonically increasing
+        last_pts = clock_info.get('last_pts', 0)
+        if pts <= last_pts:
+            pts = last_pts + 1
+        
         clock_info['last_rtp_timestamp'] = rtp_timestamp
+        clock_info['last_pts'] = pts
         return pts
     
     def _unwrap_rtp_timestamp(self, current: int, first: int, clock_info: Dict[str, Any]) -> int:
@@ -152,11 +158,11 @@ class BoundedQueue:
                 self.queue.get_nowait()
                 self.queue.put(item, timeout=timeout)
                 self.dropped_count += 1
-                logger.debug(f"[BoundedQueue] Dropped oldest {self.track_kind.name} frame (total dropped: {self.dropped_count})")
+                logger.debug(f"[BoundedQueue] Dropped oldest {self.track_kind} frame (total dropped: {self.dropped_count})")
                 return True
             except:
                 self.dropped_count += 1
-                logger.warning(f"[BoundedQueue] Failed to enqueue {self.track_kind.name} frame")
+                logger.warning(f"[BoundedQueue] Failed to enqueue {self.track_kind} frame")
                 return False
     
     def get(self, timeout: float = 1.0) -> Optional[Any]:
@@ -853,8 +859,12 @@ class WebRTCRecorder:
             if av_frame is None:
                 return
             
-            # Set PTS using media clock
-            pts = self.media_clock.rtp_to_pts(track_context.track_id, 0)  # Simplified for now
+            # Set PTS using media clock - use frame timestamp if available
+            if hasattr(frame, 'timestamp'):
+                pts = self.media_clock.rtp_to_pts(track_context.track_id, frame.timestamp)
+            else:
+                # Fallback to frame count-based PTS
+                pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 3000)  # 30fps = 3000 units per frame
             av_frame.pts = pts
             
             # Encode and write
@@ -880,8 +890,12 @@ class WebRTCRecorder:
             if av_frame is None:
                 return
             
-            # Set PTS using media clock
-            pts = self.media_clock.rtp_to_pts(track_context.track_id, 0)  # Simplified for now
+            # Set PTS using media clock - use frame timestamp if available
+            if hasattr(frame, 'timestamp'):
+                pts = self.media_clock.rtp_to_pts(track_context.track_id, frame.timestamp)
+            else:
+                # Fallback to frame count-based PTS for audio
+                pts = self.media_clock.rtp_to_pts(track_context.track_id, track_context.frame_count * 1024)  # Audio samples per frame
             av_frame.pts = pts
             
             # Encode and write
@@ -899,30 +913,62 @@ class WebRTCRecorder:
     async def _convert_video_frame(self, frame: rtc.VideoFrame) -> Optional[av.VideoFrame]:
         """Convert LiveKit video frame to PyAV frame."""
         try:
-            # Get frame data
+            # Get frame data - try different methods
+            img = None
+            
+            # Method 1: Try to_ndarray with different formats
             if hasattr(frame, 'to_ndarray'):
-                img = frame.to_ndarray(format='argb')
-                
-                # Validate frame dimensions and data size
-                if not self._validate_video_frame(img, frame):
-                    logger.warning(f"[{self.mint_id}] Skipping invalid video frame")
-                    del img
+                try:
+                    img = frame.to_ndarray(format='argb')
+                except:
+                    try:
+                        img = frame.to_ndarray(format='rgb')
+                    except:
+                        try:
+                            img = frame.to_ndarray(format='bgr')
+                        except:
+                            logger.warning(f"[{self.mint_id}] Video frame to_ndarray failed with all formats")
+                            return None
+            
+            # Method 2: Try direct data access
+            elif hasattr(frame, 'data'):
+                try:
+                    # Convert raw data to numpy array
+                    import numpy as np
+                    img = np.frombuffer(frame.data, dtype=np.uint8)
+                    # Reshape based on frame dimensions
+                    if hasattr(frame, 'width') and hasattr(frame, 'height'):
+                        img = img.reshape((frame.height, frame.width, -1))
+                except Exception as e:
+                    logger.warning(f"[{self.mint_id}] Video frame data conversion failed: {e}")
                     return None
-                
-                av_frame = av.VideoFrame.from_ndarray(img, format='argb')
-                
-                # Reformat to yuv420p and resize
-                av_frame = av_frame.reformat(
-                    format='yuv420p',
-                    width=self.config['width'],
-                    height=self.config['height']
-                )
-                
-                del img
-                return av_frame
+            
             else:
-                logger.warning(f"[{self.mint_id}] Video frame conversion not supported")
+                logger.warning(f"[{self.mint_id}] Video frame conversion not supported - no to_ndarray or data method")
                 return None
+            
+            if img is None:
+                logger.warning(f"[{self.mint_id}] Failed to extract video frame data")
+                return None
+            
+            # Validate frame dimensions and data size
+            if not self._validate_video_frame(img, frame):
+                logger.warning(f"[{self.mint_id}] Skipping invalid video frame")
+                del img
+                return None
+            
+            # Create PyAV frame
+            av_frame = av.VideoFrame.from_ndarray(img, format='argb')
+            
+            # Reformat to yuv420p and resize
+            av_frame = av_frame.reformat(
+                format='yuv420p',
+                width=self.config['width'],
+                height=self.config['height']
+            )
+            
+            del img
+            return av_frame
                 
         except Exception as e:
             logger.error(f"[{self.mint_id}] Video frame conversion error: {e}")

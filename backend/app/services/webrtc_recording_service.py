@@ -974,13 +974,33 @@ class WebRTCRecorder:
                 # Periodic flush to write buffered data to disk
                 if loop_count % 30 == 0 and self.output_container:  # Every ~1 second
                     try:
-                        # Note: PyAV doesn't have explicit flush, data writes on close
-                        # But we can check file size
+                        # Force flush buffered packets to disk
+                        # Flush video encoder
+                        if self.video_stream and self.encoded_video_count > 0:
+                            try:
+                                for packet in self.video_stream.encode(None):
+                                    if packet.pts is not None and packet.pts >= 0:
+                                        self.output_container.mux(packet)
+                                        print(f"[{self.mint_id}] Flushed video packet: pts={packet.pts}", flush=True)
+                            except Exception as e:
+                                print(f"[{self.mint_id}] Video flush error: {e}", flush=True)
+                        
+                        # Flush audio encoder
+                        if self.audio_stream and self.encoded_audio_count > 0:
+                            try:
+                                for packet in self.audio_stream.encode(None):
+                                    if packet.pts is not None and packet.pts >= 0:
+                                        self.output_container.mux(packet)
+                                        print(f"[{self.mint_id}] Flushed audio packet: pts={packet.pts}", flush=True)
+                            except Exception as e:
+                                print(f"[{self.mint_id}] Audio flush error: {e}", flush=True)
+                        
+                        # Check file size after flush
                         if self.output_path and self.output_path.exists():
                             file_size = self.output_path.stat().st_size
-                            print(f"[{self.mint_id}] Loop #{loop_count}: File size check: {file_size} bytes", flush=True)
+                            print(f"[{self.mint_id}] Loop #{loop_count}: File size after flush: {file_size} bytes ({file_size/(1024*1024):.2f} MB)", flush=True)
                     except Exception as e:
-                        print(f"[{self.mint_id}] Error checking file size: {e}", flush=True)
+                        print(f"[{self.mint_id}] Error during flush: {e}", flush=True)
             
             logger.info(f"[{self.mint_id}] Frame encoding ended")
             

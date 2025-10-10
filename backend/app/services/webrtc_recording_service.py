@@ -1003,9 +1003,15 @@ class WebRTCRecorder:
             
             # Encode and write
             packets_written = 0
-            for packet in self.video_stream.encode(av_frame):
-                self.output_container.mux(packet)
-                packets_written += 1
+            try:
+                for packet in self.video_stream.encode(av_frame):
+                    self.output_container.mux(packet)
+                    packets_written += 1
+                    if self.encoded_video_count <= 5:
+                        print(f"[{self.mint_id}] Muxed video packet: size={packet.size}, pts={packet.pts}, dts={packet.dts}", flush=True)
+            except Exception as e:
+                print(f"[{self.mint_id}] ERROR muxing video packet: {e}", flush=True)
+                raise
             
             # Increment counters
             self.encoded_video_count += 1
@@ -1014,6 +1020,10 @@ class WebRTCRecorder:
             # Log progress - first 10 frames, then every 30 frames
             if self.encoded_video_count <= 10 or self.encoded_video_count % 30 == 0:
                 logger.info(f"[{self.mint_id}] ✅ Encoded video frame #{self.encoded_video_count}, PTS={pts}, wrote {packets_written} packets")
+                # Check file size periodically
+                if self.output_path and self.output_path.exists():
+                    file_size = self.output_path.stat().st_size
+                    print(f"[{self.mint_id}] Current file size: {file_size} bytes ({file_size/(1024*1024):.2f} MB)", flush=True)
             
             # Cleanup
             del av_frame
@@ -1040,9 +1050,15 @@ class WebRTCRecorder:
             
             # Encode and write
             packets_written = 0
-            for packet in self.audio_stream.encode(av_frame):
-                self.output_container.mux(packet)
-                packets_written += 1
+            try:
+                for packet in self.audio_stream.encode(av_frame):
+                    self.output_container.mux(packet)
+                    packets_written += 1
+                    if self.encoded_audio_count <= 5:
+                        print(f"[{self.mint_id}] Muxed audio packet: size={packet.size}, pts={packet.pts}, dts={packet.dts}", flush=True)
+            except Exception as e:
+                print(f"[{self.mint_id}] ERROR muxing audio packet: {e}", flush=True)
+                raise
             
             # Increment counters
             self.encoded_audio_count += 1
@@ -1051,6 +1067,10 @@ class WebRTCRecorder:
             # Log progress - first 10 frames, then every 48 frames
             if self.encoded_audio_count <= 10 or self.encoded_audio_count % 48 == 0:
                 logger.info(f"[{self.mint_id}] ✅ Encoded audio frame #{self.encoded_audio_count}, PTS={pts}, wrote {packets_written} packets")
+                # Check file size periodically
+                if self.output_path and self.output_path.exists():
+                    file_size = self.output_path.stat().st_size
+                    print(f"[{self.mint_id}] Current file size after audio: {file_size} bytes ({file_size/(1024*1024):.2f} MB)", flush=True)
             
             # Cleanup
             del av_frame

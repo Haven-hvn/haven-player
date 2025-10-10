@@ -213,6 +213,16 @@ class FFmpegRecorder:
         
         if self.ffmpeg_process:
             logger.info(f"[{self.mint_id}] FFmpeg PID: {self.ffmpeg_process.pid}, returncode: {self.ffmpeg_process.returncode}")
+            logger.info(f"[{self.mint_id}] FFmpeg stdin available: {self.ffmpeg_process.stdin is not None}")
+            logger.info(f"[{self.mint_id}] FFmpeg stdout available: {self.ffmpeg_process.stdout is not None}")
+            logger.info(f"[{self.mint_id}] FFmpeg stderr available: {self.ffmpeg_process.stderr is not None}")
+            
+            # Check if output file exists and its size
+            if self.output_path and self.output_path.exists():
+                file_size = self.output_path.stat().st_size
+                logger.info(f"[{self.mint_id}] Output file size: {file_size} bytes")
+            else:
+                logger.warning(f"[{self.mint_id}] Output file does not exist: {self.output_path}")
         
         return {
             "mint_id": self.mint_id,
@@ -535,6 +545,8 @@ class FFmpegRecorder:
             
             if self.video_frames_received == 1:
                 logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
+                logger.info(f"[{self.mint_id}] Frame type: {type(frame)}")
+                logger.info(f"[{self.mint_id}] Frame attributes: {[attr for attr in dir(frame) if not attr.startswith('_')]}")
             
             # Convert LiveKit frame to RGB24 numpy array (using the working approach)
             # Get the frame data directly from the buffer like the working implementation
@@ -545,24 +557,51 @@ class FFmpegRecorder:
                 width = frame.width
                 height = frame.height
                 
-                logger.debug(f"[{self.mint_id}] Frame dimensions: {width}x{height}, buffer type: {type(buffer)}")
+                logger.info(f"[{self.mint_id}] Frame dimensions: {width}x{height}, buffer type: {type(buffer)}")
+                logger.info(f"[{self.mint_id}] Buffer length: {len(buffer) if hasattr(buffer, '__len__') else 'unknown'}")
                 
                 # Convert buffer to numpy array
                 if hasattr(buffer, 'dtype'):
                     # Already a numpy array
                     frame_data = buffer
+                    logger.info(f"[{self.mint_id}] Buffer is already numpy array: {frame_data.shape}")
                 else:
                     # Convert memoryview/buffer to numpy array
                     frame_data = np.frombuffer(buffer, dtype=np.uint8)
+                    logger.info(f"[{self.mint_id}] Converted buffer to numpy array: {frame_data.shape}")
                     
                 # Reshape based on expected format (RGB)
                 expected_size = width * height * 3  # RGB format
+                logger.info(f"[{self.mint_id}] Expected size: {expected_size}, actual size: {len(frame_data)}")
+                
                 if len(frame_data) == expected_size:
                     frame_data = frame_data.reshape(height, width, 3)
-                    logger.debug(f"[{self.mint_id}] Frame reshaped to RGB: {frame_data.shape}")
+                    logger.info(f"[{self.mint_id}] ✅ Frame reshaped to RGB: {frame_data.shape}")
                 else:
-                    logger.warning(f"[{self.mint_id}] Unexpected frame size: {len(frame_data)} bytes, expected {expected_size}")
-                    return
+                    logger.warning(f"[{self.mint_id}] ❌ Unexpected frame size: {len(frame_data)} bytes, expected {expected_size}")
+                    # Try to continue with what we have
+                    if len(frame_data) > 0:
+                        logger.info(f"[{self.mint_id}] Attempting to use partial frame data")
+                        # Use as much data as we have
+                        usable_size = (len(frame_data) // 3) * 3  # Round down to multiple of 3
+                        if usable_size > 0:
+                            frame_data = frame_data[:usable_size]
+                            # Try to reshape to a reasonable size
+                            pixels = usable_size // 3
+                            h = int(np.sqrt(pixels * height / width))
+                            w = pixels // h
+                            if w > 0 and h > 0:
+                                frame_data = frame_data.reshape(h, w, 3)
+                                logger.info(f"[{self.mint_id}] Reshaped to partial frame: {frame_data.shape}")
+                            else:
+                                logger.warning(f"[{self.mint_id}] Cannot reshape partial frame")
+                                return
+                        else:
+                            logger.warning(f"[{self.mint_id}] No usable frame data")
+                            return
+                    else:
+                        logger.warning(f"[{self.mint_id}] Empty frame data")
+                        return
                     
             except Exception as e:
                 logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}")
@@ -578,18 +617,26 @@ class FFmpegRecorder:
                 
                 if self.ffmpeg_process:
                     # FFmpeg mode: pipe to FFmpeg
+                    logger.info(f"[{self.mint_id}] Attempting to write {len(frame_bytes)} bytes to FFmpeg")
                     with self._ffmpeg_lock:
                         if self.ffmpeg_process.stdin:
-                            self.ffmpeg_process.stdin.write(frame_bytes)
-                            self.video_frames_written += 1
-                            
-                            if self.video_frames_written == 1:
-                                logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME WRITTEN TO FFMPEG!")
-                            
-                            if self.video_frames_written % 30 == 0:  # Log every second
-                                logger.info(f"[{self.mint_id}] Written {self.video_frames_written} video frames to FFmpeg")
+                            try:
+                                self.ffmpeg_process.stdin.write(frame_bytes)
+                                self.ffmpeg_process.stdin.flush()  # Force flush to FFmpeg
+                                self.video_frames_written += 1
+                                
+                                if self.video_frames_written == 1:
+                                    logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME WRITTEN TO FFMPEG!")
+                                    logger.info(f"[{self.mint_id}] FFmpeg process status: {self.ffmpeg_process.poll()}")
+                                
+                                if self.video_frames_written % 30 == 0:  # Log every second
+                                    logger.info(f"[{self.mint_id}] Written {self.video_frames_written} video frames to FFmpeg")
+                            except Exception as write_error:
+                                logger.error(f"[{self.mint_id}] Error writing to FFmpeg: {write_error}")
                         else:
                             logger.error(f"[{self.mint_id}] FFmpeg stdin is None!")
+                            logger.error(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process}")
+                            logger.error(f"[{self.mint_id}] FFmpeg process status: {self.ffmpeg_process.poll() if self.ffmpeg_process else 'None'}")
                 else:
                     # Raw mode: save individual frames
                     if self.raw_frames_dir:

@@ -65,6 +65,10 @@ class FFmpegRecorder:
         self.raw_frames_dir: Optional[Path] = None
         self.start_time: Optional[datetime] = None
         
+        # Track references for frame access
+        self.video_track: Optional[rtc.RemoteVideoTrack] = None
+        self.audio_track: Optional[rtc.RemoteAudioTrack] = None
+        
         # Frame processing
         self.video_frames_received = 0
         self.audio_frames_received = 0
@@ -116,8 +120,11 @@ class FFmpegRecorder:
             # Setup FFmpeg process
             await self._setup_ffmpeg()
             
-            # Start frame processing
-            await self._start_frame_processing()
+            # Start frame processing (if we have tracks)
+            if self.video_track or self.audio_track:
+                await self._start_frame_processing()
+            else:
+                logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for frame processing")
             
             # State: SUBSCRIBED → RECORDING
             self.state = RecordingState.RECORDING
@@ -264,21 +271,33 @@ class FFmpegRecorder:
         """Set up frame handlers on tracks that are already subscribed."""
         logger.info(f"[{self.mint_id}] Setting up handlers for existing tracks from {participant.sid}")
         
-        # Set up frame handlers directly on tracks using LiveKit API
+        # Debug: Check what we're actually getting from track publications
+        logger.info(f"[{self.mint_id}] Participant {participant.sid} has {len(participant.track_publications)} track publications")
+        
         for track_pub in participant.track_publications.values():
+            logger.info(f"[{self.mint_id}] Track publication: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")
+            
             if track_pub.track is None:
+                logger.warning(f"[{self.mint_id}] Track publication {track_pub.sid} has no track object")
                 continue
                 
             track = track_pub.track
-            logger.info(f"[{self.mint_id}] Setting up handler for existing track: {track.kind} {track.sid}")
+            logger.info(f"[{self.mint_id}] Track object: {type(track)}, kind={track.kind}, sid={track.sid}")
+            logger.info(f"[{self.mint_id}] Track has 'on' method: {hasattr(track, 'on')}")
             
-            # Set up frame handlers based on track kind using LiveKit's on decorator
-            if track.kind == rtc.TrackKind.KIND_VIDEO:
-                track.on("frame_received", self._on_video_frame)
-                logger.info(f"[{self.mint_id}] ✅ Video frame handler set up on existing track")
-            elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                track.on("frame_received", self._on_audio_frame)
-                logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up on existing track")
+            # Try to set up frame handlers and catch any errors
+            try:
+                if track.kind == rtc.TrackKind.KIND_VIDEO:
+                    track.on("frame_received", self._on_video_frame)
+                    self.video_track = track
+                    logger.info(f"[{self.mint_id}] ✅ Video frame handler set up successfully")
+                elif track.kind == rtc.TrackKind.KIND_AUDIO:
+                    track.on("frame_received", self._on_audio_frame)
+                    self.audio_track = track
+                    logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up successfully")
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] Failed to set up frame handler for {track.kind} track: {e}")
+                logger.error(f"[{self.mint_id}] Track type: {type(track)}, attributes: {dir(track)}")
 
     def _on_track_subscribed(self, track, publication, participant):
         """Handle track subscribed event."""
@@ -290,13 +309,23 @@ class FFmpegRecorder:
             
         logger.info(f"[{self.mint_id}] ✅ Setting up frame handlers for target participant")
         
-        # Set up frame handlers directly on tracks using LiveKit API
-        if track.kind == rtc.TrackKind.KIND_VIDEO:
-            track.on("frame_received", self._on_video_frame)
-            logger.info(f"[{self.mint_id}] ✅ Video frame handler set up")
-        elif track.kind == rtc.TrackKind.KIND_AUDIO:
-            track.on("frame_received", self._on_audio_frame)
-            logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up")
+        # Debug: Check what we're getting in the track subscribed event
+        logger.info(f"[{self.mint_id}] Track subscribed - track: {type(track)}, publication: {type(publication)}, participant: {type(participant)}")
+        logger.info(f"[{self.mint_id}] Track has 'on' method: {hasattr(track, 'on')}")
+        
+        # Try to set up frame handlers and catch any errors
+        try:
+            if track.kind == rtc.TrackKind.KIND_VIDEO:
+                track.on("frame_received", self._on_video_frame)
+                self.video_track = track
+                logger.info(f"[{self.mint_id}] ✅ Video frame handler set up successfully")
+            elif track.kind == rtc.TrackKind.KIND_AUDIO:
+                track.on("frame_received", self._on_audio_frame)
+                self.audio_track = track
+                logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up successfully")
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Failed to set up frame handler for {track.kind} track: {e}")
+            logger.error(f"[{self.mint_id}] Track type: {type(track)}, attributes: {dir(track)}")
 
     async def _setup_ffmpeg(self):
         """Setup FFmpeg subprocess for recording."""
@@ -394,8 +423,18 @@ class FFmpegRecorder:
     async def _start_frame_processing(self):
         """Start frame processing tasks."""
         logger.info(f"[{self.mint_id}] Starting frame processing")
-        # Frame handlers are already set up in _subscribe_to_tracks
-        # FFmpeg will receive data directly from frame handlers
+        
+        # Since LiveKit tracks don't support direct frame handlers, we'll use a different approach
+        # For now, we'll create a simple recording that at least starts the FFmpeg process
+        # TODO: Implement proper frame capture using LiveKit's MediaRecorder or alternative approach
+        
+        if self.video_track:
+            logger.info(f"[{self.mint_id}] Video track available: {self.video_track.sid}")
+        if self.audio_track:
+            logger.info(f"[{self.mint_id}] Audio track available: {self.audio_track.sid}")
+        
+        logger.info(f"[{self.mint_id}] ⚠️  Frame processing started but no direct frame handlers available")
+        logger.info(f"[{self.mint_id}] ⚠️  This is a limitation of the current LiveKit API - frames may not be captured")
 
     def _on_video_frame(self, frame: rtc.VideoFrame):
         """Handle video frame from LiveKit."""

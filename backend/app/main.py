@@ -2,8 +2,8 @@
 FastAPI application with shared stream management.
 """
 
-# CRITICAL: Disable CUDA/NVDEC before any imports that load FFmpeg/PyAV
-# This prevents NVDEC errors when PyAV initializes
+# CRITICAL: Disable CUDA/NVDEC before any imports that load FFmpeg
+# This prevents NVDEC errors when FFmpeg initializes
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 os.environ['NVIDIA_VISIBLE_DEVICES'] = ''
@@ -20,7 +20,7 @@ from app.services.webrtc_recording_service import WebRTCRecordingService
 
 app = FastAPI(
     title="Haven Player API",
-    description="API for Haven Player with WebRTC-based recording",
+    description="API for Haven Player with FFmpeg-based recording",
     version="2.0.0"
 )
 
@@ -103,7 +103,7 @@ async def root():
         "features": [
             "Shared WebRTC connection management",
             "Live streaming with WebSocket",
-            "WebRTC-based recording with PyAV",
+            "FFmpeg-based recording with direct disk writes",
             "Pump.fun integration"
         ]
     }

@@ -537,20 +537,36 @@ class FFmpegRecorder:
                 logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
             
             # Convert LiveKit frame to RGB24 numpy array (using the working approach)
-            # Try multiple formats like the working implementation
+            # Get the frame data directly from the buffer like the working implementation
             frame_data = None
             try:
-                # Try ARGB format first (most common)
-                frame_data = frame.to_ndarray(format='argb')
-                logger.debug(f"[{self.mint_id}] Frame converted using ARGB format")
-            except Exception as e:
-                try:
-                    # Try RGB24 as fallback
-                    frame_data = frame.to_ndarray(format='rgb24')
-                    logger.debug(f"[{self.mint_id}] Frame converted using RGB24 format")
-                except Exception as e2:
-                    logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}, {e2}")
+                # Get the frame buffer directly (like the working implementation)
+                buffer = frame.data
+                width = frame.width
+                height = frame.height
+                
+                logger.debug(f"[{self.mint_id}] Frame dimensions: {width}x{height}, buffer type: {type(buffer)}")
+                
+                # Convert buffer to numpy array
+                if hasattr(buffer, 'dtype'):
+                    # Already a numpy array
+                    frame_data = buffer
+                else:
+                    # Convert memoryview/buffer to numpy array
+                    frame_data = np.frombuffer(buffer, dtype=np.uint8)
+                    
+                # Reshape based on expected format (RGB)
+                expected_size = width * height * 3  # RGB format
+                if len(frame_data) == expected_size:
+                    frame_data = frame_data.reshape(height, width, 3)
+                    logger.debug(f"[{self.mint_id}] Frame reshaped to RGB: {frame_data.shape}")
+                else:
+                    logger.warning(f"[{self.mint_id}] Unexpected frame size: {len(frame_data)} bytes, expected {expected_size}")
                     return
+                    
+            except Exception as e:
+                logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}")
+                return
             
             if frame_data is None:
                 logger.warning(f"[{self.mint_id}] No frame data available")
@@ -626,8 +642,7 @@ class FFmpegRecorder:
                     with open(audio_file, 'wb') as f:
                         f.write(audio_bytes)
                     self.audio_frames_written += 1
-                else:
-                    logger.warning(f"[{self.mint_id}] Raw frames directory not available for audio")
+                # Don't log warning in FFmpeg mode - this is expected
                     
         except Exception as e:
             logger.error(f"[{self.mint_id}] Audio frame processing error: {e}")

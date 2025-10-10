@@ -337,11 +337,18 @@ class WebRTCRecordingService:
 
     async def get_recording_status(self, mint_id: str) -> Dict[str, Any]:
         """Get recording status for a stream."""
+        print(f"========== GET STATUS CALLED FOR {mint_id} ==========", flush=True)
+        print(f"========== Active recordings: {list(self.active_recordings.keys())} ==========", flush=True)
+        
         if mint_id not in self.active_recordings:
+            print(f"========== {mint_id} NOT IN active_recordings! ==========", flush=True)
             return {"success": False, "error": f"No active recording for {mint_id}"}
         
         recorder = self.active_recordings[mint_id]
-        return await recorder.get_status()
+        print(f"========== Found recorder, state: {recorder.state.value} ==========", flush=True)
+        status = await recorder.get_status()
+        print(f"========== Recorder status: {status} ==========", flush=True)
+        return status
 
     async def get_all_recordings(self) -> Dict[str, Any]:
         """Get status of all active recordings."""
@@ -582,13 +589,26 @@ class WebRTCRecorder:
 
     async def get_status(self) -> Dict[str, Any]:
         """Get current recording status."""
+        print(f"[{self.mint_id}] get_status() called, state={self.state.value}", flush=True)
+        print(f"[{self.mint_id}] encode_task={self.encode_task}, read_tasks={len(self.read_tasks)}", flush=True)
+        print(f"[{self.mint_id}] encoded frames: video={self.encoded_video_count}, audio={self.encoded_audio_count}", flush=True)
+        
+        # Check if tasks are still running
+        if self.encode_task:
+            print(f"[{self.mint_id}] encode_task.done()={self.encode_task.done()}, cancelled={self.encode_task.cancelled()}", flush=True)
+        
         file_size_mb = 0
         if self.output_path and self.output_path.exists():
             file_size_mb = self.output_path.stat().st_size / (1024 * 1024)
+            print(f"[{self.mint_id}] file_size_mb={file_size_mb}", flush=True)
+        else:
+            print(f"[{self.mint_id}] output file does not exist: {self.output_path}", flush=True)
         
         queue_sizes = {}
         for track_id, queue in self.queues.items():
             queue_sizes[track_id] = queue.size()
+        
+        print(f"[{self.mint_id}] queue_sizes={queue_sizes}", flush=True)
         
         return {
             "mint_id": self.mint_id,

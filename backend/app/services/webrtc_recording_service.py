@@ -111,20 +111,30 @@ class MediaClock:
         
         # Ensure PTS is monotonically increasing with proper increment
         last_pts = clock_info.get('last_pts', 0)
-        if pts <= last_pts:
-            # Calculate proper increment based on track type
-            if 'VIDEO' in track_id:
-                pts = last_pts + 3000  # 30fps = 3000 units per frame
-            else:  # Audio
-                pts = last_pts + 1024  # Audio samples per frame
-        else:
-            # Ensure minimum increment to avoid duplicate PTS
-            min_increment = 3000 if 'VIDEO' in track_id else 1024
-            if pts - last_pts < min_increment:
-                pts = last_pts + min_increment
+        frame_count = clock_info.get('frame_count', 0)
         
+        # Calculate proper increment based on track type and frame count
+        if 'VIDEO' in track_id:
+            # Video: 30fps = 3000 units per frame
+            expected_pts = frame_count * 3000
+            min_increment = 3000
+        else:  # Audio
+            # Audio: 48kHz = 1024 samples per frame
+            expected_pts = frame_count * 1024
+            min_increment = 1024
+        
+        # Use the maximum of calculated PTS and expected PTS
+        pts = max(pts, expected_pts)
+        
+        # Ensure monotonicity
+        if pts <= last_pts:
+            pts = last_pts + min_increment
+        
+        # Update frame count
+        clock_info['frame_count'] = frame_count + 1
         clock_info['last_rtp_timestamp'] = rtp_timestamp
         clock_info['last_pts'] = pts
+        
         return pts
     
     def _unwrap_rtp_timestamp(self, current: int, first: int, clock_info: Dict[str, Any]) -> int:
@@ -1107,40 +1117,55 @@ class WebRTCRecorder:
         # Calculate bytes per pixel
         bytes_per_pixel = data_size / total_pixels
         
-        logger.info(f"[{self.mint_id}] Trying format conversion: {bytes_per_pixel:.2f} bytes/pixel")
+        logger.info(f"[{self.mint_id}] Frame data: {data_size} bytes, {width}x{height} pixels, {bytes_per_pixel:.2f} bytes/pixel")
         
-        # Try different format interpretations
-        format_attempts = [
-            # Standard formats
-            (1.0, "grayscale", lambda: img_data.reshape((height, width))),
-            (3.0, "RGB", lambda: img_data.reshape((height, width, 3))),
-            (4.0, "ARGB", lambda: img_data.reshape((height, width, 4))),
-            
-            # YUV formats
-            (1.5, "YUV420", self._try_yuv420_conversion),
-            (2.0, "YUV422", self._try_yuv422_conversion),
-            (2.25, "YUV444", self._try_yuv444_conversion),
-            
-            # Packed formats
-            (1.5, "YUV420_packed", self._try_yuv420_packed),
-            (2.0, "YUV422_packed", self._try_yuv422_packed),
-            
-            # Flexible interpretations
-            (None, "flexible", self._try_flexible_interpretation),
-        ]
+        # Try to identify the actual format based on data characteristics
+        format_attempts = []
         
-        for target_bpp, format_name, conversion_func in format_attempts:
+        # Standard formats first
+        if abs(bytes_per_pixel - 1.0) < 0.1:
+            format_attempts.append(("grayscale", lambda: img_data.reshape((height, width))))
+        elif abs(bytes_per_pixel - 3.0) < 0.1:
+            format_attempts.append(("RGB", lambda: img_data.reshape((height, width, 3))))
+        elif abs(bytes_per_pixel - 4.0) < 0.1:
+            format_attempts.append(("ARGB", lambda: img_data.reshape((height, width, 4))))
+        
+        # YUV formats
+        if abs(bytes_per_pixel - 1.5) < 0.1:
+            format_attempts.append(("YUV420", lambda: self._try_yuv420_conversion(img_data, width, height, data_size)))
+        elif abs(bytes_per_pixel - 2.0) < 0.1:
+            format_attempts.append(("YUV422", lambda: self._try_yuv422_conversion(img_data, width, height, data_size)))
+        elif abs(bytes_per_pixel - 2.25) < 0.1:
+            format_attempts.append(("YUV444", lambda: self._try_yuv444_conversion(img_data, width, height, data_size)))
+        
+        # Try common video formats based on data size patterns
+        if data_size == width * height * 3 // 2:  # YUV420
+            format_attempts.append(("YUV420_planar", lambda: self._try_yuv420_planar(img_data, width, height)))
+        elif data_size == width * height * 2:  # YUV422
+            format_attempts.append(("YUV422_planar", lambda: self._try_yuv422_planar(img_data, width, height)))
+        elif data_size == width * height * 3:  # YUV444 or RGB
+            format_attempts.append(("YUV444_planar", lambda: self._try_yuv444_planar(img_data, width, height)))
+            format_attempts.append(("RGB_planar", lambda: img_data.reshape((height, width, 3))))
+        
+        # Try packed formats
+        format_attempts.extend([
+            ("YUV420_packed", lambda: self._try_yuv420_packed(img_data, width, height, data_size)),
+            ("YUV422_packed", lambda: self._try_yuv422_packed(img_data, width, height, data_size)),
+        ])
+        
+        for format_name, conversion_func in format_attempts:
             try:
-                if target_bpp is None or abs(bytes_per_pixel - target_bpp) < 0.1:
-                    logger.info(f"[{self.mint_id}] Trying {format_name} format")
-                    result = conversion_func(img_data, width, height, data_size)
-                    if result is not None:
-                        logger.info(f"[{self.mint_id}] ✅ Successfully converted using {format_name}")
-                        return result
+                logger.debug(f"[{self.mint_id}] Trying {format_name} format")
+                result = conversion_func()
+                if result is not None:
+                    logger.info(f"[{self.mint_id}] ✅ Successfully converted using {format_name}")
+                    return result
             except Exception as e:
                 logger.debug(f"[{self.mint_id}] {format_name} conversion failed: {e}")
                 continue
         
+        # If no format worked, the data might actually be corrupted
+        logger.error(f"[{self.mint_id}] Could not convert frame data - data may be corrupted")
         return None
     
     def _try_yuv420_conversion(self, img_data: np.ndarray, width: int, height: int, data_size: int) -> Optional[np.ndarray]:
@@ -1254,6 +1279,80 @@ class WebRTCRecorder:
                     return padded.reshape((height, width))
         
         return None
+    
+    def _try_yuv420_planar(self, img_data: np.ndarray, width: int, height: int) -> Optional[np.ndarray]:
+        """Try YUV420 planar format conversion."""
+        import numpy as np
+        
+        try:
+            y_size = width * height
+            uv_size = (width // 2) * (height // 2)
+            
+            # Extract Y, U, V planes
+            y_plane = img_data[:y_size].reshape((height, width))
+            u_plane = img_data[y_size:y_size + uv_size].reshape((height // 2, width // 2))
+            v_plane = img_data[y_size + uv_size:].reshape((height // 2, width // 2))
+            
+            # Upsample U and V to full resolution
+            u_upsampled = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)
+            v_upsampled = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)
+            
+            # Convert YUV to RGB
+            r = np.clip(y_plane + 1.402 * (v_upsampled - 128), 0, 255)
+            g = np.clip(y_plane - 0.344136 * (u_upsampled - 128) - 0.714136 * (v_upsampled - 128), 0, 255)
+            b = np.clip(y_plane + 1.772 * (u_upsampled - 128), 0, 255)
+            
+            return np.stack([r, g, b], axis=2).astype(np.uint8)
+        except:
+            return None
+    
+    def _try_yuv422_planar(self, img_data: np.ndarray, width: int, height: int) -> Optional[np.ndarray]:
+        """Try YUV422 planar format conversion."""
+        import numpy as np
+        
+        try:
+            y_size = width * height
+            uv_size = width * height // 2
+            
+            # Extract Y, U, V planes
+            y_plane = img_data[:y_size].reshape((height, width))
+            u_plane = img_data[y_size:y_size + uv_size].reshape((height, width // 2))
+            v_plane = img_data[y_size + uv_size:].reshape((height, width // 2))
+            
+            # Upsample U and V to full resolution
+            u_upsampled = np.repeat(u_plane, 2, axis=1)
+            v_upsampled = np.repeat(v_plane, 2, axis=1)
+            
+            # Convert YUV to RGB
+            r = np.clip(y_plane + 1.402 * (v_upsampled - 128), 0, 255)
+            g = np.clip(y_plane - 0.344136 * (u_upsampled - 128) - 0.714136 * (v_upsampled - 128), 0, 255)
+            b = np.clip(y_plane + 1.772 * (u_upsampled - 128), 0, 255)
+            
+            return np.stack([r, g, b], axis=2).astype(np.uint8)
+        except:
+            return None
+    
+    def _try_yuv444_planar(self, img_data: np.ndarray, width: int, height: int) -> Optional[np.ndarray]:
+        """Try YUV444 planar format conversion."""
+        import numpy as np
+        
+        try:
+            y_size = width * height
+            
+            # Extract Y, U, V planes
+            y_plane = img_data[:y_size].reshape((height, width))
+            u_plane = img_data[y_size:y_size*2].reshape((height, width))
+            v_plane = img_data[y_size*2:].reshape((height, width))
+            
+            # Convert YUV to RGB
+            r = np.clip(y_plane + 1.402 * (v_plane - 128), 0, 255)
+            g = np.clip(y_plane - 0.344136 * (u_plane - 128) - 0.714136 * (v_plane - 128), 0, 255)
+            b = np.clip(y_plane + 1.772 * (u_plane - 128), 0, 255)
+            
+            return np.stack([r, g, b], axis=2).astype(np.uint8)
+        except:
+            return None
+    
 
     async def _stop_read_tasks(self):
         """Stop all read tasks."""

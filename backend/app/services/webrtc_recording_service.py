@@ -9,6 +9,7 @@ import asyncio
 import logging
 import subprocess
 import numpy as np
+import json
 import threading
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -61,6 +62,7 @@ class FFmpegRecorder:
         self.tracks: Dict[str, TrackContext] = {}
         self.ffmpeg_process: Optional[subprocess.Popen] = None
         self.output_path: Optional[Path] = None
+        self.raw_frames_dir: Optional[Path] = None
         self.start_time: Optional[datetime] = None
         
         # Frame processing
@@ -94,9 +96,19 @@ class FFmpegRecorder:
             
             # Set up room event handler for track subscriptions
             self.room.on('track_subscribed', self._on_track_subscribed)
+            logger.info(f"[{self.mint_id}] ✅ Room event handler set up for track_subscribed")
+            
+            # Also set up frame handlers on existing tracks (in case they're already subscribed)
+            await self._setup_existing_track_handlers(participant)
             
             # Wait for tracks to be ready
             await asyncio.sleep(1.0)  # Give tracks time to initialize
+            
+            # Check if we received any frames during initialization
+            if self.video_frames_received == 0:
+                logger.warning(f"[{self.mint_id}] ⚠️  No video frames received during initialization")
+            else:
+                logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
             
             # State: SUBSCRIBING → SUBSCRIBED
             self.state = RecordingState.SUBSCRIBED
@@ -187,6 +199,13 @@ class FFmpegRecorder:
         if self.output_path and self.output_path.exists():
             file_size = self.output_path.stat().st_size
         
+        # Debug logging
+        logger.info(f"[{self.mint_id}] Status check: state={self.state.value}, frames_received={self.video_frames_received}, frames_written={self.video_frames_written}")
+        logger.info(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process is not None}, output_path={self.output_path}")
+        
+        if self.ffmpeg_process:
+            logger.info(f"[{self.mint_id}] FFmpeg PID: {self.ffmpeg_process.pid}, returncode: {self.ffmpeg_process.returncode}")
+        
         return {
             "mint_id": self.mint_id,
             "state": self.state.value,
@@ -241,18 +260,42 @@ class FFmpegRecorder:
             
             logger.info(f"[{self.mint_id}] ✅ Subscribed to {track.kind} track {track.sid}")
 
+    async def _setup_existing_track_handlers(self, participant: rtc.RemoteParticipant):
+        """Set up frame handlers on tracks that are already subscribed."""
+        logger.info(f"[{self.mint_id}] Setting up handlers for existing tracks from {participant.sid}")
+        
+        for track_pub in participant.track_publications.values():
+            if track_pub.track is None:
+                continue
+                
+            track = track_pub.track
+            logger.info(f"[{self.mint_id}] Setting up handler for existing track: {track.kind} {track.sid}")
+            
+            # Set up frame handlers based on track kind
+            if track.kind == rtc.TrackKind.KIND_VIDEO:
+                track.on('frame_received', self._on_video_frame)
+                logger.info(f"[{self.mint_id}] ✅ Video frame handler set up on existing track")
+            elif track.kind == rtc.TrackKind.KIND_AUDIO:
+                track.on('frame_received', self._on_audio_frame)
+                logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up on existing track")
+
     def _on_track_subscribed(self, track, publication, participant):
         """Handle track subscribed event."""
+        logger.info(f"[{self.mint_id}] Track subscribed event: {track.kind} from {participant.sid} (target: {self.stream_info.participant_sid})")
+        
         if participant.sid != self.stream_info.participant_sid:
+            logger.info(f"[{self.mint_id}] Skipping non-target participant: {participant.sid}")
             return  # Only process tracks from our target participant
             
-        logger.info(f"[{self.mint_id}] Track subscribed: {track.kind} from {participant.sid}")
+        logger.info(f"[{self.mint_id}] ✅ Setting up frame handlers for target participant")
         
         # Set up frame handlers based on track kind
         if track.kind == rtc.TrackKind.KIND_VIDEO:
             track.on('frame_received', self._on_video_frame)
+            logger.info(f"[{self.mint_id}] ✅ Video frame handler set up")
         elif track.kind == rtc.TrackKind.KIND_AUDIO:
             track.on('frame_received', self._on_audio_frame)
+            logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up")
 
     async def _setup_ffmpeg(self):
         """Setup FFmpeg subprocess for recording."""
@@ -265,6 +308,12 @@ class FFmpegRecorder:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"[{self.mint_id}] Setting up FFmpeg process: {self.output_path}")
+        
+        # Check if FFmpeg is available
+        if not self._check_ffmpeg():
+            logger.warning(f"[{self.mint_id}] FFmpeg not found, falling back to raw frame recording")
+            await self._setup_raw_recording()
+            return
         
         # Build FFmpeg command for MPEG-TS streaming
         ffmpeg_cmd = [
@@ -291,16 +340,55 @@ class FFmpegRecorder:
         
         logger.info(f"[{self.mint_id}] FFmpeg command: {' '.join(ffmpeg_cmd)}")
         
-        # Start FFmpeg process
-        self.ffmpeg_process = subprocess.Popen(
-            ffmpeg_cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=0  # Unbuffered
-        )
+        try:
+            # Start FFmpeg process
+            self.ffmpeg_process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0  # Unbuffered
+            )
+            
+            logger.info(f"[{self.mint_id}] ✅ FFmpeg process started (PID: {self.ffmpeg_process.pid})")
+            
+        except FileNotFoundError:
+            raise Exception("FFmpeg not found. Please install FFmpeg and ensure it's in your PATH.")
+        except Exception as e:
+            raise Exception(f"Failed to start FFmpeg process: {e}")
+
+    def _check_ffmpeg(self) -> bool:
+        """Check if FFmpeg is available in the system."""
+        try:
+            result = subprocess.run(['ffmpeg', '-version'], 
+                                  capture_output=True, 
+                                  text=True, 
+                                  timeout=5)
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    async def _setup_raw_recording(self):
+        """Setup raw frame recording as fallback when FFmpeg is not available."""
+        logger.info(f"[{self.mint_id}] Setting up raw frame recording (no FFmpeg)")
         
-        logger.info(f"[{self.mint_id}] ✅ FFmpeg process started (PID: {self.ffmpeg_process.pid})")
+        # Create raw frames directory
+        self.raw_frames_dir = self.output_dir / f"{self.mint_id}_frames"
+        self.raw_frames_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create metadata file
+        metadata_file = self.raw_frames_dir / "metadata.json"
+        metadata = {
+            "mint_id": self.mint_id,
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "config": self.config,
+            "format": "raw_frames"
+        }
+        
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        logger.info(f"[{self.mint_id}] ✅ Raw frame recording setup complete: {self.raw_frames_dir}")
 
     async def _start_frame_processing(self):
         """Start frame processing tasks."""
@@ -310,11 +398,14 @@ class FFmpegRecorder:
 
     def _on_video_frame(self, frame: rtc.VideoFrame):
         """Handle video frame from LiveKit."""
-        if self._shutdown or not self.ffmpeg_process:
+        if self._shutdown:
             return
             
         try:
             self.video_frames_received += 1
+            
+            if self.video_frames_received == 1:
+                logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
             
             # Convert LiveKit frame to RGB24 numpy array
             frame_data = frame.to_ndarray(format=rtc.VideoBufferType.RGB)
@@ -323,38 +414,68 @@ class FFmpegRecorder:
             if frame_data.shape[2] == 3:  # RGB
                 frame_bytes = frame_data.astype(np.uint8).tobytes()
                 
-                with self._ffmpeg_lock:
-                    if self.ffmpeg_process and self.ffmpeg_process.stdin:
-                        self.ffmpeg_process.stdin.write(frame_bytes)
-                        self.video_frames_written += 1
-                        
-                        if self.video_frames_written % 30 == 0:  # Log every second
-                            logger.info(f"[{self.mint_id}] Written {self.video_frames_written} video frames")
+                if self.ffmpeg_process:
+                    # FFmpeg mode: pipe to FFmpeg
+                    with self._ffmpeg_lock:
+                        if self.ffmpeg_process.stdin:
+                            self.ffmpeg_process.stdin.write(frame_bytes)
+                            self.video_frames_written += 1
+                            
+                            if self.video_frames_written == 1:
+                                logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME WRITTEN TO FFMPEG!")
+                            
+                            if self.video_frames_written % 30 == 0:  # Log every second
+                                logger.info(f"[{self.mint_id}] Written {self.video_frames_written} video frames to FFmpeg")
+                        else:
+                            logger.error(f"[{self.mint_id}] FFmpeg stdin is None!")
+                else:
+                    # Raw mode: save individual frames
+                    frame_file = self.raw_frames_dir / f"video_{self.video_frames_written:06d}.raw"
+                    with open(frame_file, 'wb') as f:
+                        f.write(frame_bytes)
+                    self.video_frames_written += 1
+                    
+                    if self.video_frames_written == 1:
+                        logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME SAVED TO DISK!")
+                    
+                    if self.video_frames_written % 30 == 0:  # Log every second
+                        logger.info(f"[{self.mint_id}] Saved {self.video_frames_written} video frames to disk")
+            else:
+                logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
                             
         except Exception as e:
             logger.error(f"[{self.mint_id}] Video frame processing error: {e}")
+            import traceback
+            logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
 
     def _on_audio_frame(self, frame: rtc.AudioFrame):
         """Handle audio frame from LiveKit."""
-        if self._shutdown or not self.ffmpeg_process:
+        if self._shutdown:
             return
             
         try:
             self.audio_frames_received += 1
             
             # Convert LiveKit audio frame to bytes
-            # Note: This is a simplified conversion - may need adjustment based on LiveKit audio format
             audio_data = frame.data
             if hasattr(audio_data, 'tobytes'):
                 audio_bytes = audio_data.tobytes()
             else:
                 audio_bytes = bytes(audio_data)
             
-            with self._ffmpeg_lock:
-                if self.ffmpeg_process and self.ffmpeg_process.stdin:
-                    # For now, skip audio - focus on getting video working first
-                    # TODO: Implement proper audio piping to FFmpeg
-                    self.audio_frames_written += 1
+            if self.ffmpeg_process:
+                # FFmpeg mode: pipe to FFmpeg
+                with self._ffmpeg_lock:
+                    if self.ffmpeg_process.stdin:
+                        # For now, skip audio - focus on getting video working first
+                        # TODO: Implement proper audio piping to FFmpeg
+                        self.audio_frames_written += 1
+            else:
+                # Raw mode: save individual audio frames
+                audio_file = self.raw_frames_dir / f"audio_{self.audio_frames_written:06d}.raw"
+                with open(audio_file, 'wb') as f:
+                    f.write(audio_bytes)
+                self.audio_frames_written += 1
                     
         except Exception as e:
             logger.error(f"[{self.mint_id}] Audio frame processing error: {e}")

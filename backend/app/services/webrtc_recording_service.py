@@ -559,9 +559,6 @@ class FFmpegRecorder:
             # Convert to bytes for FFmpeg
             if len(frame_data.shape) == 3 and frame_data.shape[2] in [3, 4]:  # RGB or RGBA
                 frame_bytes = frame_data.astype(np.uint8).tobytes()
-            else:
-                logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
-                return
                 
                 if self.ffmpeg_process:
                     # FFmpeg mode: pipe to FFmpeg

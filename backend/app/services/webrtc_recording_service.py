@@ -536,12 +536,32 @@ class FFmpegRecorder:
             if self.video_frames_received == 1:
                 logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
             
-            # Convert LiveKit frame to RGB24 numpy array
-            frame_data = frame.to_ndarray(format=rtc.VideoBufferType.RGB)
+            # Convert LiveKit frame to RGB24 numpy array (using the working approach)
+            # Try multiple formats like the working implementation
+            frame_data = None
+            try:
+                # Try ARGB format first (most common)
+                frame_data = frame.to_ndarray(format='argb')
+                logger.debug(f"[{self.mint_id}] Frame converted using ARGB format")
+            except Exception as e:
+                try:
+                    # Try RGB24 as fallback
+                    frame_data = frame.to_ndarray(format='rgb24')
+                    logger.debug(f"[{self.mint_id}] Frame converted using RGB24 format")
+                except Exception as e2:
+                    logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}, {e2}")
+                    return
             
-            # Ensure correct shape and type
-            if frame_data.shape[2] == 3:  # RGB
+            if frame_data is None:
+                logger.warning(f"[{self.mint_id}] No frame data available")
+                return
+            
+            # Convert to bytes for FFmpeg
+            if len(frame_data.shape) == 3 and frame_data.shape[2] in [3, 4]:  # RGB or RGBA
                 frame_bytes = frame_data.astype(np.uint8).tobytes()
+            else:
+                logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
+                return
                 
                 if self.ffmpeg_process:
                     # FFmpeg mode: pipe to FFmpeg
@@ -559,16 +579,19 @@ class FFmpegRecorder:
                             logger.error(f"[{self.mint_id}] FFmpeg stdin is None!")
                 else:
                     # Raw mode: save individual frames
-                    frame_file = self.raw_frames_dir / f"video_{self.video_frames_written:06d}.raw"
-                    with open(frame_file, 'wb') as f:
-                        f.write(frame_bytes)
-                    self.video_frames_written += 1
-                    
-                    if self.video_frames_written == 1:
-                        logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME SAVED TO DISK!")
-                    
-                    if self.video_frames_written % 30 == 0:  # Log every second
-                        logger.info(f"[{self.mint_id}] Saved {self.video_frames_written} video frames to disk")
+                    if self.raw_frames_dir:
+                        frame_file = self.raw_frames_dir / f"video_{self.video_frames_written:06d}.raw"
+                        with open(frame_file, 'wb') as f:
+                            f.write(frame_bytes)
+                        self.video_frames_written += 1
+                        
+                        if self.video_frames_written == 1:
+                            logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME SAVED TO DISK!")
+                        
+                        if self.video_frames_written % 30 == 0:  # Log every second
+                            logger.info(f"[{self.mint_id}] Saved {self.video_frames_written} video frames to disk")
+                    else:
+                        logger.warning(f"[{self.mint_id}] Raw frames directory not available for video")
             else:
                 logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
                             
@@ -601,10 +624,13 @@ class FFmpegRecorder:
                         self.audio_frames_written += 1
             else:
                 # Raw mode: save individual audio frames
-                audio_file = self.raw_frames_dir / f"audio_{self.audio_frames_written:06d}.raw"
-                with open(audio_file, 'wb') as f:
-                    f.write(audio_bytes)
-                self.audio_frames_written += 1
+                if self.raw_frames_dir:
+                    audio_file = self.raw_frames_dir / f"audio_{self.audio_frames_written:06d}.raw"
+                    with open(audio_file, 'wb') as f:
+                        f.write(audio_bytes)
+                    self.audio_frames_written += 1
+                else:
+                    logger.warning(f"[{self.mint_id}] Raw frames directory not available for audio")
                     
         except Exception as e:
             logger.error(f"[{self.mint_id}] Audio frame processing error: {e}")

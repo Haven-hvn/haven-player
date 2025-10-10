@@ -105,12 +105,13 @@ class FFmpegRecorder:
             # Also set up frame handlers on existing tracks (in case they're already subscribed)
             await self._setup_existing_track_handlers(participant)
             
-            # Wait for tracks to be ready
-            await asyncio.sleep(1.0)  # Give tracks time to initialize
+            # Give StreamManager time to populate and start receiving frames
+            logger.info(f"[{self.mint_id}] ⏳ Waiting for StreamManager to populate frame handlers...")
+            await asyncio.sleep(3.0)  # Give StreamManager 3 seconds to connect and start receiving frames
             
-            # Check if we received any frames during initialization
+            # Check if we received any frames after giving StreamManager time
             if self.video_frames_received == 0:
-                logger.warning(f"[{self.mint_id}] ⚠️  No video frames received during initialization")
+                logger.warning(f"[{self.mint_id}] ⚠️  No video frames received after 3s - StreamManager may still be connecting")
             else:
                 logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
             
@@ -276,10 +277,12 @@ class FFmpegRecorder:
         stream_manager = StreamManager()
         
         # Register frame handlers with StreamManager (this is how the working code does it)
+        logger.info(f"[{self.mint_id}] 🔄 Registering frame handlers with StreamManager...")
         stream_manager.register_video_frame_handler(self.mint_id, self._on_video_frame)
         stream_manager.register_audio_frame_handler(self.mint_id, self._on_audio_frame)
         
         logger.info(f"[{self.mint_id}] ✅ Frame handlers registered with StreamManager")
+        logger.info(f"[{self.mint_id}] ⏳ StreamManager will take time to connect and start receiving frames...")
         
         # Store track references for debugging
         for track_pub in participant.track_publications.values():
@@ -309,6 +312,7 @@ class FFmpegRecorder:
         stream_manager = StreamManager()
         
         # Register frame handlers with StreamManager (this is how the working code does it)
+        logger.info(f"[{self.mint_id}] 🔄 Registering {track.kind} frame handler with StreamManager...")
         if track.kind == rtc.TrackKind.KIND_VIDEO:
             stream_manager.register_video_frame_handler(self.mint_id, self._on_video_frame)
             self.video_track = track
@@ -317,6 +321,8 @@ class FFmpegRecorder:
             stream_manager.register_audio_frame_handler(self.mint_id, self._on_audio_frame)
             self.audio_track = track
             logger.info(f"[{self.mint_id}] ✅ Audio frame handler registered with StreamManager")
+        
+        logger.info(f"[{self.mint_id}] ⏳ StreamManager will take time to connect and start receiving frames...")
 
     async def _setup_ffmpeg(self):
         """Setup FFmpeg subprocess for recording."""

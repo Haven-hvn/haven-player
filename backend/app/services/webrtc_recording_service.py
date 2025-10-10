@@ -273,11 +273,17 @@ class FFmpegRecorder:
         logger.info(f"[{self.mint_id}] Setting up direct track access for recording from {participant.sid}")
         
         # Store track references for direct access
+        logger.info(f"[{self.mint_id}] 🔍 Found {len(participant.track_publications)} track publications")
         for track_pub in participant.track_publications.values():
+            logger.info(f"[{self.mint_id}] Track pub: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")
             if track_pub.track is None:
+                logger.warning(f"[{self.mint_id}] ⚠️  Track publication {track_pub.sid} has no track object")
                 continue
                 
             track = track_pub.track
+            logger.info(f"[{self.mint_id}] Track object: {type(track)}, kind={track.kind}, sid={track.sid}")
+            logger.info(f"[{self.mint_id}] Track methods: {[m for m in dir(track) if not m.startswith('_')]}")
+            
             if track.kind == rtc.TrackKind.KIND_VIDEO:
                 self.video_track = track
                 logger.info(f"[{self.mint_id}] ✅ Video track reference stored for direct access")
@@ -300,6 +306,9 @@ class FFmpegRecorder:
         logger.info(f"[{self.mint_id}] ✅ Setting up frame handlers for target participant")
         
         # Store track reference for direct access (no frame handlers needed)
+        logger.info(f"[{self.mint_id}] Track subscribed - track: {type(track)}, kind={track.kind}, sid={track.sid}")
+        logger.info(f"[{self.mint_id}] Track methods: {[m for m in dir(track) if not m.startswith('_')]}")
+        
         if track.kind == rtc.TrackKind.KIND_VIDEO:
             self.video_track = track
             logger.info(f"[{self.mint_id}] ✅ Video track reference stored for direct access")
@@ -314,24 +323,46 @@ class FFmpegRecorder:
             self._polling_started = True
 
     async def _poll_frames(self):
-        """Poll tracks for frames since direct handlers aren't available."""
+        """Poll tracks for frames using LiveKit's track methods."""
         logger.info(f"[{self.mint_id}] 🔄 Starting frame polling...")
         
         while not self._shutdown and self.state == RecordingState.SUBSCRIBED:
             try:
                 # Poll video track for frames
                 if self.video_track:
-                    # Try to get the latest frame from the track
-                    # Note: This is a simplified approach - in practice, you might need
-                    # to use MediaRecorder or other LiveKit APIs for frame access
-                    logger.debug(f"[{self.mint_id}] Polling video track for frames...")
+                    # Try to get frames using LiveKit's track methods
+                    try:
+                        # Check if track has any available methods for frame access
+                        logger.debug(f"[{self.mint_id}] Video track methods: {[m for m in dir(self.video_track) if not m.startswith('_')]}")
+                        
+                        # Try to access track data directly
+                        if hasattr(self.video_track, 'get_stats'):
+                            stats = self.video_track.get_stats()
+                            logger.debug(f"[{self.mint_id}] Video track stats: {stats}")
+                        
+                        # Simulate frame reception for now (we'll need to find the right LiveKit API)
+                        # This is a placeholder - we need to find the correct LiveKit method
+                        logger.debug(f"[{self.mint_id}] Polling video track for frames...")
+                        
+                    except Exception as e:
+                        logger.debug(f"[{self.mint_id}] Video track polling error: {e}")
                     
                 # Poll audio track for frames  
                 if self.audio_track:
-                    logger.debug(f"[{self.mint_id}] Polling audio track for frames...")
+                    try:
+                        logger.debug(f"[{self.mint_id}] Audio track methods: {[m for m in dir(self.audio_track) if not m.startswith('_')]}")
+                        
+                        if hasattr(self.audio_track, 'get_stats'):
+                            stats = self.audio_track.get_stats()
+                            logger.debug(f"[{self.mint_id}] Audio track stats: {stats}")
+                            
+                        logger.debug(f"[{self.mint_id}] Polling audio track for frames...")
+                        
+                    except Exception as e:
+                        logger.debug(f"[{self.mint_id}] Audio track polling error: {e}")
                 
                 # Wait before next poll
-                await asyncio.sleep(0.033)  # ~30 FPS polling
+                await asyncio.sleep(0.1)  # 10 FPS polling for debugging
                 
             except Exception as e:
                 logger.error(f"[{self.mint_id}] Frame polling error: {e}")

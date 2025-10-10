@@ -284,6 +284,9 @@ class FFmpegRecorder:
         
         # Store track references for direct access
         logger.info(f"[{self.mint_id}] 🔍 Found {len(participant.track_publications)} track publications")
+        logger.info(f"[{self.mint_id}] 🔍 Target participant: {self.stream_info.participant_sid}")
+        logger.info(f"[{self.mint_id]} 🔍 Current participant: {participant.sid}")
+        
         for track_pub in participant.track_publications.values():
             logger.info(f"[{self.mint_id}] Track pub: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")
             if track_pub.track is None:
@@ -303,7 +306,14 @@ class FFmpegRecorder:
         
         # Start polling for frames since direct handlers aren't available
         logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
-        asyncio.create_task(self._poll_frames())
+        logger.info(f"[{self.mint_id}] 🔍 Tracks available: video={self.video_track is not None}, audio={self.audio_track is not None}")
+        if self.video_track:
+            logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
+        if self.audio_track:
+            logger.info(f"[{self.mint_id}] Audio track: {self.audio_track}")
+        
+        polling_task = asyncio.create_task(self._poll_frames())
+        logger.info(f"[{self.mint_id}] 📋 Polling task created: {polling_task}")
 
     def _on_track_subscribed(self, track, publication, participant):
         """Handle track subscribed event."""
@@ -334,6 +344,7 @@ class FFmpegRecorder:
 
     async def _poll_frames(self):
         """Process frames using LiveKit's VideoStream and AudioStream (proven approach)."""
+        logger.info(f"[{self.mint_id}] 🚀 _poll_frames() method called!")
         logger.info(f"[{self.mint_id}] 🔄 Starting frame processing with VideoStream/AudioStream...")
         
         try:

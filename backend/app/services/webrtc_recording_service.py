@@ -285,7 +285,7 @@ class FFmpegRecorder:
         # Store track references for direct access
         logger.info(f"[{self.mint_id}] 🔍 Found {len(participant.track_publications)} track publications")
         logger.info(f"[{self.mint_id}] 🔍 Target participant: {self.stream_info.participant_sid}")
-        logger.info(f"[{self.mint_id]} 🔍 Current participant: {participant.sid}")
+        logger.info(f"[{self.mint_id}] 🔍 Current participant: {participant.sid}")
         
         for track_pub in participant.track_publications.values():
             logger.info(f"[{self.mint_id}] Track pub: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")

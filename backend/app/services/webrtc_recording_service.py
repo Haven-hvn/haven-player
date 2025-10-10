@@ -272,12 +272,12 @@ class FFmpegRecorder:
             track = track_pub.track
             logger.info(f"[{self.mint_id}] Setting up handler for existing track: {track.kind} {track.sid}")
             
-            # Set up frame handlers based on track kind using LiveKit's add_frame_handler
+            # Set up frame handlers based on track kind using LiveKit's on decorator
             if track.kind == rtc.TrackKind.KIND_VIDEO:
-                track.add_video_frame_handler(self._on_video_frame)
+                track.on("frame_received", self._on_video_frame)
                 logger.info(f"[{self.mint_id}] ✅ Video frame handler set up on existing track")
             elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                track.add_audio_frame_handler(self._on_audio_frame)
+                track.on("frame_received", self._on_audio_frame)
                 logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up on existing track")
 
     def _on_track_subscribed(self, track, publication, participant):
@@ -292,10 +292,10 @@ class FFmpegRecorder:
         
         # Set up frame handlers directly on tracks using LiveKit API
         if track.kind == rtc.TrackKind.KIND_VIDEO:
-            track.add_video_frame_handler(self._on_video_frame)
+            track.on("frame_received", self._on_video_frame)
             logger.info(f"[{self.mint_id}] ✅ Video frame handler set up")
         elif track.kind == rtc.TrackKind.KIND_AUDIO:
-            track.add_audio_frame_handler(self._on_audio_frame)
+            track.on("frame_received", self._on_audio_frame)
             logger.info(f"[{self.mint_id}] ✅ Audio frame handler set up")
 
     async def _setup_ffmpeg(self):

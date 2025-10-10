@@ -251,6 +251,7 @@ class WebRTCRecordingService:
     ) -> Dict[str, Any]:
         """Start recording a stream using WebRTC best practices."""
         try:
+            print(f"\n========== RECORDING SERVICE START CALLED FOR {mint_id} ==========", flush=True)
             logger.info(f"📹 Starting WebRTC recording for mint_id: {mint_id}")
             
             if mint_id in self.active_recordings:
@@ -284,10 +285,13 @@ class WebRTCRecordingService:
             )
             
             # Start recording
+            print(f"========== CALLING recorder.start() ==========", flush=True)
             result = await recorder.start()
+            print(f"========== recorder.start() returned: {result} ==========", flush=True)
             
             if result["success"]:
                 self.active_recordings[mint_id] = recorder
+                print(f"========== Recording added to active_recordings ==========", flush=True)
                 logger.info(f"✅ WebRTC recording started successfully: {recorder.output_path}")
                 
                 return {

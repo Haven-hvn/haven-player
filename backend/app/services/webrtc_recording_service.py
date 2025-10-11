@@ -11,6 +11,8 @@ import subprocess
 import numpy as np
 import json
 import threading
+import psutil
+import gc
 from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime, timezone
@@ -637,6 +639,7 @@ class FFmpegRecorder:
                 logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
                 logger.info(f"[{self.mint_id}] Frame type: {type(frame)}")
                 logger.info(f"[{self.mint_id}] Frame attributes: {[attr for attr in dir(frame) if not attr.startswith('_')]}")
+                self._log_memory_usage(f"{self.mint_id} first_frame")
             
             # Convert LiveKit frame to RGB24 numpy array (using the working approach)
             # Get the frame data directly from the buffer like the working implementation
@@ -759,9 +762,13 @@ class FFmpegRecorder:
                 logger.warning(f"[{self.mint_id}] No frame data available")
                 return
             
-            # Convert to bytes for FFmpeg
+            # Convert to bytes for FFmpeg (streaming approach to reduce memory)
             if len(frame_data.shape) == 3 and frame_data.shape[2] in [3, 4]:  # RGB or RGBA
+                # Convert to uint8 and get bytes in one step to avoid intermediate copies
                 frame_bytes = frame_data.astype(np.uint8).tobytes()
+                
+                # Immediately free the numpy array to reduce memory pressure
+                del frame_data
                 
                 if self.ffmpeg_process:
                     # FFmpeg mode: pipe to FFmpeg
@@ -808,6 +815,17 @@ class FFmpegRecorder:
                         logger.warning(f"[{self.mint_id}] Raw frames dir: {self.raw_frames_dir}")
             else:
                 logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
+            
+            # CRITICAL: Free memory immediately after processing
+            del frame_bytes
+            del frame_data
+            
+            # Force garbage collection to free memory
+            gc.collect()
+            
+            # Log memory usage every 100 frames
+            if self.video_frames_received % 100 == 0:
+                self._log_memory_usage(f"{self.mint_id} frame_{self.video_frames_received}")
                             
         except Exception as e:
             logger.error(f"[{self.mint_id}] Video frame processing error: {e}")
@@ -844,6 +862,14 @@ class FFmpegRecorder:
                         f.write(audio_bytes)
                     self.audio_frames_written += 1
                 # Don't log warning in FFmpeg mode - this is expected
+            
+            # CRITICAL: Free memory immediately after processing
+            del audio_bytes
+            del audio_data
+            
+            # Force garbage collection to free memory
+            import gc
+            gc.collect()
                     
         except Exception as e:
             logger.error(f"[{self.mint_id}] Audio frame processing error: {e}")
@@ -890,6 +916,16 @@ class WebRTCRecordingService:
         self.stream_manager = StreamManager()
         
         logger.info(f"🎬 WebRTCRecordingService instance #{self._instance_id} created")
+    
+    def _log_memory_usage(self, context: str = ""):
+        """Log current memory usage for debugging."""
+        try:
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            logger.info(f"[{context}] Memory usage: {memory_mb:.1f} MB")
+        except Exception as e:
+            logger.warning(f"[{context}] Could not get memory usage: {e}")
 
     async def start_recording(
         self, 

@@ -300,9 +300,13 @@ class FFmpegRecorder:
             if track.kind == rtc.TrackKind.KIND_VIDEO:
                 self.video_track = track
                 logger.info(f"[{self.mint_id}] ✅ Video track reference stored for direct access")
+                logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
             elif track.kind == rtc.TrackKind.KIND_AUDIO:
                 self.audio_track = track
                 logger.info(f"[{self.mint_id}] ✅ Audio track reference stored for direct access")
+                logger.info(f"[{self.mint_id}] Audio track: {self.audio_track}")
+            else:
+                logger.warning(f"[{self.mint_id}] ⚠️  Unknown track kind: {track.kind}")
         
         # Start polling for frames since direct handlers aren't available
         logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
@@ -314,6 +318,8 @@ class FFmpegRecorder:
         
         polling_task = asyncio.create_task(self._poll_frames())
         logger.info(f"[{self.mint_id}] 📋 Polling task created: {polling_task}")
+        logger.info(f"[{self.mint_id}] 📋 Polling task done: {polling_task.done()}")
+        logger.info(f"[{self.mint_id}] 📋 Polling task cancelled: {polling_task.cancelled()}")
 
     def _on_track_subscribed(self, track, publication, participant):
         """Handle track subscribed event."""
@@ -352,19 +358,28 @@ class FFmpegRecorder:
             tasks = []
             
             logger.info(f"[{self.mint_id}] 🔍 Available tracks: video={self.video_track is not None}, audio={self.audio_track is not None}")
+            logger.info(f"[{self.mint_id}] 🔍 Video track object: {self.video_track}")
+            logger.info(f"[{self.mint_id}] 🔍 Audio track object: {self.audio_track}")
             
             if self.video_track:
                 logger.info(f"[{self.mint_id}] ✅ Starting video stream processing")
                 logger.info(f"[{self.mint_id}] Video track details: {self.video_track}")
+                logger.info(f"[{self.mint_id}] Video track type: {type(self.video_track)}")
+                logger.info(f"[{self.mint_id}] Video track kind: {getattr(self.video_track, 'kind', 'unknown')}")
                 video_task = asyncio.create_task(self._process_video_stream())
                 tasks.append(video_task)
                 logger.info(f"[{self.mint_id}] Video task created: {video_task}")
+            else:
+                logger.warning(f"[{self.mint_id}] ⚠️  No video track available!")
             
             if self.audio_track:
                 logger.info(f"[{self.mint_id}] ✅ Starting audio stream processing")
+                logger.info(f"[{self.mint_id}] Audio track details: {self.audio_track}")
                 audio_task = asyncio.create_task(self._process_audio_stream())
                 tasks.append(audio_task)
                 logger.info(f"[{self.mint_id}] Audio task created: {audio_task}")
+            else:
+                logger.warning(f"[{self.mint_id}] ⚠️  No audio track available!")
             
             if not tasks:
                 logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for processing")

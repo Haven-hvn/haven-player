@@ -480,9 +480,13 @@ class FFmpegRecorder:
         logger.info(f"[{self.mint_id}] Setting up FFmpeg process: {self.output_path}")
         
         # Check if FFmpeg is available
-        if not self._check_ffmpeg():
+        ffmpeg_available = self._check_ffmpeg()
+        logger.info(f"[{self.mint_id}] FFmpeg available: {ffmpeg_available}")
+        
+        if not ffmpeg_available:
             logger.warning(f"[{self.mint_id}] FFmpeg not found, falling back to raw frame recording")
             await self._setup_raw_recording()
+            logger.info(f"[{self.mint_id}] Raw recording setup complete, raw_frames_dir: {self.raw_frames_dir}")
             return
         
         # Build FFmpeg command for MPEG-TS streaming
@@ -541,10 +545,14 @@ class FFmpegRecorder:
     async def _setup_raw_recording(self):
         """Setup raw frame recording as fallback when FFmpeg is not available."""
         logger.info(f"[{self.mint_id}] Setting up raw frame recording (no FFmpeg)")
+        logger.info(f"[{self.mint_id}] Output directory: {self.output_dir}")
+        logger.info(f"[{self.mint_id}] Mint ID: {self.mint_id}")
         
         # Create raw frames directory
         self.raw_frames_dir = self.output_dir / f"{self.mint_id}_frames"
+        logger.info(f"[{self.mint_id}] Creating raw frames directory: {self.raw_frames_dir}")
         self.raw_frames_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"[{self.mint_id}] Raw frames directory created successfully")
         
         # Create metadata file
         metadata_file = self.raw_frames_dir / "metadata.json"
@@ -559,6 +567,8 @@ class FFmpegRecorder:
             json.dump(metadata, f, indent=2)
         
         logger.info(f"[{self.mint_id}] ✅ Raw frame recording setup complete: {self.raw_frames_dir}")
+        logger.info(f"[{self.mint_id}] Raw frames directory exists: {self.raw_frames_dir.exists()}")
+        logger.info(f"[{self.mint_id}] Raw frames directory is directory: {self.raw_frames_dir.is_dir()}")
 
     async def _start_frame_processing(self):
         """Start frame processing tasks."""
@@ -738,8 +748,12 @@ class FFmpegRecorder:
                             logger.error(f"[{self.mint_id}] FFmpeg process status: {self.ffmpeg_process.poll() if self.ffmpeg_process else 'None'}")
                 else:
                     # Raw mode: save individual frames
+                    logger.info(f"[{self.mint_id}] Checking raw frames directory: {self.raw_frames_dir}")
+                    logger.info(f"[{self.mint_id}] Raw frames directory is None: {self.raw_frames_dir is None}")
                     if self.raw_frames_dir:
+                        logger.info(f"[{self.mint_id}] Raw frames directory exists: {self.raw_frames_dir.exists()}")
                         frame_file = self.raw_frames_dir / f"video_{self.video_frames_written:06d}.raw"
+                        logger.info(f"[{self.mint_id}] Saving video frame to: {frame_file}")
                         with open(frame_file, 'wb') as f:
                             f.write(frame_bytes)
                         self.video_frames_written += 1
@@ -751,6 +765,8 @@ class FFmpegRecorder:
                             logger.info(f"[{self.mint_id}] Saved {self.video_frames_written} video frames to disk")
                     else:
                         logger.warning(f"[{self.mint_id}] Raw frames directory not available for video")
+                        logger.warning(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process is not None}")
+                        logger.warning(f"[{self.mint_id}] Raw frames dir: {self.raw_frames_dir}")
             else:
                 logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
                             

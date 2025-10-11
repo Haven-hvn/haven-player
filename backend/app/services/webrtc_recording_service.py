@@ -77,6 +77,16 @@ class FFmpegRecorder:
         self.video_frames_written = 0
         self.audio_frames_written = 0
         
+    def _log_memory_usage(self, context: str = ""):
+        """Log current memory usage for debugging."""
+        try:
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            logger.info(f"[{context}] Memory usage: {memory_mb:.1f} MB")
+        except Exception as e:
+            logger.warning(f"[{context}] Could not get memory usage: {e}")
+        
         # Threading for FFmpeg communication
         self._ffmpeg_lock = threading.Lock()
         self._shutdown = False
@@ -530,13 +540,13 @@ class FFmpegRecorder:
             logger.info(f"[{self.mint_id}] Raw recording setup complete, raw_frames_dir: {self.raw_frames_dir}")
             return
         
-        # Build FFmpeg command for MPEG-TS streaming with proper parameters
+        # Build FFmpeg command for MPEG-TS streaming with dynamic resolution support
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',  # Overwrite output file
             '-f', 'rawvideo',  # Input format: raw video
             '-pix_fmt', 'rgb24',  # Pixel format
-            '-s', f"{self.config['width']}x{self.config['height']}",  # Resolution
+            '-s', f"{self.config['width']}x{self.config['height']}",  # Resolution (will be updated dynamically)
             '-r', str(self.config['fps']),  # Frame rate
             '-i', 'pipe:0',  # Video from stdin
             '-f', 's16le',  # Audio format: signed 16-bit little endian
@@ -771,24 +781,21 @@ class FFmpegRecorder:
             
             # Convert to bytes for FFmpeg (streaming approach to reduce memory)
             if len(frame_data.shape) == 3 and frame_data.shape[2] in [3, 4]:  # RGB or RGBA
-                # Validate frame dimensions match expected resolution
-                expected_height, expected_width = self.config['height'], self.config['width']
+                # Handle dynamic resolution - update config with actual dimensions
                 actual_height, actual_width = frame_data.shape[:2]
+                expected_height, expected_width = self.config['height'], self.config['width']
                 
+                # If dimensions don't match, update the config for dynamic resolution
                 if actual_height != expected_height or actual_width != expected_width:
-                    logger.warning(f"[{self.mint_id}] Frame size mismatch: expected {expected_width}x{expected_height}, got {actual_width}x{actual_height}")
-                    # Resize frame to match expected dimensions
-                    from scipy import ndimage
-                    scale_y = expected_height / actual_height
-                    scale_x = expected_width / actual_width
-                    frame_data = ndimage.zoom(frame_data, (scale_y, scale_x, 1), order=1)
-                    logger.info(f"[{self.mint_id}] Resized frame to {frame_data.shape[:2]}")
+                    logger.info(f"[{self.mint_id}] Dynamic resolution detected: {actual_width}x{actual_height} (was {expected_width}x{expected_height})")
+                    self.config['width'] = actual_width
+                    self.config['height'] = actual_height
                 
                 # Convert to uint8 and get bytes in one step to avoid intermediate copies
                 frame_bytes = frame_data.astype(np.uint8).tobytes()
                 
                 # Validate frame size
-                expected_size = expected_width * expected_height * 3  # RGB24
+                expected_size = actual_width * actual_height * 3  # RGB24
                 if len(frame_bytes) != expected_size:
                     logger.warning(f"[{self.mint_id}] Frame size mismatch: expected {expected_size} bytes, got {len(frame_bytes)} bytes")
                     return
@@ -854,7 +861,8 @@ class FFmpegRecorder:
             
             # CRITICAL: Free memory immediately after processing
             del frame_bytes
-            del frame_data
+            if 'frame_data' in locals():
+                del frame_data
             
             # Force garbage collection to free memory
             gc.collect()

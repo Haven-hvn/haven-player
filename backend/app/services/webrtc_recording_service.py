@@ -103,6 +103,28 @@ class FFmpegRecorder:
             return int(bitrate_str[:-1]) * 1000000
         else:
             return int(bitrate_str)
+    
+    async def _continuous_track_detection(self):
+        """Continuously try to find tracks and start frame processing."""
+        logger.info(f"[{self.mint_id}] 🔍 Starting continuous track detection...")
+        
+        for attempt in range(10):  # Try for 10 seconds
+            if self._shutdown:
+                logger.info(f"[{self.mint_id}] 🛑 Shutdown requested, stopping track detection")
+                return
+                
+            participant = self._find_participant()
+            if participant:
+                await self._setup_existing_track_handlers(participant)
+                if self.video_track or self.audio_track:
+                    logger.info(f"[{self.mint_id}] ✅ Found tracks after {attempt + 1} attempts, starting frame processing")
+                    await self._start_frame_processing()
+                    return
+            
+            logger.info(f"[{self.mint_id}] 🔍 Track detection attempt {attempt + 1}/10 - no tracks found")
+            await asyncio.sleep(1.0)
+        
+        logger.warning(f"[{self.mint_id}] ⚠️  Could not find tracks after 10 attempts")
 
     async def start(self) -> Dict[str, Any]:
         """Start recording using FFmpeg subprocess."""
@@ -151,6 +173,18 @@ class FFmpegRecorder:
                 await self._start_frame_processing()
             else:
                 logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for frame processing")
+                # Try to find tracks again after a short delay
+                await asyncio.sleep(1.0)
+                participant = self._find_participant()
+                if participant:
+                    await self._setup_existing_track_handlers(participant)
+                    if self.video_track or self.audio_track:
+                        logger.info(f"[{self.mint_id}] ✅ Found tracks on retry, starting frame processing")
+                        await self._start_frame_processing()
+                    else:
+                        logger.warning(f"[{self.mint_id}] ⚠️  Still no tracks found after retry")
+                        # Start a background task to continuously look for tracks
+                        asyncio.create_task(self._continuous_track_detection())
             
             # State: SUBSCRIBED → RECORDING
             self.state = RecordingState.RECORDING
@@ -409,8 +443,11 @@ class FFmpegRecorder:
         # Start polling for frames if not already started
         if not hasattr(self, '_polling_started'):
             logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
+            logger.info(f"[{self.mint_id}] 🔍 Tracks available: video={self.video_track is not None}, audio={self.audio_track is not None}")
             asyncio.create_task(self._poll_frames())
             self._polling_started = True
+        else:
+            logger.info(f"[{self.mint_id}] 🔄 Frame polling already started, skipping...")
 
     async def _poll_frames(self):
         """Process frames using LiveKit's VideoStream and AudioStream (proven approach)."""
@@ -447,6 +484,8 @@ class FFmpegRecorder:
             
             if not tasks:
                 logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for processing")
+                logger.warning(f"[{self.mint_id}] ⚠️  Video track: {self.video_track}")
+                logger.warning(f"[{self.mint_id}] ⚠️  Audio track: {self.audio_track}")
                 return
             
             logger.info(f"[{self.mint_id}] 🚀 Starting {len(tasks)} processing tasks...")

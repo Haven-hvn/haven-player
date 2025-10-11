@@ -173,6 +173,13 @@ class FFmpegRecorder:
                 logger.warning(f"[{self.mint_id}] ⚠️  No video frames received after 2s - frame polling may still be starting")
             else:
                 logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
+                
+            # Check LiveKit room connection status
+            if not self.room.isconnected():
+                logger.error(f"[{self.mint_id}] LiveKit room disconnected - stopping recording")
+                await self._cleanup()
+                return {"success": False, "error": "LiveKit room disconnected"}
+                logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
             
             # State: SUBSCRIBING → SUBSCRIBED
             self.state = RecordingState.SUBSCRIBED
@@ -535,6 +542,13 @@ class FFmpegRecorder:
                 if time_since_last > 10.0 and frame_count > 0:
                     logger.warning(f"[{self.mint_id}] ⚠️  Long gap between frames: {time_since_last:.2f}s")
                     self._log_memory_usage(f"{self.mint_id} frame_gap_warning")
+                    
+                    # If gap is too long, stop recording to prevent memory issues
+                    if time_since_last > 60.0:  # 1 minute gap
+                        logger.error(f"[{self.mint_id}] ⚠️  Frame gap too long ({time_since_last:.2f}s) - stopping recording")
+                        logger.error(f"[{self.mint_id}] This indicates LiveKit connection issues or stream problems")
+                        self._shutdown = True
+                        return
                 
                 last_frame_time = current_time
                 
@@ -544,11 +558,14 @@ class FFmpegRecorder:
                 
                 frame = event.frame
                 logger.info(f"[{self.mint_id}] 📹 Frame extracted from event: {type(frame)}")
+                logger.info(f"[{self.mint_id}] 📹 Frame dimensions: {frame.width}x{frame.height}")
+                logger.info(f"[{self.mint_id}] 📹 Frame data size: {len(frame.data) if hasattr(frame, 'data') else 'No data attr'}")
                 try:
                     # Process the frame
                     logger.info(f"[{self.mint_id}] 📹 Calling _on_video_frame...")
                     await self._on_video_frame(frame)
                     frame_count += 1
+                    logger.info(f"[{self.mint_id}] 📹 Frame processed successfully, count: {frame_count}")
                     
                     # Log progress and memory usage
                     if frame_count % 50 == 0:  # Log every 50 frames instead of 100
@@ -566,6 +583,13 @@ class FFmpegRecorder:
             raise
         except Exception as e:
             logger.error(f"[{self.mint_id}] Video stream processing error: {e}")
+            import traceback
+            logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
+            
+            # Check if this is a LiveKit connection issue
+            if "connection" in str(e).lower() or "timeout" in str(e).lower():
+                logger.error(f"[{self.mint_id}] LiveKit connection issue detected - stopping recording")
+                self._shutdown = True
         finally:
             logger.info(f"[{self.mint_id}] Video stream processing ended. Total frames: {frame_count}")
 
@@ -741,6 +765,8 @@ class FFmpegRecorder:
             
         try:
             self.video_frames_received += 1
+            logger.info(f"[{self.mint_id}] 📹 Processing video frame #{self.video_frames_received}")
+            logger.info(f"[{self.mint_id}] 📹 Frame details: {frame.width}x{frame.height}, data_len={len(frame.data) if hasattr(frame, 'data') else 'No data'}")
             
             if self.video_frames_received == 1:
                 logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
@@ -768,12 +794,14 @@ class FFmpegRecorder:
                 else:
                     # Convert memoryview/buffer to numpy array
                     frame_data = np.frombuffer(buffer, dtype=np.uint8)
-                    logger.info(f"[{self.mint_id}] Converted buffer to numpy array: {frame_data.shape}")
+                logger.info(f"[{self.mint_id}] Converted buffer to numpy array: {frame_data.shape}")
+                logger.info(f"[{self.mint_id}] Frame data size: {len(frame_data)} bytes")
                     
                 # Determine frame format based on size
                 rgb_size = width * height * 3
                 yuv420_size = width * height * 3 // 2  # YUV420 is 1.5 bytes per pixel
                 yuv422_size = width * height * 2
+                logger.info(f"[{self.mint_id}] Expected sizes: RGB={rgb_size}, YUV420={yuv420_size}, YUV422={yuv422_size}")
                 
                 logger.info(f"[{self.mint_id}] Frame size analysis:")
                 logger.info(f"[{self.mint_id}] - RGB size: {rgb_size}")
@@ -952,6 +980,44 @@ class FFmpegRecorder:
                                 
                                 if self.video_frames_written % 30 == 0:  # Log every second
                                     logger.info(f"[{self.mint_id}] Written {self.video_frames_written} video frames to FFmpeg")
+                                    
+                                    # Check if FFmpeg is still processing frames
+                                    if self.ffmpeg_process.poll() is not None:
+                                        logger.error(f"[{self.mint_id}] FFmpeg process died during processing")
+                                        ffmpeg_log = self._read_ffmpeg_log()
+                                        logger.error(f"[{self.mint_id}] FFmpeg log:\n{ffmpeg_log}")
+                                        self.ffmpeg_process = None
+                                        self._shutdown = True
+                                        return
+                                    
+                                    # Force FFmpeg to flush its buffers
+                                    try:
+                                        self.ffmpeg_process.stdin.flush()
+                                        logger.info(f"[{self.mint_id}] Forced FFmpeg buffer flush")
+                                    except Exception as flush_error:
+                                        logger.error(f"[{self.mint_id}] Failed to flush FFmpeg buffers: {flush_error}")
+                                        self.ffmpeg_process = None
+                                        self._shutdown = True
+                                        return
+                                    
+                                    # Check if output file is still growing
+                                    if self.output_path and self.output_path.exists():
+                                        current_size = self.output_path.stat().st_size
+                                        if hasattr(self, '_last_file_size'):
+                                            if current_size == self._last_file_size:
+                                                logger.warning(f"[{self.mint_id}] File size not growing: {current_size} bytes")
+                                                logger.warning(f"[{self.mint_id}] FFmpeg may be stuck - forcing flush")
+                                                try:
+                                                    self.ffmpeg_process.stdin.flush()
+                                                    # Send a small amount of data to wake up FFmpeg
+                                                    self.ffmpeg_process.stdin.write(b'\x00' * 1024)
+                                                    self.ffmpeg_process.stdin.flush()
+                                                except Exception as wake_error:
+                                                    logger.error(f"[{self.mint_id}] Failed to wake up FFmpeg: {wake_error}")
+                                                    self.ffmpeg_process = None
+                                                    self._shutdown = True
+                                                    return
+                                        self._last_file_size = current_size
                             except BrokenPipeError:
                                 logger.error(f"[{self.mint_id}] FFmpeg process broken pipe - process may have died")
                                 logger.error(f"[{self.mint_id}] FFmpeg return code: {self.ffmpeg_process.poll()}")

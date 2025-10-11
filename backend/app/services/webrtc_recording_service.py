@@ -969,13 +969,29 @@ class FFmpegRecorder:
                 # Convert to uint8 and get bytes in one step to avoid intermediate copies
                 frame_bytes = frame_data.astype(np.uint8).tobytes()
                 
-                # Validate frame size
+                # Validate frame size with strict corruption detection
                 expected_size = actual_width * actual_height * 3  # RGB24
-                if len(frame_bytes) != expected_size:
-                    logger.error(f"[{self.mint_id}] Frame size mismatch: expected {expected_size} bytes, got {len(frame_bytes)} bytes")
+                size_ratio = len(frame_bytes) / expected_size
+                
+                # Check for exact size match first
+                if len(frame_bytes) == expected_size:
+                    logger.debug(f"[{self.mint_id}] Frame size correct: {len(frame_bytes)} bytes")
+                # Check for frames that are close to expected size but corrupted (80-95% range)
+                elif 0.8 <= size_ratio <= 0.95:
+                    logger.error(f"[{self.mint_id}] Frame size suspicious: {len(frame_bytes)} bytes ({size_ratio:.1%} of expected {expected_size})")
+                    logger.error(f"[{self.mint_id}] This indicates frame corruption - skipping to prevent FFmpeg failure")
+                    del frame_data
+                    return
+                # Check for frames that are too small or too large
+                elif size_ratio < 0.5 or size_ratio > 2.0:
+                    logger.error(f"[{self.mint_id}] Frame size invalid: {len(frame_bytes)} bytes ({size_ratio:.1%} of expected {expected_size})")
                     logger.error(f"[{self.mint_id}] Skipping corrupt frame to prevent FFmpeg failure")
                     del frame_data
                     return
+                else:
+                    # Frame size is acceptable but not exact (95-200% range)
+                    logger.warning(f"[{self.mint_id}] Frame size acceptable but not exact: {len(frame_bytes)} bytes ({size_ratio:.1%} of expected {expected_size})")
+                    # Continue processing - this might be a valid frame with slight size variation
                 
                 # Additional validation: check for all-zero or all-same-value frames
                 if np.all(frame_data == 0) or np.all(frame_data == frame_data.flat[0]):

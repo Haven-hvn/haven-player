@@ -807,17 +807,39 @@ class FFmpegRecorder:
                 actual_size = len(frame_data)
                 frame_format = None
                 
-                if abs(actual_size - rgb_size) < abs(actual_size - yuv420_size):
+                # Calculate bytes per pixel for analysis
+                bytes_per_pixel = actual_size / (width * height)
+                logger.info(f"[{self.mint_id}] 📊 Frame analysis: {actual_size} bytes, {bytes_per_pixel:.2f} bytes/pixel")
+                
+                # Check for exact matches first
+                if actual_size == rgb_size:
                     frame_format = "RGB"
                     logger.info(f"[{self.mint_id}] 📹 Detected RGB format: {actual_size} bytes")
-                elif abs(actual_size - yuv420_size) < abs(actual_size - yuv422_size):
+                elif actual_size == yuv420_size:
                     frame_format = "YUV420"
                     logger.info(f"[{self.mint_id}] 📹 Detected YUV420 format: {actual_size} bytes")
-                elif abs(actual_size - yuv422_size) < abs(actual_size - rgb_size):
+                elif actual_size == yuv422_size:
                     frame_format = "YUV422"
                     logger.info(f"[{self.mint_id}] 📹 Detected YUV422 format: {actual_size} bytes")
+                # Check for approximate matches (within 5% tolerance)
+                elif abs(actual_size - rgb_size) / rgb_size < 0.05:
+                    frame_format = "RGB_APPROX"
+                    logger.info(f"[{self.mint_id}] 📹 Detected RGB-like format: {actual_size} bytes (expected {rgb_size})")
+                elif abs(actual_size - yuv420_size) / yuv420_size < 0.05:
+                    frame_format = "YUV420_APPROX"
+                    logger.info(f"[{self.mint_id}] 📹 Detected YUV420-like format: {actual_size} bytes (expected {yuv420_size})")
+                elif abs(actual_size - yuv422_size) / yuv422_size < 0.05:
+                    frame_format = "YUV422_APPROX"
+                    logger.info(f"[{self.mint_id}] 📹 Detected YUV422-like format: {actual_size} bytes (expected {yuv422_size})")
+                # Check for intermediate formats
+                elif 2.0 <= bytes_per_pixel <= 2.5:
+                    frame_format = "YUV422_INTERMEDIATE"
+                    logger.info(f"[{self.mint_id}] 📹 Detected intermediate YUV422 format: {actual_size} bytes ({bytes_per_pixel:.2f} bytes/pixel)")
+                elif 2.5 < bytes_per_pixel <= 3.0:
+                    frame_format = "RGB_INTERMEDIATE"
+                    logger.info(f"[{self.mint_id}] 📹 Detected intermediate RGB format: {actual_size} bytes ({bytes_per_pixel:.2f} bytes/pixel)")
                 else:
-                    logger.error(f"[{self.mint_id}] ❌ Unknown frame format: {actual_size} bytes")
+                    logger.error(f"[{self.mint_id}] ❌ Unknown frame format: {actual_size} bytes ({bytes_per_pixel:.2f} bytes/pixel)")
                     logger.error(f"[{self.mint_id}] Expected: RGB={rgb_size}, YUV420={yuv420_size}, YUV422={yuv422_size}")
                     return
                 
@@ -828,11 +850,24 @@ class FFmpegRecorder:
                 logger.info(f"[{self.mint_id}] - Actual size: {len(frame_data)}")
                 
                 # Convert frame based on detected format
-                if frame_format == "RGB":
-                    # RGB format
+                if frame_format in ["RGB", "RGB_APPROX", "RGB_INTERMEDIATE"]:
+                    # RGB format (exact, approximate, or intermediate)
+                    if frame_format == "RGB_INTERMEDIATE":
+                        # For intermediate RGB, we might need to pad or truncate
+                        expected_size = height * width * 3
+                        if actual_size < expected_size:
+                            # Pad with zeros
+                            padding = np.zeros(expected_size - actual_size, dtype=np.uint8)
+                            frame_data = np.concatenate([frame_data, padding])
+                            logger.info(f"[{self.mint_id}] 📹 Padded intermediate RGB frame")
+                        elif actual_size > expected_size:
+                            # Truncate
+                            frame_data = frame_data[:expected_size]
+                            logger.info(f"[{self.mint_id}] 📹 Truncated intermediate RGB frame")
+                    
                     frame_data = frame_data.reshape(height, width, 3)
                     logger.info(f"[{self.mint_id}] ✅ Frame interpreted as RGB: {frame_data.shape}")
-                elif frame_format == "YUV420":
+                elif frame_format in ["YUV420", "YUV420_APPROX"]:
                     # YUV420 format - convert to RGB
                     logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV420, converting to RGB")
                     # YUV420 has Y plane (width*height) + U plane (width*height/4) + V plane (width*height/4)
@@ -858,9 +893,23 @@ class FFmpegRecorder:
                     
                     frame_data = np.stack([r, g, b], axis=2)
                     logger.info(f"[{self.mint_id}] ✅ YUV420 converted to RGB: {frame_data.shape}")
-                elif frame_format == "YUV422":
-                    # YUV422 format
+                elif frame_format in ["YUV422", "YUV422_APPROX", "YUV422_INTERMEDIATE"]:
+                    # YUV422 format (exact, approximate, or intermediate)
                     logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV422")
+                    
+                    if frame_format == "YUV422_INTERMEDIATE":
+                        # For intermediate YUV422, we might need to pad or truncate
+                        expected_size = height * width * 2
+                        if actual_size < expected_size:
+                            # Pad with zeros
+                            padding = np.zeros(expected_size - actual_size, dtype=np.uint8)
+                            frame_data = np.concatenate([frame_data, padding])
+                            logger.info(f"[{self.mint_id}] 📹 Padded intermediate YUV422 frame")
+                        elif actual_size > expected_size:
+                            # Truncate
+                            frame_data = frame_data[:expected_size]
+                            logger.info(f"[{self.mint_id}] 📹 Truncated intermediate YUV422 frame")
+                    
                     # For now, treat as grayscale and convert to RGB
                     frame_data = frame_data.reshape(height, width, 2)
                     # Take only Y channel and replicate for RGB

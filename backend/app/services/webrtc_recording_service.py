@@ -803,6 +803,17 @@ class FFmpegRecorder:
                 yuv422_size = width * height * 2
                 logger.info(f"[{self.mint_id}] Expected sizes: RGB={rgb_size}, YUV420={yuv420_size}, YUV422={yuv422_size}")
                 
+                # Validate frame data size
+                actual_size = len(frame_data)
+                if actual_size < rgb_size * 0.8:  # Less than 80% of expected RGB size
+                    logger.error(f"[{self.mint_id}] ❌ Frame too small: {actual_size} bytes, expected at least {rgb_size * 0.8}")
+                    logger.error(f"[{self.mint_id}] Skipping corrupted frame")
+                    return
+                elif actual_size > rgb_size * 1.5:  # More than 150% of expected RGB size
+                    logger.error(f"[{self.mint_id}] ❌ Frame too large: {actual_size} bytes, expected at most {rgb_size * 1.5}")
+                    logger.error(f"[{self.mint_id}] Skipping corrupted frame")
+                    return
+                
                 logger.info(f"[{self.mint_id}] Frame size analysis:")
                 logger.info(f"[{self.mint_id}] - RGB size: {rgb_size}")
                 logger.info(f"[{self.mint_id}] - YUV420 size: {yuv420_size}")
@@ -969,6 +980,13 @@ class FFmpegRecorder:
                     logger.info(f"[{self.mint_id}] Attempting to write {len(frame_bytes)} bytes to FFmpeg")
                     with self._ffmpeg_lock:
                         if self.ffmpeg_process.stdin:
+                            # Check if FFmpeg process is still alive
+                            if self.ffmpeg_process.poll() is not None:
+                                logger.error(f"[{self.mint_id}] FFmpeg process died (exit code: {self.ffmpeg_process.poll()})")
+                                self.ffmpeg_process = None
+                                self._shutdown = True
+                                return
+                            
                             try:
                                 self.ffmpeg_process.stdin.write(frame_bytes)
                                 self.ffmpeg_process.stdin.flush()  # Force flush to FFmpeg

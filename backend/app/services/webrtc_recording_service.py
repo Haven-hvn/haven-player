@@ -104,6 +104,18 @@ class FFmpegRecorder:
         else:
             return int(bitrate_str)
     
+    def _read_ffmpeg_log(self) -> str:
+        """Read the FFmpeg log file to see what happened."""
+        try:
+            ffmpeg_log_file = self.output_path.parent / f"{self.mint_id}_ffmpeg.log"
+            if ffmpeg_log_file.exists():
+                with open(ffmpeg_log_file, 'r') as f:
+                    return f.read()
+            else:
+                return "FFmpeg log file not found"
+        except Exception as e:
+            return f"Error reading FFmpeg log: {e}"
+    
     async def _continuous_track_detection(self):
         """Continuously try to find tracks and start frame processing."""
         logger.info(f"[{self.mint_id}] 🔍 Starting continuous track detection...")
@@ -505,10 +517,21 @@ class FFmpegRecorder:
             logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
             logger.info(f"[{self.mint_id}] Video track type: {type(self.video_track)}")
             frame_count = 0
+            last_frame_time = time.time()
             
             logger.info(f"[{self.mint_id}] 🔄 Starting VideoStream iteration...")
             async for event in rtc.VideoStream(self.video_track):
-                logger.info(f"[{self.mint_id}] 📹 VideoStream event received!")
+                current_time = time.time()
+                time_since_last = current_time - last_frame_time
+                logger.info(f"[{self.mint_id}] 📹 VideoStream event received! (time since last: {time_since_last:.2f}s)")
+                
+                # Check for frame timeout (if no frames for 10 seconds, something is wrong)
+                if time_since_last > 10.0 and frame_count > 0:
+                    logger.warning(f"[{self.mint_id}] ⚠️  Long gap between frames: {time_since_last:.2f}s")
+                    self._log_memory_usage(f"{self.mint_id} frame_gap_warning")
+                
+                last_frame_time = current_time
+                
                 if self._shutdown:
                     logger.info(f"[{self.mint_id}] Stop signal received, ending video processing")
                     break
@@ -521,12 +544,15 @@ class FFmpegRecorder:
                     await self._on_video_frame(frame)
                     frame_count += 1
                     
-                    # Log progress
-                    if frame_count % 100 == 0:
+                    # Log progress and memory usage
+                    if frame_count % 50 == 0:  # Log every 50 frames instead of 100
+                        self._log_memory_usage(f"{self.mint_id} video_frame_{frame_count}")
                         logger.info(f"[{self.mint_id}] Processed {frame_count} video frames")
                         
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error processing video frame {frame_count}: {e}")
+                    import traceback
+                    logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
                     continue
                     
         except asyncio.CancelledError:
@@ -625,16 +651,22 @@ class FFmpegRecorder:
         logger.info(f"[{self.mint_id}] FFmpeg command: {' '.join(ffmpeg_cmd)}")
         
         try:
-            # Start FFmpeg process
-            self.ffmpeg_process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0  # Unbuffered
-            )
+            # Create FFmpeg log file
+            ffmpeg_log_file = self.output_path.parent / f"{self.mint_id}_ffmpeg.log"
+            logger.info(f"[{self.mint_id}] FFmpeg log file: {ffmpeg_log_file}")
+            
+            # Start FFmpeg process with stderr redirected to log file
+            with open(ffmpeg_log_file, 'w') as log_file:
+                self.ffmpeg_process = subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=log_file,  # Redirect stderr to log file
+                    bufsize=0  # Unbuffered
+                )
             
             logger.info(f"[{self.mint_id}] ✅ FFmpeg process started (PID: {self.ffmpeg_process.pid})")
+            logger.info(f"[{self.mint_id}] FFmpeg stderr redirected to: {ffmpeg_log_file}")
             
         except FileNotFoundError:
             raise Exception("FFmpeg not found. Please install FFmpeg and ensure it's in your PATH.")
@@ -859,7 +891,14 @@ class FFmpegRecorder:
                     # Check if FFmpeg process is still alive
                     if self.ffmpeg_process.poll() is not None:
                         logger.error(f"[{self.mint_id}] FFmpeg process died with return code: {self.ffmpeg_process.returncode}")
+                        logger.error(f"[{self.mint_id}] FFmpeg stderr: {self.ffmpeg_process.stderr.read() if self.ffmpeg_process.stderr else 'None'}")
                         self.ffmpeg_process = None
+                        # Try to restart FFmpeg
+                        logger.info(f"[{self.mint_id}] 🔄 Attempting to restart FFmpeg...")
+                        await self._setup_ffmpeg()
+                        if not self.ffmpeg_process:
+                            logger.error(f"[{self.mint_id}] Failed to restart FFmpeg, falling back to raw recording")
+                            await self._setup_raw_recording()
                         return
                     
                     # FFmpeg mode: pipe to FFmpeg
@@ -923,10 +962,18 @@ class FFmpegRecorder:
             if self.video_frames_received % 100 == 0:
                 self._log_memory_usage(f"{self.mint_id} frame_{self.video_frames_received}")
                             
+        except MemoryError as e:
+            logger.error(f"[{self.mint_id}] Memory allocation failed: {e}")
+            self._log_memory_usage(f"{self.mint_id} memory_error")
+            # Force garbage collection and continue
+            gc.collect()
+            return
         except Exception as e:
             logger.error(f"[{self.mint_id}] Video frame processing error: {e}")
             import traceback
             logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
+            # Log memory usage on error
+            self._log_memory_usage(f"{self.mint_id} frame_error")
 
     async def _on_audio_frame(self, frame: rtc.AudioFrame):
         """Handle audio frame from LiveKit."""

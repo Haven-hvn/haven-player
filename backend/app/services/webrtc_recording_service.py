@@ -204,14 +204,15 @@ class FFmpegRecorder:
     async def get_status(self) -> Dict[str, Any]:
         """Get current recording status."""
         file_size = 0
-        if self.output_path and self.output_path.exists():
-            file_size = self.output_path.stat().st_size
+        recording_mode = "unknown"
         
         # Debug logging
         logger.info(f"[{self.mint_id}] Status check: state={self.state.value}, frames_received={self.video_frames_received}, frames_written={self.video_frames_written}")
-        logger.info(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process is not None}, output_path={self.output_path}")
+        logger.info(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process is not None}, raw_frames_dir: {self.raw_frames_dir}")
         
+        # Determine recording mode and calculate file size
         if self.ffmpeg_process:
+            recording_mode = "ffmpeg"
             logger.info(f"[{self.mint_id}] FFmpeg PID: {self.ffmpeg_process.pid}, returncode: {self.ffmpeg_process.returncode}")
             logger.info(f"[{self.mint_id}] FFmpeg stdin available: {self.ffmpeg_process.stdin is not None}")
             logger.info(f"[{self.mint_id}] FFmpeg stdout available: {self.ffmpeg_process.stdout is not None}")
@@ -220,16 +221,54 @@ class FFmpegRecorder:
             # Check if output file exists and its size
             if self.output_path and self.output_path.exists():
                 file_size = self.output_path.stat().st_size
-                logger.info(f"[{self.mint_id}] Output file size: {file_size} bytes")
+                logger.info(f"[{self.mint_id}] FFmpeg output file size: {file_size} bytes")
             else:
-                logger.warning(f"[{self.mint_id}] Output file does not exist: {self.output_path}")
+                logger.warning(f"[{self.mint_id}] FFmpeg output file does not exist: {self.output_path}")
+                
+        elif self.raw_frames_dir:
+            recording_mode = "raw_frames"
+            logger.info(f"[{self.mint_id}] Raw recording mode - checking frames directory")
+            logger.info(f"[{self.mint_id}] Raw frames directory: {self.raw_frames_dir}")
+            logger.info(f"[{self.mint_id}] Raw frames directory exists: {self.raw_frames_dir.exists()}")
+            
+            # Calculate total size of raw frames
+            if self.raw_frames_dir.exists():
+                total_size = 0
+                frame_count = 0
+                for frame_file in self.raw_frames_dir.glob("video_*.raw"):
+                    if frame_file.is_file():
+                        total_size += frame_file.stat().st_size
+                        frame_count += 1
+                file_size = total_size
+                logger.info(f"[{self.mint_id}] Raw frames: {frame_count} files, total size: {file_size} bytes")
+            else:
+                logger.warning(f"[{self.mint_id}] Raw frames directory does not exist")
+        else:
+            recording_mode = "none"
+            logger.warning(f"[{self.mint_id}] No recording mode active - neither FFmpeg nor raw frames")
+        
+        # Determine if we're actually recording based on state and frame activity
+        is_recording = (self.state == RecordingState.RECORDING and 
+                       (self.video_frames_received > 0 or self.audio_frames_received > 0))
+        
+        # Also check if we have an active recording process (FFmpeg or raw frames)
+        has_active_process = (self.ffmpeg_process is not None or 
+                             (self.raw_frames_dir is not None and self.raw_frames_dir.exists()))
+        
+        # Final recording status
+        is_recording = is_recording and has_active_process
+        
+        logger.info(f"[{self.mint_id}] Recording status: mode={recording_mode}, is_recording={is_recording}")
         
         return {
             "mint_id": self.mint_id,
             "state": self.state.value,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "output_path": str(self.output_path) if self.output_path else None,
+            "raw_frames_dir": str(self.raw_frames_dir) if self.raw_frames_dir else None,
             "file_size_mb": round(file_size / (1024 * 1024), 2),
+            "recording_mode": recording_mode,
+            "is_recording": is_recording,
             "tracks": len(self.tracks),
             "stats": {
                 "video_frames": self.video_frames_written,

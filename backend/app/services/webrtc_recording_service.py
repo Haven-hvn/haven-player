@@ -1108,11 +1108,12 @@ class FFmpegRecorder:
                     logger.info(f"[{self.mint_id}] Checking raw frames directory: {self.raw_frames_dir}")
                     logger.info(f"[{self.mint_id}] Raw frames directory is None: {self.raw_frames_dir is None}")
                     
-                    # CRITICAL: If raw recording is not available, we must stop to prevent memory leak
+                    # If raw recording is not available, we need to handle this gracefully
                     if not self.raw_frames_dir:
-                        logger.error(f"[{self.mint_id}] ❌ CRITICAL: Raw recording not available - stopping to prevent memory leak")
-                        logger.error(f"[{self.mint_id}] This indicates a setup failure - recording cannot continue")
-                        self._shutdown = True
+                        logger.warning(f"[{self.mint_id}] ⚠️ Raw recording not available - frames will be discarded")
+                        logger.warning(f"[{self.mint_id}] This is not ideal but prevents memory leaks")
+                        # Don't set _shutdown = True here - let frame processing continue
+                        # The frames will just be discarded instead of accumulated in memory
                         return
                     
                     if self.raw_frames_dir:

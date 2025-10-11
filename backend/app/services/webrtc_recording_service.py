@@ -644,6 +644,7 @@ class FFmpegRecorder:
         
         if not ffmpeg_available:
             logger.warning(f"[{self.mint_id}] FFmpeg not found, falling back to raw frame recording")
+            logger.warning(f"[{self.mint_id}] To fix this, install FFmpeg: https://ffmpeg.org/download.html")
             await self._setup_raw_recording()
             logger.info(f"[{self.mint_id}] Raw recording setup complete, raw_frames_dir: {self.raw_frames_dir}")
             return
@@ -720,11 +721,24 @@ class FFmpegRecorder:
         logger.info(f"[{self.mint_id}] Output directory: {self.output_dir}")
         logger.info(f"[{self.mint_id}] Mint ID: {self.mint_id}")
         
-        # Create raw frames directory
-        self.raw_frames_dir = self.output_dir / f"{self.mint_id}_frames"
-        logger.info(f"[{self.mint_id}] Creating raw frames directory: {self.raw_frames_dir}")
-        self.raw_frames_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"[{self.mint_id}] Raw frames directory created successfully")
+        try:
+            # Create raw frames directory
+            self.raw_frames_dir = self.output_dir / f"{self.mint_id}_frames"
+            logger.info(f"[{self.mint_id}] Creating raw frames directory: {self.raw_frames_dir}")
+            self.raw_frames_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"[{self.mint_id}] Raw frames directory created successfully")
+            
+            # Verify directory was created
+            if not self.raw_frames_dir.exists():
+                raise Exception(f"Failed to create raw frames directory: {self.raw_frames_dir}")
+                
+            logger.info(f"[{self.mint_id}] ✅ Raw recording setup complete")
+            
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] ❌ Failed to setup raw recording: {e}")
+            logger.error(f"[{self.mint_id}] This will cause memory issues - stopping recording")
+            self._shutdown = True
+            raise
         
         # Create metadata file
         metadata_file = self.raw_frames_dir / "metadata.json"
@@ -878,21 +892,32 @@ class FFmpegRecorder:
                     u_plane = frame_data[y_size:y_size + uv_size].reshape(height // 2, width // 2)
                     v_plane = frame_data[y_size + uv_size:y_size + 2 * uv_size].reshape(height // 2, width // 2)
                     
-                    # Upsample U and V planes to full resolution
-                    u_upsampled = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)
-                    v_upsampled = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)
-                    
-                    # Convert YUV to RGB (simplified conversion)
-                    y = y_plane.astype(np.float32)
-                    u = u_upsampled.astype(np.float32) - 128
-                    v = v_upsampled.astype(np.float32) - 128
-                    
-                    r = np.clip(y + 1.402 * v, 0, 255).astype(np.uint8)
-                    g = np.clip(y - 0.344136 * u - 0.714136 * v, 0, 255).astype(np.uint8)
-                    b = np.clip(y + 1.772 * u, 0, 255).astype(np.uint8)
-                    
-                    frame_data = np.stack([r, g, b], axis=2)
-                    logger.info(f"[{self.mint_id}] ✅ YUV420 converted to RGB: {frame_data.shape}")
+                    # Memory-optimized YUV420 to RGB conversion
+                    try:
+                        # Upsample U and V planes to full resolution
+                        u_upsampled = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)
+                        v_upsampled = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)
+                        
+                        # Convert YUV to RGB (memory-optimized)
+                        y = y_plane.astype(np.float32)
+                        u = u_upsampled.astype(np.float32) - 128
+                        v = v_upsampled.astype(np.float32) - 128
+                        
+                        r = np.clip(y + 1.402 * v, 0, 255).astype(np.uint8)
+                        g = np.clip(y - 0.344136 * u - 0.714136 * v, 0, 255).astype(np.uint8)
+                        b = np.clip(y + 1.772 * u, 0, 255).astype(np.uint8)
+                        
+                        frame_data = np.stack([r, g, b], axis=2)
+                        
+                        # Free intermediate arrays immediately
+                        del u_upsampled, v_upsampled, y, u, v, r, g, b
+                        
+                        logger.info(f"[{self.mint_id}] ✅ YUV420 converted to RGB: {frame_data.shape}")
+                        
+                    except MemoryError as e:
+                        logger.error(f"[{self.mint_id}] ❌ Memory error during YUV420 conversion: {e}")
+                        logger.error(f"[{self.mint_id}] Skipping frame due to memory constraints")
+                        return
                 elif frame_format in ["YUV422", "YUV422_APPROX", "YUV422_INTERMEDIATE"]:
                     # YUV422 format (exact, approximate, or intermediate)
                     logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV422")
@@ -1081,6 +1106,14 @@ class FFmpegRecorder:
                     # Raw mode: save individual frames
                     logger.info(f"[{self.mint_id}] Checking raw frames directory: {self.raw_frames_dir}")
                     logger.info(f"[{self.mint_id}] Raw frames directory is None: {self.raw_frames_dir is None}")
+                    
+                    # CRITICAL: If raw recording is not available, we must stop to prevent memory leak
+                    if not self.raw_frames_dir:
+                        logger.error(f"[{self.mint_id}] ❌ CRITICAL: Raw recording not available - stopping to prevent memory leak")
+                        logger.error(f"[{self.mint_id}] This indicates a setup failure - recording cannot continue")
+                        self._shutdown = True
+                        return
+                    
                     if self.raw_frames_dir:
                         logger.info(f"[{self.mint_id}] Raw frames directory exists: {self.raw_frames_dir.exists()}")
                         frame_file = self.raw_frames_dir / f"video_{self.video_frames_written:06d}.raw"
@@ -1098,6 +1131,7 @@ class FFmpegRecorder:
                         logger.warning(f"[{self.mint_id}] Raw frames directory not available for video")
                         logger.warning(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process is not None}")
                         logger.warning(f"[{self.mint_id}] Raw frames dir: {self.raw_frames_dir}")
+                        logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
             else:
                 logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
             
@@ -1108,6 +1142,18 @@ class FFmpegRecorder:
             
             # Force garbage collection to free memory
             gc.collect()
+            
+            # Check memory usage and stop if too high
+            try:
+                import psutil
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                if memory_mb > 1000:  # Stop if using more than 1GB
+                    logger.error(f"[{self.mint_id}] ❌ Memory usage too high: {memory_mb:.1f}MB - stopping recording")
+                    self._shutdown = True
+                    return
+            except ImportError:
+                pass  # psutil not available, continue
             
             # Log memory usage every 100 frames
             if self.video_frames_received % 100 == 0:

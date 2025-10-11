@@ -77,6 +77,10 @@ class FFmpegRecorder:
         self.video_frames_written = 0
         self.audio_frames_written = 0
         
+        # Threading for FFmpeg communication
+        self._ffmpeg_lock = threading.Lock()
+        self._shutdown = False
+        
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
         try:
@@ -86,10 +90,19 @@ class FFmpegRecorder:
             logger.info(f"[{context}] Memory usage: {memory_mb:.1f} MB")
         except Exception as e:
             logger.warning(f"[{context}] Could not get memory usage: {e}")
+    
+    def _parse_bitrate(self, bitrate_str: str) -> int:
+        """Parse bitrate string (e.g., '2M', '128k') to integer."""
+        if isinstance(bitrate_str, int):
+            return bitrate_str
         
-        # Threading for FFmpeg communication
-        self._ffmpeg_lock = threading.Lock()
-        self._shutdown = False
+        bitrate_str = str(bitrate_str).upper()
+        if bitrate_str.endswith('K'):
+            return int(bitrate_str[:-1]) * 1000
+        elif bitrate_str.endswith('M'):
+            return int(bitrate_str[:-1]) * 1000000
+        else:
+            return int(bitrate_str)
 
     async def start(self) -> Dict[str, Any]:
         """Start recording using FFmpeg subprocess."""
@@ -559,11 +572,11 @@ class FFmpegRecorder:
             '-g', '30',  # Keyframe interval (every 30 frames)
             '-keyint_min', '30',  # Minimum keyframe interval
             '-sc_threshold', '0',  # Disable scene change detection
-            '-b:v', self.config['video_bitrate'],  # Video bitrate
-            '-maxrate', self.config['video_bitrate'],  # Maximum bitrate
-            '-bufsize', str(int(self.config['video_bitrate']) * 2),  # Buffer size
+            '-b:v', str(self._parse_bitrate(self.config['video_bitrate'])),  # Video bitrate
+            '-maxrate', str(self._parse_bitrate(self.config['video_bitrate'])),  # Maximum bitrate
+            '-bufsize', str(self._parse_bitrate(self.config['video_bitrate']) * 2),  # Buffer size
             '-c:a', self.config['audio_codec'],  # Audio codec
-            '-b:a', self.config['audio_bitrate'],  # Audio bitrate
+            '-b:a', str(self._parse_bitrate(self.config['audio_bitrate'])),  # Audio bitrate
             '-f', 'mpegts',  # Output format: MPEG-TS (streams to disk)
             '-muxrate', '10000000',  # Mux rate for MPEG-TS
             '-pcr_period', '20',  # PCR period for MPEG-TS

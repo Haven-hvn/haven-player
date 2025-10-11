@@ -530,7 +530,7 @@ class FFmpegRecorder:
             logger.info(f"[{self.mint_id}] Raw recording setup complete, raw_frames_dir: {self.raw_frames_dir}")
             return
         
-        # Build FFmpeg command for MPEG-TS streaming
+        # Build FFmpeg command for MPEG-TS streaming with proper parameters
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',  # Overwrite output file
@@ -546,10 +546,17 @@ class FFmpegRecorder:
             '-c:v', self.config['video_codec'],  # Video codec
             '-preset', 'ultrafast',  # Fast encoding
             '-tune', 'zerolatency',  # No buffering
+            '-g', '30',  # Keyframe interval (every 30 frames)
+            '-keyint_min', '30',  # Minimum keyframe interval
+            '-sc_threshold', '0',  # Disable scene change detection
             '-b:v', self.config['video_bitrate'],  # Video bitrate
+            '-maxrate', self.config['video_bitrate'],  # Maximum bitrate
+            '-bufsize', str(int(self.config['video_bitrate']) * 2),  # Buffer size
             '-c:a', self.config['audio_codec'],  # Audio codec
             '-b:a', self.config['audio_bitrate'],  # Audio bitrate
             '-f', 'mpegts',  # Output format: MPEG-TS (streams to disk)
+            '-muxrate', '10000000',  # Mux rate for MPEG-TS
+            '-pcr_period', '20',  # PCR period for MPEG-TS
             str(self.output_path)  # Output file
         ]
         
@@ -764,13 +771,38 @@ class FFmpegRecorder:
             
             # Convert to bytes for FFmpeg (streaming approach to reduce memory)
             if len(frame_data.shape) == 3 and frame_data.shape[2] in [3, 4]:  # RGB or RGBA
+                # Validate frame dimensions match expected resolution
+                expected_height, expected_width = self.config['height'], self.config['width']
+                actual_height, actual_width = frame_data.shape[:2]
+                
+                if actual_height != expected_height or actual_width != expected_width:
+                    logger.warning(f"[{self.mint_id}] Frame size mismatch: expected {expected_width}x{expected_height}, got {actual_width}x{actual_height}")
+                    # Resize frame to match expected dimensions
+                    from scipy import ndimage
+                    scale_y = expected_height / actual_height
+                    scale_x = expected_width / actual_width
+                    frame_data = ndimage.zoom(frame_data, (scale_y, scale_x, 1), order=1)
+                    logger.info(f"[{self.mint_id}] Resized frame to {frame_data.shape[:2]}")
+                
                 # Convert to uint8 and get bytes in one step to avoid intermediate copies
                 frame_bytes = frame_data.astype(np.uint8).tobytes()
+                
+                # Validate frame size
+                expected_size = expected_width * expected_height * 3  # RGB24
+                if len(frame_bytes) != expected_size:
+                    logger.warning(f"[{self.mint_id}] Frame size mismatch: expected {expected_size} bytes, got {len(frame_bytes)} bytes")
+                    return
                 
                 # Immediately free the numpy array to reduce memory pressure
                 del frame_data
                 
                 if self.ffmpeg_process:
+                    # Check if FFmpeg process is still alive
+                    if self.ffmpeg_process.poll() is not None:
+                        logger.error(f"[{self.mint_id}] FFmpeg process died with return code: {self.ffmpeg_process.returncode}")
+                        self.ffmpeg_process = None
+                        return
+                    
                     # FFmpeg mode: pipe to FFmpeg
                     logger.info(f"[{self.mint_id}] Attempting to write {len(frame_bytes)} bytes to FFmpeg")
                     with self._ffmpeg_lock:
@@ -786,6 +818,10 @@ class FFmpegRecorder:
                                 
                                 if self.video_frames_written % 30 == 0:  # Log every second
                                     logger.info(f"[{self.mint_id}] Written {self.video_frames_written} video frames to FFmpeg")
+                            except BrokenPipeError:
+                                logger.error(f"[{self.mint_id}] FFmpeg process broken pipe - process may have died")
+                                logger.error(f"[{self.mint_id}] FFmpeg return code: {self.ffmpeg_process.poll()}")
+                                self.ffmpeg_process = None
                             except Exception as write_error:
                                 logger.error(f"[{self.mint_id}] Error writing to FFmpeg: {write_error}")
                         else:

@@ -644,7 +644,10 @@ class FFmpegRecorder:
         
         if not ffmpeg_available:
             logger.warning(f"[{self.mint_id}] FFmpeg not found, falling back to raw frame recording")
-            logger.warning(f"[{self.mint_id}] To fix this, install FFmpeg: https://ffmpeg.org/download.html")
+            logger.warning(f"[{self.mint_id}] To fix this, install FFmpeg:")
+            logger.warning(f"[{self.mint_id}] Windows: Download from https://ffmpeg.org/download.html")
+            logger.warning(f"[{self.mint_id}] macOS: brew install ffmpeg")
+            logger.warning(f"[{self.mint_id}] Linux: apt install ffmpeg or yum install ffmpeg")
             await self._setup_raw_recording()
             logger.info(f"[{self.mint_id}] Raw recording setup complete, raw_frames_dir: {self.raw_frames_dir}")
             return
@@ -737,6 +740,7 @@ class FFmpegRecorder:
         except Exception as e:
             logger.error(f"[{self.mint_id}] ❌ Failed to setup raw recording: {e}")
             logger.error(f"[{self.mint_id}] This will cause memory issues - stopping recording")
+            logger.error(f"[{self.mint_id}] Please install FFmpeg to enable proper recording")
             self._shutdown = True
             raise
         
@@ -760,17 +764,14 @@ class FFmpegRecorder:
         """Start frame processing tasks."""
         logger.info(f"[{self.mint_id}] Starting frame processing")
         
-        # Since LiveKit tracks don't support direct frame handlers, we'll use a different approach
-        # For now, we'll create a simple recording that at least starts the FFmpeg process
-        # TODO: Implement proper frame capture using LiveKit's MediaRecorder or alternative approach
-        
         if self.video_track:
             logger.info(f"[{self.mint_id}] Video track available: {self.video_track.sid}")
         if self.audio_track:
             logger.info(f"[{self.mint_id}] Audio track available: {self.audio_track.sid}")
         
-        logger.info(f"[{self.mint_id}] ⚠️  Frame processing started but no direct frame handlers available")
-        logger.info(f"[{self.mint_id}] ⚠️  This is a limitation of the current LiveKit API - frames may not be captured")
+        # Start the frame processing tasks
+        logger.info(f"[{self.mint_id}] 🚀 Starting frame processing tasks...")
+        await self._poll_frames()
 
     async def _on_video_frame(self, frame: rtc.VideoFrame):
         """Handle video frame from LiveKit."""

@@ -331,6 +331,11 @@ class FFmpegRecorder:
         
         logger.info(f"[{self.mint_id}] Recording status: mode={recording_mode}, is_recording={is_recording}")
         
+        # Get FFmpeg log if available
+        ffmpeg_log = ""
+        if self.ffmpeg_process and self.ffmpeg_process.poll() is not None:
+            ffmpeg_log = self._read_ffmpeg_log()
+        
         return {
             "mint_id": self.mint_id,
             "state": self.state.value,
@@ -350,7 +355,8 @@ class FFmpegRecorder:
                 "connection_time": 0.0,
                 "subscription_time": 0.0
             },
-            "config": self.config
+            "config": self.config,
+            "ffmpeg_log": ffmpeg_log if ffmpeg_log else None
         }
 
     def _find_participant(self) -> Optional[rtc.RemoteParticipant]:
@@ -891,7 +897,9 @@ class FFmpegRecorder:
                     # Check if FFmpeg process is still alive
                     if self.ffmpeg_process.poll() is not None:
                         logger.error(f"[{self.mint_id}] FFmpeg process died with return code: {self.ffmpeg_process.returncode}")
-                        logger.error(f"[{self.mint_id}] FFmpeg stderr: {self.ffmpeg_process.stderr.read() if self.ffmpeg_process.stderr else 'None'}")
+                        # Read FFmpeg log to see what happened
+                        ffmpeg_log = self._read_ffmpeg_log()
+                        logger.error(f"[{self.mint_id}] FFmpeg log output:\n{ffmpeg_log}")
                         self.ffmpeg_process = None
                         # Try to restart FFmpeg
                         logger.info(f"[{self.mint_id}] 🔄 Attempting to restart FFmpeg...")

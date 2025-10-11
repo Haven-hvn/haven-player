@@ -803,15 +803,22 @@ class FFmpegRecorder:
                 yuv422_size = width * height * 2
                 logger.info(f"[{self.mint_id}] Expected sizes: RGB={rgb_size}, YUV420={yuv420_size}, YUV422={yuv422_size}")
                 
-                # Validate frame data size
+                # Determine frame format based on actual size
                 actual_size = len(frame_data)
-                if actual_size < rgb_size * 0.8:  # Less than 80% of expected RGB size
-                    logger.error(f"[{self.mint_id}] ❌ Frame too small: {actual_size} bytes, expected at least {rgb_size * 0.8}")
-                    logger.error(f"[{self.mint_id}] Skipping corrupted frame")
-                    return
-                elif actual_size > rgb_size * 1.5:  # More than 150% of expected RGB size
-                    logger.error(f"[{self.mint_id}] ❌ Frame too large: {actual_size} bytes, expected at most {rgb_size * 1.5}")
-                    logger.error(f"[{self.mint_id}] Skipping corrupted frame")
+                frame_format = None
+                
+                if abs(actual_size - rgb_size) < abs(actual_size - yuv420_size):
+                    frame_format = "RGB"
+                    logger.info(f"[{self.mint_id}] 📹 Detected RGB format: {actual_size} bytes")
+                elif abs(actual_size - yuv420_size) < abs(actual_size - yuv422_size):
+                    frame_format = "YUV420"
+                    logger.info(f"[{self.mint_id}] 📹 Detected YUV420 format: {actual_size} bytes")
+                elif abs(actual_size - yuv422_size) < abs(actual_size - rgb_size):
+                    frame_format = "YUV422"
+                    logger.info(f"[{self.mint_id}] 📹 Detected YUV422 format: {actual_size} bytes")
+                else:
+                    logger.error(f"[{self.mint_id}] ❌ Unknown frame format: {actual_size} bytes")
+                    logger.error(f"[{self.mint_id}] Expected: RGB={rgb_size}, YUV420={yuv420_size}, YUV422={yuv422_size}")
                     return
                 
                 logger.info(f"[{self.mint_id}] Frame size analysis:")
@@ -820,12 +827,12 @@ class FFmpegRecorder:
                 logger.info(f"[{self.mint_id}] - YUV422 size: {yuv422_size}")
                 logger.info(f"[{self.mint_id}] - Actual size: {len(frame_data)}")
                 
-                # Try different format interpretations
-                if len(frame_data) == rgb_size:
+                # Convert frame based on detected format
+                if frame_format == "RGB":
                     # RGB format
                     frame_data = frame_data.reshape(height, width, 3)
                     logger.info(f"[{self.mint_id}] ✅ Frame interpreted as RGB: {frame_data.shape}")
-                elif len(frame_data) == yuv420_size:
+                elif frame_format == "YUV420":
                     # YUV420 format - convert to RGB
                     logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV420, converting to RGB")
                     # YUV420 has Y plane (width*height) + U plane (width*height/4) + V plane (width*height/4)
@@ -851,7 +858,7 @@ class FFmpegRecorder:
                     
                     frame_data = np.stack([r, g, b], axis=2)
                     logger.info(f"[{self.mint_id}] ✅ YUV420 converted to RGB: {frame_data.shape}")
-                elif len(frame_data) == yuv422_size:
+                elif frame_format == "YUV422":
                     # YUV422 format
                     logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV422")
                     # For now, treat as grayscale and convert to RGB
@@ -861,44 +868,8 @@ class FFmpegRecorder:
                     frame_data = np.stack([y_channel, y_channel, y_channel], axis=2)
                     logger.info(f"[{self.mint_id}] ✅ YUV422 converted to RGB: {frame_data.shape}")
                 else:
-                    # Unknown format - try to make it work
-                    logger.warning(f"[{self.mint_id}] ❌ Unknown frame format, attempting flexible conversion")
-                    
-                    # Try to determine the best interpretation
-                    if len(frame_data) > 0:
-                        # Calculate possible dimensions
-                        total_pixels = len(frame_data)
-                        
-                        # Try different channel counts
-                        for channels in [1, 2, 3, 4]:
-                            if total_pixels % channels == 0:
-                                pixels_per_channel = total_pixels // channels
-                                # Try to find reasonable dimensions
-                                for h in range(1, int(np.sqrt(pixels_per_channel)) + 1):
-                                    if pixels_per_channel % h == 0:
-                                        w = pixels_per_channel // h
-                                        if abs(w - width) < 100 and abs(h - height) < 100:  # Close to expected dimensions
-                                            try:
-                                                frame_data = frame_data.reshape(h, w, channels)
-                                                if channels == 1:
-                                                    # Grayscale - convert to RGB
-                                                    frame_data = np.stack([frame_data[:,:,0], frame_data[:,:,0], frame_data[:,:,0]], axis=2)
-                                                elif channels == 2:
-                                                    # Take first channel and replicate
-                                                    frame_data = np.stack([frame_data[:,:,0], frame_data[:,:,0], frame_data[:,:,0]], axis=2)
-                                                elif channels == 4:
-                                                    # RGBA - take RGB
-                                                    frame_data = frame_data[:,:,:3]
-                                                logger.info(f"[{self.mint_id}] ✅ Flexible conversion successful: {frame_data.shape}")
-                                                break
-                                            except:
-                                                continue
-                                if len(frame_data.shape) == 3:
-                                    break
-                    
-                    if len(frame_data.shape) != 3:
-                        logger.error(f"[{self.mint_id}] ❌ Could not convert frame data")
-                        return
+                    logger.error(f"[{self.mint_id}] ❌ Unknown frame format: {frame_format}")
+                    return
                     
             except Exception as e:
                 logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}")

@@ -887,8 +887,40 @@ class FFmpegRecorder:
                 # Validate frame size
                 expected_size = actual_width * actual_height * 3  # RGB24
                 if len(frame_bytes) != expected_size:
-                    logger.warning(f"[{self.mint_id}] Frame size mismatch: expected {expected_size} bytes, got {len(frame_bytes)} bytes")
+                    logger.error(f"[{self.mint_id}] Frame size mismatch: expected {expected_size} bytes, got {len(frame_bytes)} bytes")
+                    logger.error(f"[{self.mint_id}] Skipping corrupt frame to prevent FFmpeg failure")
+                    del frame_data
                     return
+                
+                # Additional validation: check for all-zero or all-same-value frames
+                if np.all(frame_data == 0) or np.all(frame_data == frame_data.flat[0]):
+                    logger.warning(f"[{self.mint_id}] Detected suspicious frame (all zeros or same value)")
+                    # Still process it, but log the warning
+                
+                # Validate frame data integrity before sending to FFmpeg
+                if len(frame_bytes) == 0:
+                    logger.error(f"[{self.mint_id}] Empty frame data - skipping")
+                    del frame_data
+                    return
+                
+                # Check for frame data corruption patterns
+                if len(frame_bytes) < expected_size * 0.5:  # Less than half expected size
+                    logger.error(f"[{self.mint_id}] Frame data too small - likely corrupted")
+                    del frame_data
+                    return
+                
+                # Check for frame data that's too large (indicates corruption)
+                if len(frame_bytes) > expected_size * 2:  # More than double expected size
+                    logger.error(f"[{self.mint_id}] Frame data too large - likely corrupted")
+                    del frame_data
+                    return
+                
+                # Validate frame data has reasonable pixel values (not all 0 or 255)
+                if len(frame_bytes) > 0:
+                    unique_bytes = len(set(frame_bytes))
+                    if unique_bytes < 10:  # Less than 10 unique byte values suggests corruption
+                        logger.warning(f"[{self.mint_id}] Frame has only {unique_bytes} unique byte values - may be corrupted")
+                        # Still process it, but log the warning
                 
                 # Immediately free the numpy array to reduce memory pressure
                 del frame_data
@@ -900,13 +932,9 @@ class FFmpegRecorder:
                         # Read FFmpeg log to see what happened
                         ffmpeg_log = self._read_ffmpeg_log()
                         logger.error(f"[{self.mint_id}] FFmpeg log output:\n{ffmpeg_log}")
+                        logger.error(f"[{self.mint_id}] FFmpeg failed due to bad input data - stopping recording")
                         self.ffmpeg_process = None
-                        # Try to restart FFmpeg
-                        logger.info(f"[{self.mint_id}] 🔄 Attempting to restart FFmpeg...")
-                        await self._setup_ffmpeg()
-                        if not self.ffmpeg_process:
-                            logger.error(f"[{self.mint_id}] Failed to restart FFmpeg, falling back to raw recording")
-                            await self._setup_raw_recording()
+                        self._shutdown = True
                         return
                     
                     # FFmpeg mode: pipe to FFmpeg
@@ -927,9 +955,20 @@ class FFmpegRecorder:
                             except BrokenPipeError:
                                 logger.error(f"[{self.mint_id}] FFmpeg process broken pipe - process may have died")
                                 logger.error(f"[{self.mint_id}] FFmpeg return code: {self.ffmpeg_process.poll()}")
+                                # Read FFmpeg log to see what happened
+                                ffmpeg_log = self._read_ffmpeg_log()
+                                logger.error(f"[{self.mint_id}] FFmpeg log:\n{ffmpeg_log}")
+                                logger.error(f"[{self.mint_id}] FFmpeg failed due to bad input data - stopping recording")
                                 self.ffmpeg_process = None
+                                self._shutdown = True
                             except Exception as write_error:
                                 logger.error(f"[{self.mint_id}] Error writing to FFmpeg: {write_error}")
+                                # Read FFmpeg log to see what happened
+                                ffmpeg_log = self._read_ffmpeg_log()
+                                logger.error(f"[{self.mint_id}] FFmpeg log:\n{ffmpeg_log}")
+                                logger.error(f"[{self.mint_id}] FFmpeg failed due to bad input data - stopping recording")
+                                self.ffmpeg_process = None
+                                self._shutdown = True
                         else:
                             logger.error(f"[{self.mint_id}] FFmpeg stdin is None!")
                             logger.error(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process}")

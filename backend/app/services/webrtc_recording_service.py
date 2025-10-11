@@ -596,37 +596,95 @@ class FFmpegRecorder:
                     frame_data = np.frombuffer(buffer, dtype=np.uint8)
                     logger.info(f"[{self.mint_id}] Converted buffer to numpy array: {frame_data.shape}")
                     
-                # Reshape based on expected format (RGB)
-                expected_size = width * height * 3  # RGB format
-                logger.info(f"[{self.mint_id}] Expected size: {expected_size}, actual size: {len(frame_data)}")
+                # Determine frame format based on size
+                rgb_size = width * height * 3
+                yuv420_size = width * height * 3 // 2  # YUV420 is 1.5 bytes per pixel
+                yuv422_size = width * height * 2
                 
-                if len(frame_data) == expected_size:
+                logger.info(f"[{self.mint_id}] Frame size analysis:")
+                logger.info(f"[{self.mint_id}] - RGB size: {rgb_size}")
+                logger.info(f"[{self.mint_id}] - YUV420 size: {yuv420_size}")
+                logger.info(f"[{self.mint_id}] - YUV422 size: {yuv422_size}")
+                logger.info(f"[{self.mint_id}] - Actual size: {len(frame_data)}")
+                
+                # Try different format interpretations
+                if len(frame_data) == rgb_size:
+                    # RGB format
                     frame_data = frame_data.reshape(height, width, 3)
-                    logger.info(f"[{self.mint_id}] ✅ Frame reshaped to RGB: {frame_data.shape}")
+                    logger.info(f"[{self.mint_id}] ✅ Frame interpreted as RGB: {frame_data.shape}")
+                elif len(frame_data) == yuv420_size:
+                    # YUV420 format - convert to RGB
+                    logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV420, converting to RGB")
+                    # YUV420 has Y plane (width*height) + U plane (width*height/4) + V plane (width*height/4)
+                    y_size = width * height
+                    uv_size = width * height // 4
+                    
+                    y_plane = frame_data[:y_size].reshape(height, width)
+                    u_plane = frame_data[y_size:y_size + uv_size].reshape(height // 2, width // 2)
+                    v_plane = frame_data[y_size + uv_size:y_size + 2 * uv_size].reshape(height // 2, width // 2)
+                    
+                    # Upsample U and V planes to full resolution
+                    u_upsampled = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)
+                    v_upsampled = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)
+                    
+                    # Convert YUV to RGB (simplified conversion)
+                    y = y_plane.astype(np.float32)
+                    u = u_upsampled.astype(np.float32) - 128
+                    v = v_upsampled.astype(np.float32) - 128
+                    
+                    r = np.clip(y + 1.402 * v, 0, 255).astype(np.uint8)
+                    g = np.clip(y - 0.344136 * u - 0.714136 * v, 0, 255).astype(np.uint8)
+                    b = np.clip(y + 1.772 * u, 0, 255).astype(np.uint8)
+                    
+                    frame_data = np.stack([r, g, b], axis=2)
+                    logger.info(f"[{self.mint_id}] ✅ YUV420 converted to RGB: {frame_data.shape}")
+                elif len(frame_data) == yuv422_size:
+                    # YUV422 format
+                    logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV422")
+                    # For now, treat as grayscale and convert to RGB
+                    frame_data = frame_data.reshape(height, width, 2)
+                    # Take only Y channel and replicate for RGB
+                    y_channel = frame_data[:, :, 0]
+                    frame_data = np.stack([y_channel, y_channel, y_channel], axis=2)
+                    logger.info(f"[{self.mint_id}] ✅ YUV422 converted to RGB: {frame_data.shape}")
                 else:
-                    logger.warning(f"[{self.mint_id}] ❌ Unexpected frame size: {len(frame_data)} bytes, expected {expected_size}")
-                    # Try to continue with what we have
+                    # Unknown format - try to make it work
+                    logger.warning(f"[{self.mint_id}] ❌ Unknown frame format, attempting flexible conversion")
+                    
+                    # Try to determine the best interpretation
                     if len(frame_data) > 0:
-                        logger.info(f"[{self.mint_id}] Attempting to use partial frame data")
-                        # Use as much data as we have
-                        usable_size = (len(frame_data) // 3) * 3  # Round down to multiple of 3
-                        if usable_size > 0:
-                            frame_data = frame_data[:usable_size]
-                            # Try to reshape to a reasonable size
-                            pixels = usable_size // 3
-                            h = int(np.sqrt(pixels * height / width))
-                            w = pixels // h
-                            if w > 0 and h > 0:
-                                frame_data = frame_data.reshape(h, w, 3)
-                                logger.info(f"[{self.mint_id}] Reshaped to partial frame: {frame_data.shape}")
-                            else:
-                                logger.warning(f"[{self.mint_id}] Cannot reshape partial frame")
-                                return
-                        else:
-                            logger.warning(f"[{self.mint_id}] No usable frame data")
-                            return
-                    else:
-                        logger.warning(f"[{self.mint_id}] Empty frame data")
+                        # Calculate possible dimensions
+                        total_pixels = len(frame_data)
+                        
+                        # Try different channel counts
+                        for channels in [1, 2, 3, 4]:
+                            if total_pixels % channels == 0:
+                                pixels_per_channel = total_pixels // channels
+                                # Try to find reasonable dimensions
+                                for h in range(1, int(np.sqrt(pixels_per_channel)) + 1):
+                                    if pixels_per_channel % h == 0:
+                                        w = pixels_per_channel // h
+                                        if abs(w - width) < 100 and abs(h - height) < 100:  # Close to expected dimensions
+                                            try:
+                                                frame_data = frame_data.reshape(h, w, channels)
+                                                if channels == 1:
+                                                    # Grayscale - convert to RGB
+                                                    frame_data = np.stack([frame_data[:,:,0], frame_data[:,:,0], frame_data[:,:,0]], axis=2)
+                                                elif channels == 2:
+                                                    # Take first channel and replicate
+                                                    frame_data = np.stack([frame_data[:,:,0], frame_data[:,:,0], frame_data[:,:,0]], axis=2)
+                                                elif channels == 4:
+                                                    # RGBA - take RGB
+                                                    frame_data = frame_data[:,:,:3]
+                                                logger.info(f"[{self.mint_id}] ✅ Flexible conversion successful: {frame_data.shape}")
+                                                break
+                                            except:
+                                                continue
+                                if len(frame_data.shape) == 3:
+                                    break
+                    
+                    if len(frame_data.shape) != 3:
+                        logger.error(f"[{self.mint_id}] ❌ Could not convert frame data")
                         return
                     
             except Exception as e:

@@ -364,6 +364,9 @@ class AiortcFileRecorder:
         # Video normalization
         self.video_normalizer = VideoNormalizer(config)
         
+        # Lazy initialization flag
+        self._container_initialized = False
+        
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
         try:
@@ -449,15 +452,8 @@ class AiortcFileRecorder:
                 # Schedule continuous detection as fallback
                 asyncio.create_task(self._continuous_track_detection())
 
-            # Give frame polling time to start and receive frames
-            logger.info(f"[{self.mint_id}] ⏳ Waiting for frame polling to start and receive frames...")
-            await asyncio.sleep(2.0)  # Give frame polling 2 seconds to start and receive frames
-
-            # Check if we received any frames after giving frame polling time
-            if self.video_frames_received == 0:
-                logger.warning(f"[{self.mint_id}] ⚠️  No video frames received after 2s - frame polling may still be starting")
-            else:
-                logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
+            # Frame processing will handle container initialization when first frame arrives
+            logger.info(f"[{self.mint_id}] ⏳ Frame processing will initialize container on first frame")
 
             # Check LiveKit room connection status
             if not self.room.isconnected():
@@ -467,9 +463,6 @@ class AiortcFileRecorder:
 
             # State: SUBSCRIBING → SUBSCRIBED
             self.state = RecordingState.SUBSCRIBED
-
-            # Setup PyAV container
-            await self._setup_container()
 
             # Start frame processing (if we have tracks)
             if self.video_track or self.audio_track:
@@ -802,7 +795,7 @@ class AiortcFileRecorder:
             frame_count = 0
             last_frame_time = time.time()
             
-            logger.info(f"[{self.mint_id}] 🔄 Starting VideoStream iteration...")
+            logger.debug(f"[{self.mint_id}] Entering VideoStream async loop for {self.video_track.sid}")
             async for event in rtc.VideoStream(self.video_track):
                 current_time = time.time()
                 time_since_last = current_time - last_frame_time
@@ -869,6 +862,7 @@ class AiortcFileRecorder:
             logger.info(f"[{self.mint_id}] 🎵 Starting audio stream processing")
             frame_count = 0
             
+            logger.debug(f"[{self.mint_id}] Entering AudioStream async loop for {self.audio_track.sid}")
             async for event in rtc.AudioStream(self.audio_track):
                 if self._shutdown_event.is_set():
                     logger.info(f"[{self.mint_id}] Stop signal received, ending audio processing")
@@ -897,7 +891,12 @@ class AiortcFileRecorder:
             logger.info(f"[{self.mint_id}] Audio stream processing ended. Total frames: {frame_count}")
 
     async def _setup_container(self):
-        """Setup PyAV container for recording."""
+        """Setup PyAV container for recording with lazy initialization."""
+        # Idempotency check - if already initialized, return early
+        if self._container_initialized:
+            logger.info(f"[{self.mint_id}] Container already initialized, skipping setup")
+            return
+            
         # Generate output path
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         output_format = self.config.get('format', 'mpegts')
@@ -917,6 +916,7 @@ class AiortcFileRecorder:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(f"[{self.mint_id}] Setting up PyAV container: {self.output_path} (format: {output_format})")
+        logger.info(f"[{self.mint_id}] Available tracks: video={self.video_track is not None}, audio={self.audio_track is not None}")
 
         try:
             # Create PyAV output container
@@ -937,6 +937,8 @@ class AiortcFileRecorder:
                     self.video_stream.bit_rate = self._parse_bitrate(self.config['video_bitrate'])
 
                 logger.info(f"[{self.mint_id}] ✅ Video stream added: {self.config['video_codec']} at {self.config['width']}x{self.config['height']}")
+            else:
+                logger.warning(f"[{self.mint_id}] ⚠️  No video track available for container setup")
 
             # Add audio stream
             if self.audio_track:
@@ -952,7 +954,11 @@ class AiortcFileRecorder:
                     self.audio_stream.bit_rate = self._parse_bitrate(self.config['audio_bitrate'])
 
                 logger.info(f"[{self.mint_id}] ✅ Audio stream added: {self.config['audio_codec']} at 48kHz stereo")
+            else:
+                logger.warning(f"[{self.mint_id}] ⚠️  No audio track available for container setup")
 
+            # Mark as initialized
+            self._container_initialized = True
             logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete")
 
         except Exception as e:
@@ -960,6 +966,7 @@ class AiortcFileRecorder:
             if self.container:
                 self.container.close()
                 self.container = None
+            self._container_initialized = False
             raise  # Re-raise to fail the recording start immediately
 
     async def _close_container(self):
@@ -1006,9 +1013,19 @@ class AiortcFileRecorder:
         if self._shutdown_event.is_set():
             return
 
-        # Guard: Skip if video stream not available
+        # Lazy initialization - setup container on first frame
+        if not self._container_initialized:
+            try:
+                logger.info(f"[{self.mint_id}] 🎬 First video frame received, initializing container...")
+                await self._setup_container()
+                logger.info(f"[{self.mint_id}] ✅ Container initialized on first video frame")
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] Failed to initialize container: {e}")
+                return
+
+        # Guard: Skip if video stream not available after initialization
         if not self.video_stream:
-            logger.warning(f"[{self.mint_id}] Video stream not available, skipping frame")
+            logger.warning(f"[{self.mint_id}] Video stream not available after initialization, skipping frame")
             return
 
         try:
@@ -1136,9 +1153,19 @@ class AiortcFileRecorder:
         if self._shutdown_event.is_set():
             return
 
-        # Guard: Skip if audio stream not available
+        # Lazy initialization - setup container on first frame (if not already done by video)
+        if not self._container_initialized:
+            try:
+                logger.info(f"[{self.mint_id}] 🎵 First audio frame received, initializing container...")
+                await self._setup_container()
+                logger.info(f"[{self.mint_id}] ✅ Container initialized on first audio frame")
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] Failed to initialize container: {e}")
+                return
+
+        # Guard: Skip if audio stream not available after initialization
         if not self.audio_stream:
-            logger.warning(f"[{self.mint_id}] Audio stream not available, skipping frame")
+            logger.warning(f"[{self.mint_id}] Audio stream not available after initialization, skipping frame")
             return
 
         try:

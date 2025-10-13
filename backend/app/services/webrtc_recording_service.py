@@ -51,6 +51,256 @@ class TrackContext:
     kind: int  # rtc.TrackKind
     participant_sid: str
 
+
+class VideoNormalizer:
+    """Normalizes various video pixel formats to a consistent encoder format."""
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.rgb_order = config.get("rgb_order", "RGB")
+        self.row_stride_bytes = config.get("row_stride_bytes")
+        self.resolution_strategy = config.get("resolution_strategy", "scale_to_config")
+        self.colorspace = config.get("colorspace", "bt709")
+        self.range = config.get("range", "limited")
+        self.coerce_unknown_to_rgb = config.get("coerce_unknown_to_rgb", False)
+
+    def normalize_frame(self, frame: rtc.VideoFrame, target_width: int, target_height: int) -> Optional[av.VideoFrame]:
+        """Normalize a video frame to the target format."""
+        try:
+            buffer = frame.data
+            source_width = frame.width
+            source_height = frame.height
+
+            # Handle stride/alignment if specified
+            if self.row_stride_bytes and self.row_stride_bytes != source_width * 3:
+                buffer = self._fix_stride(buffer, source_width, source_height)
+
+            # Detect and handle pixel format
+            pixel_format = self._detect_pixel_format(buffer, source_width, source_height)
+
+            if pixel_format == "unknown" and not self.coerce_unknown_to_rgb:
+                logger.error(f"[{frame}] Unknown pixel format and coercion disabled")
+                return None
+
+            # Create PyAV frame based on detected format
+            if pixel_format in ["rgb24", "bgr24"]:
+                av_frame = self._handle_rgb_format(buffer, source_width, source_height, pixel_format)
+            elif pixel_format == "rgba":
+                av_frame = self._handle_rgba_format(buffer, source_width, source_height)
+            elif pixel_format in ["i420", "yuv420p"]:
+                av_frame = self._handle_yuv420_format(buffer, source_width, source_height)
+            elif pixel_format == "nv12":
+                av_frame = self._handle_nv12_format(buffer, source_width, source_height)
+            elif pixel_format == "yuy2":
+                av_frame = self._handle_yuy2_format(buffer, source_width, source_height)
+            else:
+                # Unknown format - try to coerce to RGB
+                if self.coerce_unknown_to_rgb:
+                    av_frame = self._coerce_to_rgb(buffer, source_width, source_height)
+                else:
+                    return None
+
+            # Handle resolution strategy
+            av_frame = self._handle_resolution(av_frame, source_width, source_height, target_width, target_height)
+
+            return av_frame
+
+        except Exception as e:
+            logger.error(f"Frame normalization failed: {e}")
+            return None
+
+    def _fix_stride(self, buffer, width: int, height: int) -> bytes:
+        """Fix row stride by copying to a contiguous buffer."""
+        stride = self.row_stride_bytes
+        expected_stride = width * 3
+
+        if stride == expected_stride:
+            return buffer
+
+        # Create contiguous buffer
+        contiguous = bytearray(width * height * 3)
+
+        for y in range(height):
+            src_offset = y * stride
+            dst_offset = y * expected_stride
+            # Copy only the valid pixels, ignore padding
+            src_end = min(src_offset + expected_stride, len(buffer))
+            dst_end = dst_offset + expected_stride
+            contiguous[dst_offset:dst_end] = buffer[src_offset:src_end]
+
+        return bytes(contiguous)
+
+    def _detect_pixel_format(self, buffer, width: int, height: int) -> str:
+        """Detect pixel format from buffer size and content."""
+        size = len(buffer)
+
+        # RGB24
+        if size == width * height * 3:
+            # Check if it looks like RGB or BGR by sampling
+            if width > 10 and height > 10:
+                # Sample a few pixels to detect RGB vs BGR order
+                sample_points = [(10, 10), (width//2, height//2), (width-10, height-10)]
+                rgb_score = 0
+                bgr_score = 0
+
+                for x, y in sample_points:
+                    offset = (y * width + x) * 3
+                    if offset + 3 <= len(buffer):
+                        r, g, b = buffer[offset:offset+3]
+                        # Simple heuristic: higher values in R channel suggest RGB order
+                        rgb_score += r
+                        bgr_score += b
+
+                if rgb_score > bgr_score:
+                    return "rgb24"
+                else:
+                    return "bgr24"
+            return "rgb24"  # Default assumption
+
+        # RGBA
+        elif size == width * height * 4:
+            return "rgba"
+
+        # I420/YUV420p (1.5 bytes per pixel)
+        elif size == int(width * height * 1.5):
+            return "i420"
+
+        # NV12 (1.5 bytes per pixel, different plane layout)
+        elif size == int(width * height * 1.5):
+            # NV12 has UV plane starting at width*height, check if it looks like UV data
+            uv_start = width * height
+            if uv_start + 10 < len(buffer):
+                # UV plane should have lower variance (chroma vs luma)
+                y_plane = buffer[:uv_start]
+                uv_plane = buffer[uv_start:uv_start + width * height // 2]
+                if len(uv_plane) > 0:
+                    y_var = sum((y_plane[i] - y_plane[i-1])**2 for i in range(1, min(100, len(y_plane))))
+                    uv_var = sum((uv_plane[i] - uv_plane[i-1])**2 for i in range(1, min(100, len(uv_plane))))
+                    if uv_var < y_var * 0.1:  # UV variance much lower than Y
+                        return "nv12"
+
+        # YUY2 (2 bytes per pixel)
+        elif size == width * height * 2:
+            return "yuy2"
+
+        return "unknown"
+
+    def _handle_rgb_format(self, buffer, width: int, height: int, format_type: str) -> av.VideoFrame:
+        """Handle RGB24 or BGR24 formats."""
+        # Convert to numpy array
+        frame_data = np.frombuffer(buffer, dtype=np.uint8)
+
+        if format_type == "bgr24":
+            # Convert BGR to RGB
+            frame_data = frame_data.reshape(height, width, 3)
+            frame_data = frame_data[:, :, [2, 1, 0]]  # BGR -> RGB
+        else:
+            # RGB24 - just reshape
+            frame_data = frame_data.reshape(height, width, 3)
+
+        # Create PyAV frame
+        return av.VideoFrame.from_ndarray(frame_data, format='rgb24')
+
+    def _handle_rgba_format(self, buffer, width: int, height: int) -> av.VideoFrame:
+        """Handle RGBA format (drop alpha channel)."""
+        frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 4)
+        # Drop alpha channel
+        frame_data = frame_data[:, :, :3]
+        return av.VideoFrame.from_ndarray(frame_data, format='rgb24')
+
+    def _handle_yuv420_format(self, buffer, width: int, height: int) -> av.VideoFrame:
+        """Handle I420/YUV420p format."""
+        # I420: Y plane (width*height) + U plane (width*height/4) + V plane (width*height/4)
+        y_size = width * height
+        uv_size = width * height // 4
+
+        y_plane = buffer[:y_size]
+        u_plane = buffer[y_size:y_size + uv_size]
+        v_plane = buffer[y_size + uv_size:y_size + 2 * uv_size]
+
+        # Create YUV420P frame
+        frame = av.VideoFrame(width, height, format='yuv420p')
+        frame.planes[0].update(y_plane)
+        frame.planes[1].update(u_plane)
+        frame.planes[2].update(v_plane)
+
+        return frame
+
+    def _handle_nv12_format(self, buffer, width: int, height: int) -> av.VideoFrame:
+        """Handle NV12 format."""
+        # NV12: Y plane (width*height) + UV plane (width*height/2, interleaved)
+        y_size = width * height
+        uv_size = width * height // 2
+
+        y_plane = buffer[:y_size]
+        uv_plane = buffer[y_size:y_size + uv_size]
+
+        # Create NV12 frame
+        frame = av.VideoFrame(width, height, format='nv12')
+        frame.planes[0].update(y_plane)
+        frame.planes[1].update(uv_plane)
+
+        return frame
+
+    def _handle_yuy2_format(self, buffer, width: int, height: int) -> av.VideoFrame:
+        """Handle YUY2 format (YUYV422)."""
+        # YUY2 is packed YUYV, 2 bytes per pixel
+        frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 2)
+
+        # Extract Y channel (every other byte)
+        y_plane = frame_data[:, :, 0]
+
+        # For simplicity, create grayscale RGB from Y
+        # In a full implementation, we'd properly unpack U and V
+        rgb_data = np.stack([y_plane, y_plane, y_plane], axis=2)
+
+        return av.VideoFrame.from_ndarray(rgb_data, format='rgb24')
+
+    def _coerce_to_rgb(self, buffer, width: int, height: int) -> av.VideoFrame:
+        """Coerce unknown format to RGB as fallback."""
+        frame_data = np.frombuffer(buffer, dtype=np.uint8)
+
+        # Try to reshape as RGB
+        expected_size = width * height * 3
+        if len(frame_data) >= expected_size:
+            frame_data = frame_data[:expected_size].reshape(height, width, 3)
+        else:
+            # Pad with zeros
+            padding = np.zeros(expected_size - len(frame_data), dtype=np.uint8)
+            frame_data = np.concatenate([frame_data, padding]).reshape(height, width, 3)
+
+        return av.VideoFrame.from_ndarray(frame_data, format='rgb24')
+
+    def _handle_resolution(self, av_frame: av.VideoFrame, source_width: int, source_height: int,
+                          target_width: int, target_height: int) -> av.VideoFrame:
+        """Handle resolution changes based on strategy."""
+        strategy = self.resolution_strategy
+
+        if source_width == target_width and source_height == target_height:
+            return av_frame
+
+        if strategy == "scale_to_config":
+            # Scale to configured resolution
+            return av_frame.reformat(width=target_width, height=target_height,
+                                   format='yuv420p', src_colorspace=self.colorspace,
+                                   src_range=self.range)
+
+        elif strategy == "match_source":
+            # Use source resolution (update target for next frames)
+            return av_frame.reformat(width=source_width, height=source_height,
+                                   format='yuv420p', src_colorspace=self.colorspace,
+                                   src_range=self.range)
+
+        elif strategy == "recreate_on_change":
+            # For now, fall back to scale_to_config
+            # In a full implementation, this would trigger container recreation
+            logger.warning("Resolution change detected, recreating container not yet implemented")
+            return av_frame.reformat(width=target_width, height=target_height,
+                                   format='yuv420p', src_colorspace=self.colorspace,
+                                   src_range=self.range)
+
+        return av_frame
+
 class AiortcFileRecorder:
     """WebRTC recorder using aiortc/PyAV for direct file recording."""
 
@@ -91,8 +341,28 @@ class AiortcFileRecorder:
         self.video_stream: Optional[av.video.VideoStream] = None
         self.audio_stream: Optional[av.audio.AudioStream] = None
 
-        # Shutdown flag
-        self._shutdown = False
+        # Shutdown event for thread-safe signaling
+        self._shutdown_event = asyncio.Event()
+
+        # Polling guard to prevent duplicates
+        self._polling_started = False
+
+        # Timestamp tracking for A/V synchronization
+        self.recording_start_time = None  # Wall clock time when recording started
+        self.first_video_timestamp = None  # First video frame RTP timestamp
+        self.first_audio_timestamp = None  # First audio frame RTP timestamp
+        self.audio_samples_written = 0  # Cumulative audio samples written
+
+        # Dynamic resolution tracking
+        self.current_video_width = None
+        self.current_video_height = None
+        self.frame_count_since_last_resize = 0
+
+        # A/V sync logging counter
+        self.video_frames_logged = 0
+
+        # Video normalization
+        self.video_normalizer = VideoNormalizer(config)
         
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
@@ -122,7 +392,7 @@ class AiortcFileRecorder:
         logger.info(f"[{self.mint_id}] 🔍 Starting continuous track detection...")
         
         for attempt in range(10):  # Try for 10 seconds
-            if self._shutdown:
+            if self._shutdown_event.is_set():
                 logger.info(f"[{self.mint_id}] 🛑 Shutdown requested, stopping track detection")
                 return
                 
@@ -164,6 +434,20 @@ class AiortcFileRecorder:
 
             # Also set up frame handlers on existing tracks (in case they're already subscribed)
             await self._setup_existing_track_handlers(participant)
+
+            # Retry loop to wait for tracks before proceeding
+            logger.info(f"[{self.mint_id}] ⏳ Waiting for tracks to be available...")
+            for attempt in range(5):  # Try for 5 seconds
+                if self.video_track or self.audio_track:
+                    break
+                await asyncio.sleep(1.0)
+                participant = self._find_participant()
+                if participant:
+                    await self._setup_existing_track_handlers(participant)
+            if not (self.video_track or self.audio_track):
+                logger.warning(f"[{self.mint_id}] ⚠️  No tracks found after retries")
+                # Schedule continuous detection as fallback
+                asyncio.create_task(self._continuous_track_detection())
 
             # Give frame polling time to start and receive frames
             logger.info(f"[{self.mint_id}] ⏳ Waiting for frame polling to start and receive frames...")
@@ -208,6 +492,7 @@ class AiortcFileRecorder:
             # State: SUBSCRIBED → RECORDING
             self.state = RecordingState.RECORDING
             self.start_time = datetime.now(timezone.utc)
+            self.recording_start_time = time.time()  # Wall clock for timestamp baseline
 
             logger.info(f"[{self.mint_id}] ✅ Recording started with aiortc/PyAV")
 
@@ -242,7 +527,7 @@ class AiortcFileRecorder:
 
             # State: RECORDING → STOPPING
             self.state = RecordingState.STOPPING
-            self._shutdown = True
+            self._shutdown_event.set()
 
             # Close PyAV container
             await self._close_container()
@@ -287,8 +572,10 @@ class AiortcFileRecorder:
         logger.info(f"[{self.mint_id}] PyAV container: {self.container is not None}")
 
         # Determine recording mode and calculate file size
+        recording_mode = "aiortc"
+        file_size = 0
+
         if self.container:
-            recording_mode = "aiortc"
             logger.info(f"[{self.mint_id}] PyAV container active")
 
             # Check if output file exists and its size
@@ -298,7 +585,6 @@ class AiortcFileRecorder:
             else:
                 logger.warning(f"[{self.mint_id}] PyAV output file does not exist: {self.output_path}")
         else:
-            recording_mode = "none"
             logger.warning(f"[{self.mint_id}] No recording mode active - no PyAV container")
 
         # Determine if we're actually recording based on state and frame activity
@@ -322,9 +608,25 @@ class AiortcFileRecorder:
             "recording_mode": recording_mode,
             "is_recording": is_recording,
             "tracks": len(self.tracks),
+            "timestamp_info": {
+                "first_video_timestamp": self.first_video_timestamp,
+                "first_audio_timestamp": self.first_audio_timestamp,
+                "audio_samples_written": self.audio_samples_written,
+                "recording_start_time": self.recording_start_time
+            },
+            "flexibility": {
+                "rgb_order": self.config.get("rgb_order", "RGB"),
+                "resolution_strategy": self.config.get("resolution_strategy", "scale_to_config"),
+                "colorspace": self.config.get("colorspace", "bt709"),
+                "range": self.config.get("range", "limited"),
+                "coerce_unknown_to_rgb": self.config.get("coerce_unknown_to_rgb", False),
+                "current_resolution": f"{self.current_video_width}x{self.current_video_height}" if self.current_video_width else None
+            },
             "stats": {
-                "video_frames": self.video_frames_written,
-                "audio_frames": self.audio_frames_written,
+                "video_frames_received": self.video_frames_received,
+                "audio_frames_received": self.audio_frames_received,
+                "video_frames_written": self.video_frames_written,
+                "audio_frames_written": self.audio_frames_written,
                 "dropped_frames": 0,
                 "pli_requests": 0,
                 "track_subscriptions": len(self.tracks),
@@ -434,7 +736,7 @@ class AiortcFileRecorder:
             logger.info(f"[{self.mint_id}] ✅ Audio track reference stored for direct access")
         
         # Start polling for frames if not already started
-        if not hasattr(self, '_polling_started'):
+        if not self._polling_started:
             logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
             logger.info(f"[{self.mint_id}] 🔍 Tracks available: video={self.video_track is not None}, audio={self.audio_track is not None}")
             asyncio.create_task(self._poll_frames())
@@ -515,12 +817,12 @@ class AiortcFileRecorder:
                     if time_since_last > 60.0:  # 1 minute gap
                         logger.error(f"[{self.mint_id}] ⚠️  Frame gap too long ({time_since_last:.2f}s) - stopping recording")
                         logger.error(f"[{self.mint_id}] This indicates LiveKit connection issues or stream problems")
-                        self._shutdown = True
+                        self._shutdown_event.set()
                         return
                 
                 last_frame_time = current_time
                 
-                if self._shutdown:
+                if self._shutdown_event.is_set():
                     logger.info(f"[{self.mint_id}] Stop signal received, ending video processing")
                     break
                 
@@ -557,7 +859,7 @@ class AiortcFileRecorder:
             # Check if this is a LiveKit connection issue
             if "connection" in str(e).lower() or "timeout" in str(e).lower():
                 logger.error(f"[{self.mint_id}] LiveKit connection issue detected - stopping recording")
-                self._shutdown = True
+                self._shutdown_event.set()
         finally:
             logger.info(f"[{self.mint_id}] Video stream processing ended. Total frames: {frame_count}")
 
@@ -568,7 +870,7 @@ class AiortcFileRecorder:
             frame_count = 0
             
             async for event in rtc.AudioStream(self.audio_track):
-                if self._shutdown:
+                if self._shutdown_event.is_set():
                     logger.info(f"[{self.mint_id}] Stop signal received, ending audio processing")
                     break
                 
@@ -664,7 +966,21 @@ class AiortcFileRecorder:
         """Close PyAV container and finalize recording."""
         if self.container:
             try:
-                logger.info(f"[{self.mint_id}] Closing PyAV container")
+                logger.info(f"[{self.mint_id}] Closing PyAV container and flushing encoders")
+
+                # Flush video encoder if available
+                if self.video_stream:
+                    logger.info(f"[{self.mint_id}] Flushing video encoder")
+                    for packet in self.video_stream.encode(None):
+                        self.container.mux(packet)
+
+                # Flush audio encoder if available
+                if self.audio_stream:
+                    logger.info(f"[{self.mint_id}] Flushing audio encoder")
+                    for packet in self.audio_stream.encode(None):
+                        self.container.mux(packet)
+
+                # Close container
                 self.container.close()
                 logger.info(f"[{self.mint_id}] ✅ PyAV container closed")
             except Exception as e:
@@ -687,7 +1003,7 @@ class AiortcFileRecorder:
 
     async def _on_video_frame(self, frame: rtc.VideoFrame):
         """Handle video frame from LiveKit."""
-        if self._shutdown:
+        if self._shutdown_event.is_set():
             return
             
         try:
@@ -701,286 +1017,86 @@ class AiortcFileRecorder:
                 logger.info(f"[{self.mint_id}] Frame attributes: {[attr for attr in dir(frame) if not attr.startswith('_')]}")
                 self._log_memory_usage(f"{self.mint_id} first_frame")
             
-            # Convert LiveKit frame to RGB24 numpy array (using the working approach)
-            # Get the frame data directly from the buffer like the working implementation
-            frame_data = None
-            try:
-                # Get the frame buffer directly (like the working implementation)
-                buffer = frame.data
-                width = frame.width
-                height = frame.height
-                
-                logger.info(f"[{self.mint_id}] Frame dimensions: {width}x{height}, buffer type: {type(buffer)}")
-                logger.info(f"[{self.mint_id}] Buffer length: {len(buffer) if hasattr(buffer, '__len__') else 'unknown'}")
-                
-                # Convert buffer to numpy array
-                if hasattr(buffer, 'dtype'):
-                    # Already a numpy array
-                    frame_data = buffer
-                    logger.info(f"[{self.mint_id}] Buffer is already numpy array: {frame_data.shape}")
-                else:
-                    # Convert memoryview/buffer to numpy array
-                    frame_data = np.frombuffer(buffer, dtype=np.uint8)
-                logger.info(f"[{self.mint_id}] Converted buffer to numpy array: {frame_data.shape}")
-                logger.info(f"[{self.mint_id}] Frame data size: {len(frame_data)} bytes")
-                    
-                # Determine frame format based on size
-                rgb_size = width * height * 3
-                yuv420_size = width * height * 3 // 2  # YUV420 is 1.5 bytes per pixel
-                yuv422_size = width * height * 2
-                logger.info(f"[{self.mint_id}] Expected sizes: RGB={rgb_size}, YUV420={yuv420_size}, YUV422={yuv422_size}")
-                
-                # Determine frame format based on actual size
-                actual_size = len(frame_data)
-                frame_format = None
-                
-                # Calculate bytes per pixel for analysis
-                bytes_per_pixel = actual_size / (width * height)
-                logger.info(f"[{self.mint_id}] 📊 Frame analysis: {actual_size} bytes, {bytes_per_pixel:.2f} bytes/pixel")
-                
-                # Check for exact matches first
-                if actual_size == rgb_size:
-                    frame_format = "RGB"
-                    logger.info(f"[{self.mint_id}] 📹 Detected RGB format: {actual_size} bytes")
-                elif actual_size == yuv420_size:
-                    frame_format = "YUV420"
-                    logger.info(f"[{self.mint_id}] 📹 Detected YUV420 format: {actual_size} bytes")
-                elif actual_size == yuv422_size:
-                    frame_format = "YUV422"
-                    logger.info(f"[{self.mint_id}] 📹 Detected YUV422 format: {actual_size} bytes")
-                # Check for approximate matches (within 5% tolerance)
-                elif abs(actual_size - rgb_size) / rgb_size < 0.05:
-                    frame_format = "RGB_APPROX"
-                    logger.info(f"[{self.mint_id}] 📹 Detected RGB-like format: {actual_size} bytes (expected {rgb_size})")
-                elif abs(actual_size - yuv420_size) / yuv420_size < 0.05:
-                    frame_format = "YUV420_APPROX"
-                    logger.info(f"[{self.mint_id}] 📹 Detected YUV420-like format: {actual_size} bytes (expected {yuv420_size})")
-                elif abs(actual_size - yuv422_size) / yuv422_size < 0.05:
-                    frame_format = "YUV422_APPROX"
-                    logger.info(f"[{self.mint_id}] 📹 Detected YUV422-like format: {actual_size} bytes (expected {yuv422_size})")
-                # Check for intermediate formats
-                elif 2.0 <= bytes_per_pixel <= 2.5:
-                    frame_format = "YUV422_INTERMEDIATE"
-                    logger.info(f"[{self.mint_id}] 📹 Detected intermediate YUV422 format: {actual_size} bytes ({bytes_per_pixel:.2f} bytes/pixel)")
-                elif 2.5 < bytes_per_pixel <= 3.0:
-                    frame_format = "RGB_INTERMEDIATE"
-                    logger.info(f"[{self.mint_id}] 📹 Detected intermediate RGB format: {actual_size} bytes ({bytes_per_pixel:.2f} bytes/pixel)")
-                else:
-                    logger.error(f"[{self.mint_id}] ❌ Unknown frame format: {actual_size} bytes ({bytes_per_pixel:.2f} bytes/pixel)")
-                    logger.error(f"[{self.mint_id}] Expected: RGB={rgb_size}, YUV420={yuv420_size}, YUV422={yuv422_size}")
-                    return
-                
-                logger.info(f"[{self.mint_id}] Frame size analysis:")
-                logger.info(f"[{self.mint_id}] - RGB size: {rgb_size}")
-                logger.info(f"[{self.mint_id}] - YUV420 size: {yuv420_size}")
-                logger.info(f"[{self.mint_id}] - YUV422 size: {yuv422_size}")
-                logger.info(f"[{self.mint_id}] - Actual size: {len(frame_data)}")
-                
-                # Convert frame based on detected format
-                if frame_format in ["RGB", "RGB_APPROX", "RGB_INTERMEDIATE"]:
-                    # RGB format (exact, approximate, or intermediate)
-                    if frame_format == "RGB_INTERMEDIATE":
-                        # For intermediate RGB, we might need to pad or truncate
-                        expected_size = height * width * 3
-                        if actual_size < expected_size:
-                            # Pad with zeros
-                            padding = np.zeros(expected_size - actual_size, dtype=np.uint8)
-                            frame_data = np.concatenate([frame_data, padding])
-                            logger.info(f"[{self.mint_id}] 📹 Padded intermediate RGB frame")
-                        elif actual_size > expected_size:
-                            # Truncate
-                            frame_data = frame_data[:expected_size]
-                            logger.info(f"[{self.mint_id}] 📹 Truncated intermediate RGB frame")
-                    
-                    frame_data = frame_data.reshape(height, width, 3)
-                    logger.info(f"[{self.mint_id}] ✅ Frame interpreted as RGB: {frame_data.shape}")
-                elif frame_format in ["YUV420", "YUV420_APPROX"]:
-                    # YUV420 format - convert to RGB
-                    logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV420, converting to RGB")
-                    # YUV420 has Y plane (width*height) + U plane (width*height/4) + V plane (width*height/4)
-                    y_size = width * height
-                    uv_size = width * height // 4
-                    
-                    y_plane = frame_data[:y_size].reshape(height, width)
-                    u_plane = frame_data[y_size:y_size + uv_size].reshape(height // 2, width // 2)
-                    v_plane = frame_data[y_size + uv_size:y_size + 2 * uv_size].reshape(height // 2, width // 2)
-                    
-                    # Memory-optimized YUV420 to RGB conversion
-                    try:
-                        # Upsample U and V planes to full resolution
-                        u_upsampled = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)
-                        v_upsampled = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)
-                        
-                        # Convert YUV to RGB (memory-optimized)
-                        y = y_plane.astype(np.float32)
-                        u = u_upsampled.astype(np.float32) - 128
-                        v = v_upsampled.astype(np.float32) - 128
-                        
-                        r = np.clip(y + 1.402 * v, 0, 255).astype(np.uint8)
-                        g = np.clip(y - 0.344136 * u - 0.714136 * v, 0, 255).astype(np.uint8)
-                        b = np.clip(y + 1.772 * u, 0, 255).astype(np.uint8)
-                        
-                        frame_data = np.stack([r, g, b], axis=2)
-                        
-                        # Free intermediate arrays immediately
-                        del u_upsampled, v_upsampled, y, u, v, r, g, b
-                        
-                        logger.info(f"[{self.mint_id}] ✅ YUV420 converted to RGB: {frame_data.shape}")
-                        
-                    except MemoryError as e:
-                        logger.error(f"[{self.mint_id}] ❌ Memory error during YUV420 conversion: {e}")
-                        logger.error(f"[{self.mint_id}] Skipping frame due to memory constraints")
-                        return
-                elif frame_format in ["YUV422", "YUV422_APPROX", "YUV422_INTERMEDIATE"]:
-                    # YUV422 format (exact, approximate, or intermediate)
-                    logger.info(f"[{self.mint_id}] ✅ Frame interpreted as YUV422")
-                    
-                    if frame_format == "YUV422_INTERMEDIATE":
-                        # For intermediate YUV422, we might need to pad or truncate
-                        expected_size = height * width * 2
-                        if actual_size < expected_size:
-                            # Pad with zeros
-                            padding = np.zeros(expected_size - actual_size, dtype=np.uint8)
-                            frame_data = np.concatenate([frame_data, padding])
-                            logger.info(f"[{self.mint_id}] 📹 Padded intermediate YUV422 frame")
-                        elif actual_size > expected_size:
-                            # Truncate
-                            frame_data = frame_data[:expected_size]
-                            logger.info(f"[{self.mint_id}] 📹 Truncated intermediate YUV422 frame")
-                    
-                    # For now, treat as grayscale and convert to RGB
-                    frame_data = frame_data.reshape(height, width, 2)
-                    # Take only Y channel and replicate for RGB
-                    y_channel = frame_data[:, :, 0]
-                    frame_data = np.stack([y_channel, y_channel, y_channel], axis=2)
-                    logger.info(f"[{self.mint_id}] ✅ YUV422 converted to RGB: {frame_data.shape}")
-                else:
-                    logger.error(f"[{self.mint_id}] ❌ Unknown frame format: {frame_format}")
-                    return
-                    
-            except Exception as e:
-                logger.warning(f"[{self.mint_id}] Failed to convert frame: {e}")
+            # Use VideoNormalizer for flexible frame handling
+            target_width = self.config.get('width', 1920)
+            target_height = self.config.get('height', 1080)
+
+            # Update current resolution if needed
+            if self.current_video_width != frame.width or self.current_video_height != frame.height:
+                self.current_video_width = frame.width
+                self.current_video_height = frame.height
+                self.frame_count_since_last_resize = 0
+                logger.info(f"[{self.mint_id}] Resolution changed to {frame.width}x{frame.height}")
+
+            normalized_frame = self.video_normalizer.normalize_frame(frame, target_width, target_height)
+
+            if normalized_frame is None:
+                logger.warning(f"[{self.mint_id}] Failed to normalize frame, skipping")
                 return
+
+            # Use the normalized frame for encoding
+            # normalized_frame is already a properly formatted PyAV frame
+            av_frame = normalized_frame
+
+            logger.info(f"[{self.mint_id}] ✅ Frame normalized: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
             
-            if frame_data is None:
-                logger.warning(f"[{self.mint_id}] No frame data available")
-                return
-            
-            # Convert to bytes for FFmpeg (streaming approach to reduce memory)
-            if len(frame_data.shape) == 3 and frame_data.shape[2] in [3, 4]:  # RGB or RGBA
-                # Handle dynamic resolution - update config with actual dimensions
-                actual_height, actual_width = frame_data.shape[:2]
-                expected_height, expected_width = self.config['height'], self.config['width']
-                
-                # If dimensions don't match, update the config for dynamic resolution
-                if actual_height != expected_height or actual_width != expected_width:
-                    logger.info(f"[{self.mint_id}] Dynamic resolution detected: {actual_width}x{actual_height} (was {expected_width}x{expected_height})")
-                    self.config['width'] = actual_width
-                    self.config['height'] = actual_height
-                
-                # Convert to uint8 and get bytes in one step to avoid intermediate copies
-                frame_bytes = frame_data.astype(np.uint8).tobytes()
-                
-                # Validate frame size with strict corruption detection
-                expected_size = actual_width * actual_height * 3  # RGB24
-                size_ratio = len(frame_bytes) / expected_size
-                
-                # Check for exact size match first
-                if len(frame_bytes) == expected_size:
-                    logger.debug(f"[{self.mint_id}] Frame size correct: {len(frame_bytes)} bytes")
-                # Check for frames that are close to expected size but corrupted (80-95% range)
-                elif 0.8 <= size_ratio <= 0.95:
-                    logger.error(f"[{self.mint_id}] Frame size suspicious: {len(frame_bytes)} bytes ({size_ratio:.1%} of expected {expected_size})")
-                    logger.error(f"[{self.mint_id}] This indicates frame corruption - skipping to prevent FFmpeg failure")
-                    del frame_data
-                    return
-                # Check for frames that are too small or too large
-                elif size_ratio < 0.5 or size_ratio > 2.0:
-                    logger.error(f"[{self.mint_id}] Frame size invalid: {len(frame_bytes)} bytes ({size_ratio:.1%} of expected {expected_size})")
-                    logger.error(f"[{self.mint_id}] Skipping corrupt frame to prevent FFmpeg failure")
-                    del frame_data
-                    return
-                else:
-                    # Frame size is acceptable but not exact (95-200% range)
-                    logger.warning(f"[{self.mint_id}] Frame size acceptable but not exact: {len(frame_bytes)} bytes ({size_ratio:.1%} of expected {expected_size})")
-                    # Continue processing - this might be a valid frame with slight size variation
-                
-                # Additional validation: check for all-zero or all-same-value frames
-                if np.all(frame_data == 0) or np.all(frame_data == frame_data.flat[0]):
-                    logger.warning(f"[{self.mint_id}] Detected suspicious frame (all zeros or same value)")
-                    # Still process it, but log the warning
-                
-                # Validate frame data integrity before sending to FFmpeg
-                if len(frame_bytes) == 0:
-                    logger.error(f"[{self.mint_id}] Empty frame data - skipping")
-                    del frame_data
-                    return
-                
-                # Check for frame data corruption patterns
-                if len(frame_bytes) < expected_size * 0.5:  # Less than half expected size
-                    logger.error(f"[{self.mint_id}] Frame data too small - likely corrupted")
-                    del frame_data
-                    return
-                
-                # Check for frame data that's too large (indicates corruption)
-                if len(frame_bytes) > expected_size * 2:  # More than double expected size
-                    logger.error(f"[{self.mint_id}] Frame data too large - likely corrupted")
-                    del frame_data
-                    return
-                
-                # Validate frame data has reasonable pixel values (not all 0 or 255)
-                if len(frame_bytes) > 0:
-                    unique_bytes = len(set(frame_bytes))
-                    if unique_bytes < 10:  # Less than 10 unique byte values suggests corruption
-                        logger.warning(f"[{self.mint_id}] Frame has only {unique_bytes} unique byte values - may be corrupted")
-                        # Still process it, but log the warning
-                
-                # Immediately free the numpy array to reduce memory pressure
-                del frame_data
-                
-                # PyAV mode: encode and mux frame to container
-                if self.container and self.video_stream:
-                    try:
-                        # Convert RGB frame to YUV420P for encoding
-                        rgb_frame = frame_data.astype(np.uint8)
+            # Handle dynamic resolution - update config with actual dimensions
+            actual_height, actual_width = av_frame.height, av_frame.width
+            expected_height, expected_width = self.config['height'], self.config['width']
 
-                        # Create PyAV VideoFrame from RGB data
-                        av_frame = VideoFrame.from_ndarray(rgb_frame, format='rgb24')
-                        av_frame.pts = self.video_frames_written
-                        av_frame.time_base = self.video_stream.time_base
+            # If dimensions don't match, update the config for dynamic resolution
+            if actual_height != expected_height or actual_width != expected_width:
+                logger.info(f"[{self.mint_id}] Dynamic resolution detected: {actual_width}x{actual_height} (was {expected_width}x{expected_height})")
+                self.config['width'] = actual_width
+                self.config['height'] = actual_height
 
-                        # Encode frame
-                        packets = self.video_stream.encode(av_frame)
-                        for packet in packets:
-                            self.container.mux(packet)
-
-                        self.video_frames_written += 1
-
-                        if self.video_frames_written == 1:
-                            logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
-
-                        if self.video_frames_written % 30 == 0:  # Log every second
-                            logger.info(f"[{self.mint_id}] Encoded {self.video_frames_written} video frames to PyAV")
-
-                    except Exception as e:
-                        logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")
-                        # Continue processing other frames
-                else:
-                    logger.warning(f"[{self.mint_id}] PyAV container or video stream not available")
-                    logger.warning(f"[{self.mint_id}] Container: {self.container is not None}")
-                    logger.warning(f"[{self.mint_id}] Video stream: {self.video_stream is not None}")
-                    logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
+            # Set proper PTS based on frame timestamp
+            if hasattr(frame, 'timestamp_us') and frame.timestamp_us is not None:
+                if self.first_video_timestamp is None:
+                    self.first_video_timestamp = frame.timestamp_us
+                # Convert microseconds to time_base units
+                pts = int(frame.timestamp_us * self.video_stream.time_base.numerator / (self.video_stream.time_base.denominator * 1000000))
             else:
-                logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
-            
-            # CRITICAL: Free memory immediately after processing
-            del frame_bytes
-            if 'frame_data' in locals():
-                del frame_data
-            
-            # Force garbage collection to free memory
-            gc.collect()
-            
+                # Fallback to frame count if no timestamp available
+                pts = self.video_frames_written * int(self.video_stream.time_base.denominator / self.video_stream.time_base.numerator)
+
+            av_frame.pts = pts
+            av_frame.time_base = self.video_stream.time_base
+
+            # A/V sync drift logging (every 60 frames)
+            self.video_frames_logged += 1
+            if self.video_frames_logged % 60 == 0 and self.audio_samples_written > 0:
+                video_seconds = av_frame.pts * self.video_stream.time_base
+                audio_seconds = self.audio_samples_written / self.audio_stream.sample_rate
+                drift = abs(video_seconds - audio_seconds)
+                if drift > 1.0:
+                    logger.warning(f"[{self.mint_id}] A/V sync drift: {drift:.2f}s (video: {video_seconds:.2f}s, audio: {audio_seconds:.2f}s)")
+
+            # PyAV mode: encode and mux frame to container
+            if self.container and self.video_stream:
+                try:
+                    # Encode frame
+                    packets = self.video_stream.encode(av_frame)
+                    for packet in packets:
+                        self.container.mux(packet)
+
+                    self.video_frames_written += 1
+
+                    if self.video_frames_written == 1:
+                        logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
+
+                    if self.video_frames_written % 30 == 0:  # Log every second
+                        logger.info(f"[{self.mint_id}] Encoded {self.video_frames_written} video frames to PyAV")
+
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")
+                    # Continue processing other frames
+            else:
+                logger.warning(f"[{self.mint_id}] PyAV container or video stream not available")
+                logger.warning(f"[{self.mint_id}] Container: {self.container is not None}")
+                logger.warning(f"[{self.mint_id}] Video stream: {self.video_stream is not None}")
+                logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
+
             # Check memory usage and stop if too high
             try:
                 import psutil
@@ -988,11 +1104,11 @@ class AiortcFileRecorder:
                 memory_mb = process.memory_info().rss / 1024 / 1024
                 if memory_mb > 1000:  # Stop if using more than 1GB
                     logger.error(f"[{self.mint_id}] ❌ Memory usage too high: {memory_mb:.1f}MB - stopping recording")
-                    self._shutdown = True
+                    self._shutdown_event.set()
                     return
             except ImportError:
                 pass  # psutil not available, continue
-            
+
             # Log memory usage every 100 frames
             if self.video_frames_received % 100 == 0:
                 self._log_memory_usage(f"{self.mint_id} frame_{self.video_frames_received}")
@@ -1012,7 +1128,7 @@ class AiortcFileRecorder:
 
     async def _on_audio_frame(self, frame: rtc.AudioFrame):
         """Handle audio frame from LiveKit."""
-        if self._shutdown:
+        if self._shutdown_event.is_set():
             return
 
         try:
@@ -1028,26 +1144,37 @@ class AiortcFileRecorder:
             # PyAV mode: encode and mux audio frame to container
             if self.container and self.audio_stream:
                 try:
+                    # Calculate samples in this frame (16-bit stereo)
+                    samples_per_frame = len(audio_bytes) // (2 * 2)  # int16 stereo
+
                     # Create PyAV AudioFrame from audio data
-                    # Assume 16-bit signed integer PCM for now (common format)
                     av_audio_frame = AudioFrame.from_ndarray(
                         np.frombuffer(audio_bytes, dtype=np.int16).reshape(-1, 2),  # Stereo
                         format='s16',
                         layout='stereo'
                     )
-                    av_audio_frame.pts = self.audio_frames_written
+                    # Set PTS based on cumulative samples
+                    av_audio_frame.pts = self.audio_samples_written
                     av_audio_frame.time_base = self.audio_stream.time_base
-                    av_audio_frame.sample_rate = 48000
+                    av_audio_frame.sample_rate = self.audio_stream.sample_rate
 
                     # Encode frame
                     packets = self.audio_stream.encode(av_audio_frame)
                     for packet in packets:
                         self.container.mux(packet)
 
+                    # Track samples for next frame's PTS
+                    self.audio_samples_written += samples_per_frame
                     self.audio_frames_written += 1
 
+                    # A/V sync drift logging (every 1000 frames)
+                    if self.audio_frames_written % 1000 == 0 and self.first_video_timestamp is not None:
+                        video_seconds = (self.audio_samples_written / self.audio_stream.sample_rate)  # Estimate from audio
+                        # Note: This is approximate; full sync would need video PTS at this point
+                        logger.debug(f"[{self.mint_id}] Audio at {self.audio_samples_written} samples (~{video_seconds:.2f}s)")
+
                     if self.audio_frames_written % 1000 == 0:  # Log every 1000 frames
-                        logger.info(f"[{self.mint_id}] Encoded {self.audio_frames_written} audio frames to PyAV")
+                        logger.info(f"[{self.mint_id}] Encoded {self.audio_frames_written} audio frames ({self.audio_samples_written} samples) to PyAV")
 
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error encoding audio frame: {e}")
@@ -1099,6 +1226,13 @@ class WebRTCRecordingService:
             "fps": 30,
             "width": 1920,
             "height": 1080,
+            # Video flexibility options
+            "rgb_order": "RGB",  # RGB or BGR
+            "row_stride_bytes": None,  # Optional: force row stride (bytes per row)
+            "resolution_strategy": "scale_to_config",  # scale_to_config, match_source, recreate_on_change
+            "colorspace": "bt709",  # bt709 or bt601
+            "range": "limited",  # limited or full
+            "coerce_unknown_to_rgb": False,  # Fallback for unknown formats
         }
 
         # Get StreamManager instance
@@ -1137,17 +1271,17 @@ class WebRTCRecordingService:
                 logger.error(f"❌ No active stream found for {mint_id}")
                 return {"success": False, "error": f"No active stream found for {mint_id}"}
             
-            # Get the LiveKit room from StreamManager
-            room = self.stream_manager.room
+            # Get the LiveKit room for this mint_id from StreamManager
+            room = self.stream_manager.get_room(mint_id)
             if not room:
-                logger.error(f"❌ No active LiveKit room found")
-                return {"success": False, "error": "No active LiveKit room found"}
+                logger.error(f"❌ No active LiveKit room found for mint_id: {mint_id}")
+                return {"success": False, "error": f"No active LiveKit room found for mint_id: {mint_id}"}
             
             # Create recording configuration
             config = self._get_recording_config(output_format, video_quality)
             
-            # Create FFmpeg recorder
-            recorder = FFmpegRecorder(
+            # Create aiortc recorder
+            recorder = AiortcFileRecorder(
                 mint_id=mint_id,
                 stream_info=stream_info,
                 output_dir=self.output_dir,

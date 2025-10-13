@@ -53,18 +53,19 @@ class StreamManager:
         if not self._initialized:
             self.config: Optional[AppConfig] = None
             self.pumpfun_service = PumpFunService()
-            
+
             # Active streams
             self.active_streams: Dict[str, StreamInfo] = {}
-            self.room: Optional[rtc.Room] = None
-            
+            # Multiple rooms - one per mint_id
+            self.rooms: Dict[str, rtc.Room] = {}
+
             # Event handlers
             self.video_frame_handlers: Dict[str, Callable] = {}
             self.audio_frame_handlers: Dict[str, Callable] = {}
-            
+
             # WebSocket connections for streaming
             self.active_websockets: Dict[str, set] = {}
-            
+
             StreamManager._initialized = True
             logger.info("✅ StreamManager singleton initialized")
         
@@ -102,16 +103,24 @@ class StreamManager:
             if not token:
                 return {"success": False, "error": "Failed to get LiveKit token"}
 
-            # Create room if not exists
-            if not self.room:
-                self.room = rtc.Room()
-                await self._setup_room_handlers()
+            # Create room for this mint_id
+            if mint_id in self.rooms:
+                # Disconnect existing room if it exists
+                existing_room = self.rooms[mint_id]
+                if existing_room and existing_room.connection_state != rtc.ConnectionState.DISCONNECTED:
+                    await existing_room.disconnect()
+                del self.rooms[mint_id]
+
+            # Create new room for this mint_id
+            room = rtc.Room()
+            await self._setup_room_handlers(room)
+            self.rooms[mint_id] = room
 
             # Connect to room
             livekit_url = self.config.livekit_url
             connect_options = rtc.RoomOptions(auto_subscribe=True)
-            
-            await self.room.connect(livekit_url, token, connect_options)
+
+            await room.connect(livekit_url, token, connect_options)
             
             # Get participant SID - find the participant with published tracks (the streamer)
             participant_sid = None
@@ -120,7 +129,7 @@ class StreamManager:
             await asyncio.sleep(0.5)
             
             # Find participant with tracks (the actual streamer, not viewers)
-            for participant in self.room.remote_participants.values():
+            for participant in room.remote_participants.values():
                 if len(participant.track_publications) > 0:
                     participant_sid = participant.sid
                     logger.info(f"Found streamer participant: {participant_sid} with {len(participant.track_publications)} tracks")
@@ -142,7 +151,7 @@ class StreamManager:
             # Store stream info
             stream_info_obj = StreamInfo(
                 mint_id=mint_id,
-                room_name=self.room.name,
+                room_name=room.name,
                 participant_sid=participant_sid,
                 stream_url=livekit_url,
                 token=token,
@@ -159,7 +168,7 @@ class StreamManager:
             return {
                 "success": True,
                 "mint_id": mint_id,
-                "room_name": self.room.name,
+                "room_name": room.name,
                 "participant_sid": participant_sid,
                 "stream_info": self.pumpfun_service.format_stream_for_ui(stream_info)
             }
@@ -173,17 +182,19 @@ class StreamManager:
         try:
             if mint_id in self.active_streams:
                 del self.active_streams[mint_id]
-            
+
             if mint_id in self.active_websockets:
                 del self.active_websockets[mint_id]
-            
-            # If no more streams, disconnect room
-            if not self.active_streams and self.room:
-                await self.room.disconnect()
-                self.room = None
-            
+
+            # Disconnect and remove the specific room for this mint_id
+            if mint_id in self.rooms:
+                room = self.rooms[mint_id]
+                if room and room.connection_state != rtc.ConnectionState.DISCONNECTED:
+                    await room.disconnect()
+                del self.rooms[mint_id]
+
             return {"success": True, "mint_id": mint_id}
-            
+
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -206,29 +217,33 @@ class StreamManager:
         """Register an audio frame handler for streaming."""
         self.audio_frame_handlers[mint_id] = handler
 
+    def get_room(self, mint_id: str) -> Optional[rtc.Room]:
+        """Get the room for a specific mint_id."""
+        return self.rooms.get(mint_id)
 
-    async def _setup_room_handlers(self) -> None:
-        """Set up room-level event handlers."""
-        
-        @self.room.on("participant_connected")
+
+    async def _setup_room_handlers(self, room: rtc.Room) -> None:
+        """Set up room-level event handlers for a specific room."""
+
+        @room.on("participant_connected")
         def on_participant_connected(participant: rtc.RemoteParticipant):
             print(f"Participant connected: {participant.sid} ({participant.identity})")
 
-        @self.room.on("participant_disconnected")
+        @room.on("participant_disconnected")
         def on_participant_disconnected(participant: rtc.RemoteParticipant):
             print(f"Participant disconnected: {participant.sid} ({participant.identity})")
 
-        @self.room.on("track_subscribed")
+        @room.on("track_subscribed")
         def on_track_subscribed(track: rtc.RemoteTrack, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
             print(f"Track subscribed: {track.kind} from {participant.sid}")
-            
+
             # Find mint_id for this participant
             mint_id = None
             for mid, stream_info in self.active_streams.items():
                 if stream_info.participant_sid == participant.sid:
                     mint_id = mid
                     break
-            
+
             if not mint_id:
                 return
 
@@ -240,24 +255,34 @@ class StreamManager:
                     logger.info(f"Video track subscribed for {mint_id}")
                     # Note: LiveKit RemoteVideoTrack doesn't support on() decorator
                     # MediaRecorder will handle track recording directly
-                    
+
                 elif track.kind == rtc.TrackKind.KIND_AUDIO:
                     logger.info(f"Audio track subscribed for {mint_id}")
                     # Note: LiveKit RemoteAudioTrack doesn't support on() decorator
                     # MediaRecorder will handle track recording directly
-                            
+
             except Exception as e:
                 print(f"Error setting up track handlers: {e}")
                 # Continue without frame handlers - recording will still work
 
-        @self.room.on("disconnected")
+        @room.on("disconnected")
         def on_disconnected():
             print("Room disconnected")
-            # Clean up all streams
-            self.active_streams.clear()
-            self.active_websockets.clear()
-            self.video_frame_handlers.clear()
-            self.audio_frame_handlers.clear()
+            # Find which mint_id this room corresponds to and clean it up
+            for mint_id, room_obj in list(self.rooms.items()):
+                if room_obj == room:
+                    # Clean up this specific stream
+                    if mint_id in self.active_streams:
+                        del self.active_streams[mint_id]
+                    if mint_id in self.active_websockets:
+                        del self.active_websockets[mint_id]
+                    if mint_id in self.video_frame_handlers:
+                        del self.video_frame_handlers[mint_id]
+                    if mint_id in self.audio_frame_handlers:
+                        del self.audio_frame_handlers[mint_id]
+                    # Remove the room
+                    del self.rooms[mint_id]
+                    break
 
     async def add_websocket(self, mint_id: str, websocket) -> None:
         """Add a WebSocket connection for streaming."""

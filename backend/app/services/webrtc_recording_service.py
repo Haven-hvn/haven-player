@@ -385,6 +385,9 @@ class AiortcFileRecorder:
         # Backoff control for container setup failures (epoch seconds)
         self._next_container_setup_time = 0.0
         
+        # Audio resampler for format conversion (s16 -> fltp for AAC)
+        self.audio_resampler = None
+        
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
         try:
@@ -993,19 +996,20 @@ class AiortcFileRecorder:
                 try:
                     ctx = self.audio_stream.codec_context
                     # Ensure sample rate and layout are set
-                    # Some PyAV versions accept strings; otherwise, AudioLayout can be used
                     ctx.sample_rate = 48000
+                    
+                    # Set layout properly
                     try:
                         from av.audio.layout import AudioLayout
                         ctx.layout = AudioLayout('stereo')
-                    except Exception:
+                        logger.info(f"[{self.mint_id}] Audio layout set to: {ctx.layout}")
+                    except Exception as e:
+                        logger.warning(f"[{self.mint_id}] Could not set AudioLayout: {e}")
                         ctx.layout = 'stereo'
-                    # Match frame format to what we produce ('s16') to minimize resampling
-                    try:
-                        from av.audio.format import AudioFormat
-                        ctx.format = AudioFormat('s16')
-                    except Exception:
-                        ctx.format = 's16'
+                    
+                    # DON'T set format - let AAC use its native fltp format
+                    # This prevents "s16 is not supported by aac encoder" error
+                    logger.info(f"[{self.mint_id}] Audio codec will use native format (fltp for AAC)")
                 except Exception as ctx_err:
                     logger.warning(f"[{self.mint_id}] ⚠️  Could not configure audio codec context fully: {ctx_err}")
 
@@ -1280,14 +1284,14 @@ class AiortcFileRecorder:
                     # Determine if this is mono or stereo based on the audio track configuration
                     # Check if we have a stereo audio track (2 channels) or mono (1 channel)
                     if hasattr(self.audio_track, 'channels') and self.audio_track.channels == 1:
-                        # Mono audio - keep as 1D array
+                        # Mono audio - reshape to (samples, 1) for packed format
                         audio_layout = 'mono'
-                        audio_array = audio_array.reshape(1, -1)  # Shape: (1, samples)
+                        audio_array = audio_array.reshape(-1, 1)  # Shape: (samples, 1)
                         logger.debug(f"[{self.mint_id}] Processing mono audio: {audio_array.shape}")
                     else:
-                        # Stereo audio - reshape to (2, samples_per_channel)
+                        # Stereo audio - reshape to (samples_per_channel, 2) for packed format
                         samples_per_channel = len(audio_array) // 2
-                        audio_array = audio_array.reshape(2, samples_per_channel)
+                        audio_array = audio_array.reshape(samples_per_channel, 2)  # Shape: (samples, 2)
                         audio_layout = 'stereo'
                         logger.debug(f"[{self.mint_id}] Processing stereo audio: {audio_array.shape}")
                     
@@ -1301,10 +1305,34 @@ class AiortcFileRecorder:
                     av_audio_frame.time_base = self.audio_stream.time_base
                     av_audio_frame.sample_rate = self.audio_stream.sample_rate
 
-                    # Encode frame
-                    packets = self.audio_stream.encode(av_audio_frame)
-                    for packet in packets:
-                        self.container.mux(packet)
+                    # Create resampler on first frame to convert s16 -> fltp for AAC
+                    if self.audio_resampler is None:
+                        try:
+                            from av.audio.resampler import AudioResampler
+                            self.audio_resampler = AudioResampler(
+                                format='fltp',  # AAC's required format
+                                layout=self.audio_stream.codec_context.layout,
+                                rate=48000
+                            )
+                            logger.info(f"[{self.mint_id}] Audio resampler created: s16 -> fltp")
+                        except Exception as resampler_err:
+                            logger.error(f"[{self.mint_id}] Failed to create audio resampler: {resampler_err}")
+                            # Fallback: try direct encoding (may fail with AAC)
+                            packets = self.audio_stream.encode(av_audio_frame)
+                            for packet in packets:
+                                self.container.mux(packet)
+                            return
+
+                    # Resample frame to AAC-compatible format
+                    try:
+                        resampled_frames = self.audio_resampler.resample(av_audio_frame)
+                        for resampled_frame in resampled_frames:
+                            packets = self.audio_stream.encode(resampled_frame)
+                            for packet in packets:
+                                self.container.mux(packet)
+                    except Exception as encode_err:
+                        logger.error(f"[{self.mint_id}] Audio resampling/encoding failed: {encode_err}")
+                        # Continue processing other frames
 
                     # Track samples for next frame's PTS
                     self.audio_samples_written += samples_per_frame

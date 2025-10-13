@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
 import time
+from fractions import Fraction
 
 import livekit.rtc as rtc
 from app.services.stream_manager import StreamManager
@@ -452,15 +453,19 @@ class AiortcFileRecorder:
             self.room.on('track_subscribed', self._on_track_subscribed)
             logger.info(f"[{self.mint_id}] ✅ Room event handler set up for track_subscribed")
 
+            # Wait for LiveKit to publish tracks
+            logger.info(f"[{self.mint_id}] Waiting for tracks to be published...")
+            await asyncio.sleep(3.0)  # Give LiveKit time to publish tracks
+
             # Also set up frame handlers on existing tracks (in case they're already subscribed)
             await self._setup_existing_track_handlers(participant)
 
             # Retry loop to wait for tracks before proceeding
             logger.info(f"[{self.mint_id}] ⏳ Waiting for tracks to be available...")
-            for attempt in range(5):  # Try for 5 seconds
+            for attempt in range(5):  # Try for 15 seconds
                 if self.video_track or self.audio_track:
                     break
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(3.0)
                 participant = self._find_participant()
                 if participant:
                     await self._setup_existing_track_handlers(participant)
@@ -690,26 +695,41 @@ class AiortcFileRecorder:
         logger.info(f"[{self.mint_id}] 🔍 Target participant: {self.stream_info.participant_sid}")
         logger.info(f"[{self.mint_id}] 🔍 Current participant: {participant.sid}")
         
-        for track_pub in participant.track_publications.values():
-            logger.info(f"[{self.mint_id}] Track pub: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")
-            if track_pub.track is None:
-                logger.warning(f"[{self.mint_id}] ⚠️  Track publication {track_pub.sid} has no track object")
-                continue
-                
-            track = track_pub.track
-            logger.info(f"[{self.mint_id}] Track object: {type(track)}, kind={track.kind}, sid={track.sid}")
-            logger.info(f"[{self.mint_id}] Track methods: {[m for m in dir(track) if not m.startswith('_')]}")
+        # Retry loop for track detection
+        for attempt in range(3):
+            logger.info(f"[{self.mint_id}] Track detection attempt {attempt + 1}/3")
             
-            if track.kind == rtc.TrackKind.KIND_VIDEO:
-                self.video_track = track
-                logger.info(f"[{self.mint_id}] ✅ Video track reference stored for direct access")
-                logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
-            elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                self.audio_track = track
-                logger.info(f"[{self.mint_id}] ✅ Audio track reference stored for direct access")
-                logger.info(f"[{self.mint_id}] Audio track: {self.audio_track}")
-            else:
-                logger.warning(f"[{self.mint_id}] ⚠️  Unknown track kind: {track.kind}")
+            for track_pub in participant.track_publications.values():
+                logger.info(f"[{self.mint_id}] Track pub: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")
+                if track_pub.track is None:
+                    logger.info(f"[{self.mint_id}] Track {track_pub.sid} not yet available")
+                    continue
+                    
+                track = track_pub.track
+                logger.info(f"[{self.mint_id}] Track object: {type(track)}, kind={track.kind}, sid={track.sid}")
+                logger.info(f"[{self.mint_id}] Track methods: {[m for m in dir(track) if not m.startswith('_')]}")
+                
+                if track.kind == rtc.TrackKind.KIND_VIDEO:
+                    self.video_track = track
+                    logger.info(f"[{self.mint_id}] ✅ Video track found")
+                    logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
+                elif track.kind == rtc.TrackKind.KIND_AUDIO:
+                    self.audio_track = track
+                    logger.info(f"[{self.mint_id}] ✅ Audio track found")
+                    logger.info(f"[{self.mint_id}] Audio track: {self.audio_track}")
+                else:
+                    logger.warning(f"[{self.mint_id}] ⚠️  Unknown track kind: {track.kind}")
+            
+            # Break if we found tracks
+            if self.video_track or self.audio_track:
+                break
+            
+            # Wait before retry
+            if attempt < 2:
+                logger.info(f"[{self.mint_id}] No tracks found, waiting 0.5s before retry...")
+                await asyncio.sleep(5)
+        
+        logger.info(f"[{self.mint_id}] Final: video={self.video_track is not None}, audio={self.audio_track is not None}")
         
         # Start polling for frames since direct handlers aren't available
         logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
@@ -948,6 +968,10 @@ class AiortcFileRecorder:
                 self.video_stream.width = self.config['width']
                 self.video_stream.height = self.config['height']
                 self.video_stream.pix_fmt = 'yuv420p'
+                
+                # Set explicit time_base
+                self.video_stream.time_base = Fraction(1, self.config['fps'])
+                logger.info(f"[{self.mint_id}] Video stream time_base set to 1/{self.config['fps']}")
 
                 # Set video bitrate
                 if 'video_bitrate' in self.config:
@@ -1074,8 +1098,12 @@ class AiortcFileRecorder:
                 return
 
         # Guard: Skip if video stream not available after initialization
-        if not self.video_stream:
-            logger.warning(f"[{self.mint_id}] Video stream not available after initialization, skipping frame")
+        if not self.video_stream or not self.video_stream.time_base:
+            logger.warning(f"[{self.mint_id}] Video stream not properly initialized")
+            logger.warning(f"[{self.mint_id}]   - video_track: {self.video_track is not None}")
+            logger.warning(f"[{self.mint_id}]   - video_stream: {self.video_stream is not None}")
+            logger.warning(f"[{self.mint_id}]   - time_base: {self.video_stream.time_base if self.video_stream else 'N/A'}")
+            logger.warning(f"[{self.mint_id}]   - container_initialized: {self._container_initialized}")
             return
 
         try:

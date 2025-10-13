@@ -126,7 +126,7 @@ class StreamManager:
             participant_sid = None
             
             # Wait a moment for participants to fully publish their tracks
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(5)
             
             # Find participant with tracks (the actual streamer, not viewers)
             for participant in room.remote_participants.values():

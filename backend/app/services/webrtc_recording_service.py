@@ -300,22 +300,19 @@ class VideoNormalizer:
         if strategy == "scale_to_config":
             # Scale to configured resolution
             return av_frame.reformat(width=target_width, height=target_height,
-                                   format='yuv420p', src_colorspace=self.colorspace,
-                                   src_range=self.range)
+                                   format='yuv420p')
 
         elif strategy == "match_source":
             # Use source resolution (update target for next frames)
             return av_frame.reformat(width=source_width, height=source_height,
-                                   format='yuv420p', src_colorspace=self.colorspace,
-                                   src_range=self.range)
+                                   format='yuv420p')
 
         elif strategy == "recreate_on_change":
             # For now, fall back to scale_to_config
             # In a full implementation, this would trigger container recreation
             logger.warning("Resolution change detected, recreating container not yet implemented")
             return av_frame.reformat(width=target_width, height=target_height,
-                                   format='yuv420p', src_colorspace=self.colorspace,
-                                   src_range=self.range)
+                                   format='yuv420p')
 
         return av_frame
 
@@ -1126,6 +1123,10 @@ class AiortcFileRecorder:
                 self.config['height'] = actual_height
 
             # Set proper PTS based on frame timestamp
+            if not self.video_stream or not self.video_stream.time_base:
+                logger.warning(f"[{self.mint_id}] Video stream not properly initialized, skipping frame")
+                return
+                
             if hasattr(frame, 'timestamp_us') and frame.timestamp_us is not None:
                 if self.first_video_timestamp is None:
                     self.first_video_timestamp = frame.timestamp_us
@@ -1243,8 +1244,14 @@ class AiortcFileRecorder:
                     samples_per_frame = len(audio_bytes) // (2 * 2)  # int16 stereo
 
                     # Create PyAV AudioFrame from audio data
+                    # Reshape to (channels, samples) format for proper encoding
+                    audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+                    # For stereo: reshape to (2, samples_per_channel)
+                    samples_per_channel = len(audio_array) // 2
+                    audio_array = audio_array.reshape(2, samples_per_channel)
+                    
                     av_audio_frame = AudioFrame.from_ndarray(
-                        np.frombuffer(audio_bytes, dtype=np.int16).reshape(-1, 2),  # Stereo
+                        audio_array,
                         format='s16',
                         layout='stereo'
                     )

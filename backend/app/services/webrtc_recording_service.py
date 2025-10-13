@@ -384,6 +384,8 @@ class AiortcFileRecorder:
         
         # Lazy initialization flag
         self._container_initialized = False
+        # Backoff control for container setup failures (epoch seconds)
+        self._next_container_setup_time = 0.0
         
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
@@ -960,18 +962,37 @@ class AiortcFileRecorder:
 
             # Add audio stream
             if self.audio_track:
+                # Create audio stream specifying rate only; configure details via codec_context
                 self.audio_stream = self.container.add_stream(
                     self.config['audio_codec'],
-                    rate=48000,  # Standard sample rate
-                    channels=2   # Stereo - set channels during creation
+                    rate=48000  # Standard sample rate
                 )
-                # Note: sample_rate is set automatically when rate is specified
 
-                # Set audio bitrate
+                # Configure encoder context for compatibility (avoid read-only channels attr)
+                try:
+                    ctx = self.audio_stream.codec_context
+                    # Ensure sample rate and layout are set
+                    # Some PyAV versions accept strings; otherwise, AudioLayout can be used
+                    ctx.sample_rate = 48000
+                    try:
+                        from av.audio.layout import AudioLayout
+                        ctx.layout = AudioLayout('stereo')
+                    except Exception:
+                        ctx.layout = 'stereo'
+                    # Match frame format to what we produce ('s16') to minimize resampling
+                    try:
+                        from av.audio.format import AudioFormat
+                        ctx.format = AudioFormat('s16')
+                    except Exception:
+                        ctx.format = 's16'
+                except Exception as ctx_err:
+                    logger.warning(f"[{self.mint_id}] ⚠️  Could not configure audio codec context fully: {ctx_err}")
+
+                # Set audio bitrate if provided
                 if 'audio_bitrate' in self.config:
                     self.audio_stream.bit_rate = self._parse_bitrate(self.config['audio_bitrate'])
 
-                logger.info(f"[{self.mint_id}] ✅ Audio stream added: {self.config['audio_codec']} at 48kHz stereo")
+                logger.info(f"[{self.mint_id}] ✅ Audio stream added: {self.config['audio_codec']} at 48kHz stereo (via codec_context)")
             else:
                 logger.warning(f"[{self.mint_id}] ⚠️  No audio track available for container setup")
 
@@ -992,6 +1013,8 @@ class AiortcFileRecorder:
                 self.container.close()
                 self.container = None
             self._container_initialized = False
+            # Backoff 1s before next attempt to avoid log spam
+            self._next_container_setup_time = time.time() + 1.0
             raise  # Re-raise to fail the recording start immediately
 
     async def _close_container(self):
@@ -1038,14 +1061,19 @@ class AiortcFileRecorder:
         if self._shutdown_event.is_set():
             return
 
-        # Lazy initialization - setup container on first frame
+        # Lazy initialization with backoff - setup container on first frame
         if not self._container_initialized:
+            # Backoff guard to avoid retry spam
+            if time.time() < self._next_container_setup_time:
+                return
             try:
                 logger.info(f"[{self.mint_id}] 🎬 First video frame received, initializing container...")
                 await self._setup_container()
                 logger.info(f"[{self.mint_id}] ✅ Container initialized on first video frame")
             except Exception as e:
                 logger.error(f"[{self.mint_id}] Failed to initialize container: {e}")
+                # Backoff 1s before trying again
+                self._next_container_setup_time = time.time() + 1.0
                 return
 
         # Guard: Skip if video stream not available after initialization
@@ -1178,14 +1206,19 @@ class AiortcFileRecorder:
         if self._shutdown_event.is_set():
             return
 
-        # Lazy initialization - setup container on first frame (if not already done by video)
+        # Lazy initialization with backoff - setup container on first frame (if not already done by video)
         if not self._container_initialized:
+            # Backoff guard to avoid retry spam
+            if time.time() < self._next_container_setup_time:
+                return
             try:
                 logger.info(f"[{self.mint_id}] 🎵 First audio frame received, initializing container...")
                 await self._setup_container()
                 logger.info(f"[{self.mint_id}] ✅ Container initialized on first audio frame")
             except Exception as e:
                 logger.error(f"[{self.mint_id}] Failed to initialize container: {e}")
+                # Backoff 1s before trying again
+                self._next_container_setup_time = time.time() + 1.0
                 return
 
         # Guard: Skip if audio stream not available after initialization

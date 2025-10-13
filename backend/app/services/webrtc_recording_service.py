@@ -1,19 +1,17 @@
 """
-WebRTC recording service using FFmpeg subprocess for direct disk writes.
+WebRTC recording service using aiortc/PyAV for direct file recording.
 
-This approach eliminates PyAV memory buffering by using FFmpeg subprocess
-that writes directly to disk in streaming format (MPEG-TS).
+This approach eliminates FFmpeg subprocess by using PyAV directly
+for encoding and muxing to disk in various formats.
 """
 
 import asyncio
 import logging
-import subprocess
 import numpy as np
 import json
-import threading
 import psutil
 import gc
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -22,6 +20,16 @@ import time
 
 import livekit.rtc as rtc
 from app.services.stream_manager import StreamManager
+
+try:
+    import av
+    from av import VideoFrame, AudioFrame
+    AV_AVAILABLE = True
+except ImportError:
+    AV_AVAILABLE = False
+    av = None
+    VideoFrame = None
+    AudioFrame = None
 
 logger = logging.getLogger(__name__)
 
@@ -43,42 +51,47 @@ class TrackContext:
     kind: int  # rtc.TrackKind
     participant_sid: str
 
-class FFmpegRecorder:
-    """WebRTC recorder using FFmpeg subprocess for direct disk writes."""
-    
+class AiortcFileRecorder:
+    """WebRTC recorder using aiortc/PyAV for direct file recording."""
+
     def __init__(
-        self, 
-        mint_id: str, 
+        self,
+        mint_id: str,
         stream_info: Any,
-        output_dir: Path, 
-        config: Dict[str, Any], 
+        output_dir: Path,
+        config: Dict[str, Any],
         room: rtc.Room
     ):
+        if not AV_AVAILABLE:
+            raise ImportError("PyAV (av) is required for aiortc recording. Install with: pip install av")
+
         self.mint_id = mint_id
         self.stream_info = stream_info
         self.output_dir = output_dir
         self.config = config
         self.room = room
-        
+
         self.state = RecordingState.DISCONNECTED
         self.tracks: Dict[str, TrackContext] = {}
-        self.ffmpeg_process: Optional[subprocess.Popen] = None
+        self.container: Optional[av.container.OutputContainer] = None
         self.output_path: Optional[Path] = None
-        self.raw_frames_dir: Optional[Path] = None
         self.start_time: Optional[datetime] = None
-        
+
         # Track references for frame access
         self.video_track: Optional[rtc.RemoteVideoTrack] = None
         self.audio_track: Optional[rtc.RemoteAudioTrack] = None
-        
+
         # Frame processing
         self.video_frames_received = 0
         self.audio_frames_received = 0
         self.video_frames_written = 0
         self.audio_frames_written = 0
-        
-        # Threading for FFmpeg communication
-        self._ffmpeg_lock = threading.Lock()
+
+        # PyAV streams
+        self.video_stream: Optional[av.video.VideoStream] = None
+        self.audio_stream: Optional[av.audio.AudioStream] = None
+
+        # Shutdown flag
         self._shutdown = False
         
     def _log_memory_usage(self, context: str = ""):
@@ -90,12 +103,12 @@ class FFmpegRecorder:
             logger.info(f"[{context}] Memory usage: {memory_mb:.1f} MB")
         except Exception as e:
             logger.warning(f"[{context}] Could not get memory usage: {e}")
-    
+
     def _parse_bitrate(self, bitrate_str: str) -> int:
         """Parse bitrate string (e.g., '2M', '128k') to integer."""
         if isinstance(bitrate_str, int):
             return bitrate_str
-        
+
         bitrate_str = str(bitrate_str).upper()
         if bitrate_str.endswith('K'):
             return int(bitrate_str[:-1]) * 1000
@@ -103,18 +116,6 @@ class FFmpegRecorder:
             return int(bitrate_str[:-1]) * 1000000
         else:
             return int(bitrate_str)
-    
-    def _read_ffmpeg_log(self) -> str:
-        """Read the FFmpeg log file to see what happened."""
-        try:
-            ffmpeg_log_file = self.output_path.parent / f"{self.mint_id}_ffmpeg.log"
-            if ffmpeg_log_file.exists():
-                with open(ffmpeg_log_file, 'r') as f:
-                    return f.read()
-            else:
-                return "FFmpeg log file not found"
-        except Exception as e:
-            return f"Error reading FFmpeg log: {e}"
     
     async def _continuous_track_detection(self):
         """Continuously try to find tracks and start frame processing."""
@@ -139,54 +140,53 @@ class FFmpegRecorder:
         logger.warning(f"[{self.mint_id}] ⚠️  Could not find tracks after 10 attempts")
 
     async def start(self) -> Dict[str, Any]:
-        """Start recording using FFmpeg subprocess."""
+        """Start recording using aiortc/PyAV."""
         try:
-            logger.info(f"[{self.mint_id}] Starting FFmpeg-based recording")
-            
+            logger.info(f"[{self.mint_id}] Starting aiortc-based recording")
+
             # State: DISCONNECTED → CONNECTING
             self.state = RecordingState.CONNECTING
-            
+
             # Find target participant
             participant = self._find_participant()
             if not participant:
                 return {"success": False, "error": "Target participant not found"}
-            
+
             # Subscribe to tracks
             await self._subscribe_to_tracks(participant)
-            
+
             # State: CONNECTING → SUBSCRIBING
             self.state = RecordingState.SUBSCRIBING
-            
+
             # Set up room event handler for track subscriptions
             self.room.on('track_subscribed', self._on_track_subscribed)
             logger.info(f"[{self.mint_id}] ✅ Room event handler set up for track_subscribed")
-            
+
             # Also set up frame handlers on existing tracks (in case they're already subscribed)
             await self._setup_existing_track_handlers(participant)
-            
+
             # Give frame polling time to start and receive frames
             logger.info(f"[{self.mint_id}] ⏳ Waiting for frame polling to start and receive frames...")
             await asyncio.sleep(2.0)  # Give frame polling 2 seconds to start and receive frames
-            
+
             # Check if we received any frames after giving frame polling time
             if self.video_frames_received == 0:
                 logger.warning(f"[{self.mint_id}] ⚠️  No video frames received after 2s - frame polling may still be starting")
             else:
                 logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
-                
+
             # Check LiveKit room connection status
             if not self.room.isconnected():
                 logger.error(f"[{self.mint_id}] LiveKit room disconnected - stopping recording")
                 await self._cleanup()
                 return {"success": False, "error": "LiveKit room disconnected"}
-                logger.info(f"[{self.mint_id}] ✅ Received {self.video_frames_received} video frames during initialization")
-            
+
             # State: SUBSCRIBING → SUBSCRIBED
             self.state = RecordingState.SUBSCRIBED
-            
-            # Setup FFmpeg process
-            await self._setup_ffmpeg()
-            
+
+            # Setup PyAV container
+            await self._setup_container()
+
             # Start frame processing (if we have tracks)
             if self.video_track or self.audio_track:
                 await self._start_frame_processing()
@@ -204,13 +204,13 @@ class FFmpegRecorder:
                         logger.warning(f"[{self.mint_id}] ⚠️  Still no tracks found after retry")
                         # Start a background task to continuously look for tracks
                         asyncio.create_task(self._continuous_track_detection())
-            
+
             # State: SUBSCRIBED → RECORDING
             self.state = RecordingState.RECORDING
             self.start_time = datetime.now(timezone.utc)
-            
-            logger.info(f"[{self.mint_id}] ✅ Recording started with FFmpeg")
-            
+
+            logger.info(f"[{self.mint_id}] ✅ Recording started with aiortc/PyAV")
+
             return {
                 "success": True,
                 "output_path": str(self.output_path),
@@ -226,7 +226,7 @@ class FFmpegRecorder:
                     "subscription_time": 0.0
                 }
             }
-            
+
         except Exception as e:
             logger.error(f"[{self.mint_id}] Recording start failed: {e}")
             await self._cleanup()
@@ -235,30 +235,28 @@ class FFmpegRecorder:
     async def stop(self) -> Dict[str, Any]:
         """Stop recording."""
         try:
-            logger.info(f"[{self.mint_id}] Stopping FFmpeg recording")
-            
+            logger.info(f"[{self.mint_id}] Stopping aiortc recording")
+
             if self.state != RecordingState.RECORDING:
                 return {"success": False, "error": f"No active recording to stop (state: {self.state.value})"}
-            
+
             # State: RECORDING → STOPPING
             self.state = RecordingState.STOPPING
             self._shutdown = True
-            
-            # Stop FFmpeg process
-            if self.ffmpeg_process:
-                self.ffmpeg_process.stdin.close()
-                self.ffmpeg_process.wait(timeout=5.0)
-            
+
+            # Close PyAV container
+            await self._close_container()
+
             # State: STOPPING → STOPPED
             self.state = RecordingState.STOPPED
-            
+
             # Get final stats
             file_size = 0
             if self.output_path and self.output_path.exists():
                 file_size = self.output_path.stat().st_size
-            
+
             logger.info(f"[{self.mint_id}] ✅ Recording stopped")
-            
+
             return {
                 "success": True,
                 "output_path": str(self.output_path),
@@ -274,7 +272,7 @@ class FFmpegRecorder:
                     "subscription_time": 0.0
                 }
             }
-            
+
         except Exception as e:
             logger.error(f"[{self.mint_id}] Recording stop failed: {e}")
             return {"success": False, "error": str(e)}
@@ -283,72 +281,43 @@ class FFmpegRecorder:
         """Get current recording status."""
         file_size = 0
         recording_mode = "unknown"
-        
+
         # Debug logging
         logger.info(f"[{self.mint_id}] Status check: state={self.state.value}, frames_received={self.video_frames_received}, frames_written={self.video_frames_written}")
-        logger.info(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process is not None}, raw_frames_dir: {self.raw_frames_dir}")
-        
+        logger.info(f"[{self.mint_id}] PyAV container: {self.container is not None}")
+
         # Determine recording mode and calculate file size
-        if self.ffmpeg_process:
-            recording_mode = "ffmpeg"
-            logger.info(f"[{self.mint_id}] FFmpeg PID: {self.ffmpeg_process.pid}, returncode: {self.ffmpeg_process.returncode}")
-            logger.info(f"[{self.mint_id}] FFmpeg stdin available: {self.ffmpeg_process.stdin is not None}")
-            logger.info(f"[{self.mint_id}] FFmpeg stdout available: {self.ffmpeg_process.stdout is not None}")
-            logger.info(f"[{self.mint_id}] FFmpeg stderr available: {self.ffmpeg_process.stderr is not None}")
-            
+        if self.container:
+            recording_mode = "aiortc"
+            logger.info(f"[{self.mint_id}] PyAV container active")
+
             # Check if output file exists and its size
             if self.output_path and self.output_path.exists():
                 file_size = self.output_path.stat().st_size
-                logger.info(f"[{self.mint_id}] FFmpeg output file size: {file_size} bytes")
+                logger.info(f"[{self.mint_id}] PyAV output file size: {file_size} bytes")
             else:
-                logger.warning(f"[{self.mint_id}] FFmpeg output file does not exist: {self.output_path}")
-                
-        elif self.raw_frames_dir:
-            recording_mode = "raw_frames"
-            logger.info(f"[{self.mint_id}] Raw recording mode - checking frames directory")
-            logger.info(f"[{self.mint_id}] Raw frames directory: {self.raw_frames_dir}")
-            logger.info(f"[{self.mint_id}] Raw frames directory exists: {self.raw_frames_dir.exists()}")
-            
-            # Calculate total size of raw frames
-            if self.raw_frames_dir.exists():
-                total_size = 0
-                frame_count = 0
-                for frame_file in self.raw_frames_dir.glob("video_*.raw"):
-                    if frame_file.is_file():
-                        total_size += frame_file.stat().st_size
-                        frame_count += 1
-                file_size = total_size
-                logger.info(f"[{self.mint_id}] Raw frames: {frame_count} files, total size: {file_size} bytes")
-            else:
-                logger.warning(f"[{self.mint_id}] Raw frames directory does not exist")
+                logger.warning(f"[{self.mint_id}] PyAV output file does not exist: {self.output_path}")
         else:
             recording_mode = "none"
-            logger.warning(f"[{self.mint_id}] No recording mode active - neither FFmpeg nor raw frames")
-        
+            logger.warning(f"[{self.mint_id}] No recording mode active - no PyAV container")
+
         # Determine if we're actually recording based on state and frame activity
-        is_recording = (self.state == RecordingState.RECORDING and 
+        is_recording = (self.state == RecordingState.RECORDING and
                        (self.video_frames_received > 0 or self.audio_frames_received > 0))
-        
-        # Also check if we have an active recording process (FFmpeg or raw frames)
-        has_active_process = (self.ffmpeg_process is not None or 
-                             (self.raw_frames_dir is not None and self.raw_frames_dir.exists()))
-        
+
+        # Also check if we have an active recording process (PyAV container)
+        has_active_process = self.container is not None
+
         # Final recording status
         is_recording = is_recording and has_active_process
-        
+
         logger.info(f"[{self.mint_id}] Recording status: mode={recording_mode}, is_recording={is_recording}")
-        
-        # Get FFmpeg log if available
-        ffmpeg_log = ""
-        if self.ffmpeg_process and self.ffmpeg_process.poll() is not None:
-            ffmpeg_log = self._read_ffmpeg_log()
-        
+
         return {
             "mint_id": self.mint_id,
             "state": self.state.value,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "output_path": str(self.output_path) if self.output_path else None,
-            "raw_frames_dir": str(self.raw_frames_dir) if self.raw_frames_dir else None,
             "file_size_mb": round(file_size / (1024 * 1024), 2),
             "recording_mode": recording_mode,
             "is_recording": is_recording,
@@ -362,8 +331,7 @@ class FFmpegRecorder:
                 "connection_time": 0.0,
                 "subscription_time": 0.0
             },
-            "config": self.config,
-            "ffmpeg_log": ffmpeg_log if ffmpeg_log else None
+            "config": self.config
         }
 
     def _find_participant(self) -> Optional[rtc.RemoteParticipant]:
@@ -626,149 +594,93 @@ class FFmpegRecorder:
         finally:
             logger.info(f"[{self.mint_id}] Audio stream processing ended. Total frames: {frame_count}")
 
-    async def _setup_ffmpeg(self):
-        """Setup FFmpeg subprocess for recording."""
+    async def _setup_container(self):
+        """Setup PyAV container for recording."""
         # Generate output path
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-        output_filename = f"{self.mint_id}_{timestamp}.ts"
+        output_format = self.config.get('format', 'mpegts')
+
+        if output_format == 'mpegts':
+            output_filename = f"{self.mint_id}_{timestamp}.ts"
+        elif output_format == 'mp4':
+            output_filename = f"{self.mint_id}_{timestamp}.mp4"
+        elif output_format == 'webm':
+            output_filename = f"{self.mint_id}_{timestamp}.webm"
+        else:
+            output_filename = f"{self.mint_id}_{timestamp}.ts"  # Default to mpegts
+
         self.output_path = self.output_dir / output_filename
-        
+
         # Ensure output directory exists
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"[{self.mint_id}] Setting up FFmpeg process: {self.output_path}")
-        
-        # Check if FFmpeg is available
-        ffmpeg_available = self._check_ffmpeg()
-        logger.info(f"[{self.mint_id}] FFmpeg available: {ffmpeg_available}")
-        
-        if not ffmpeg_available:
-            logger.warning(f"[{self.mint_id}] FFmpeg not found, falling back to raw frame recording")
-            logger.warning(f"[{self.mint_id}] To fix this, install FFmpeg:")
-            logger.warning(f"[{self.mint_id}] Windows: Download from https://ffmpeg.org/download.html")
-            logger.warning(f"[{self.mint_id}] macOS: brew install ffmpeg")
-            logger.warning(f"[{self.mint_id}] Linux: apt install ffmpeg or yum install ffmpeg")
-            await self._setup_raw_recording()
-            logger.info(f"[{self.mint_id}] Raw recording setup complete, raw_frames_dir: {self.raw_frames_dir}")
-            return
-        
-        # Build FFmpeg command for MPEG-TS streaming with dynamic resolution support
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',  # Overwrite output file
-            '-f', 'rawvideo',  # Input format: raw video
-            '-pix_fmt', 'rgb24',  # Pixel format
-            '-s', f"{self.config['width']}x{self.config['height']}",  # Resolution (will be updated dynamically)
-            '-r', str(self.config['fps']),  # Frame rate
-            '-i', 'pipe:0',  # Video from stdin
-            '-f', 's16le',  # Audio format: signed 16-bit little endian
-            '-ar', '48000',  # Sample rate
-            '-ac', '2',  # Stereo
-            '-i', 'pipe:3',  # Audio from pipe 3
-            '-c:v', self.config['video_codec'],  # Video codec
-            '-preset', 'ultrafast',  # Fast encoding
-            '-tune', 'zerolatency',  # No buffering
-            '-g', '30',  # Keyframe interval (every 30 frames)
-            '-keyint_min', '30',  # Minimum keyframe interval
-            '-sc_threshold', '0',  # Disable scene change detection
-            '-b:v', str(self._parse_bitrate(self.config['video_bitrate'])),  # Video bitrate
-            '-maxrate', str(self._parse_bitrate(self.config['video_bitrate'])),  # Maximum bitrate
-            '-bufsize', str(self._parse_bitrate(self.config['video_bitrate']) * 2),  # Buffer size
-            '-c:a', self.config['audio_codec'],  # Audio codec
-            '-b:a', str(self._parse_bitrate(self.config['audio_bitrate'])),  # Audio bitrate
-            '-f', 'mpegts',  # Output format: MPEG-TS (streams to disk)
-            '-muxrate', '10000000',  # Mux rate for MPEG-TS
-            '-pcr_period', '20',  # PCR period for MPEG-TS
-            str(self.output_path)  # Output file
-        ]
-        
-        logger.info(f"[{self.mint_id}] FFmpeg command: {' '.join(ffmpeg_cmd)}")
-        
+
+        logger.info(f"[{self.mint_id}] Setting up PyAV container: {self.output_path} (format: {output_format})")
+
         try:
-            # Create FFmpeg log file
-            ffmpeg_log_file = self.output_path.parent / f"{self.mint_id}_ffmpeg.log"
-            logger.info(f"[{self.mint_id}] FFmpeg log file: {ffmpeg_log_file}")
-            
-            # Start FFmpeg process with stderr redirected to log file
-            with open(ffmpeg_log_file, 'w') as log_file:
-                self.ffmpeg_process = subprocess.Popen(
-                    ffmpeg_cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=log_file,  # Redirect stderr to log file
-                    bufsize=0  # Unbuffered
+            # Create PyAV output container
+            self.container = av.open(str(self.output_path), mode='w', format=output_format)
+
+            # Add video stream
+            if self.video_track:
+                self.video_stream = self.container.add_stream(
+                    self.config['video_codec'],
+                    rate=self.config['fps']
                 )
-            
-            logger.info(f"[{self.mint_id}] ✅ FFmpeg process started (PID: {self.ffmpeg_process.pid})")
-            logger.info(f"[{self.mint_id}] FFmpeg stderr redirected to: {ffmpeg_log_file}")
-            
-        except FileNotFoundError:
-            raise Exception("FFmpeg not found. Please install FFmpeg and ensure it's in your PATH.")
-        except Exception as e:
-            raise Exception(f"Failed to start FFmpeg process: {e}")
+                self.video_stream.width = self.config['width']
+                self.video_stream.height = self.config['height']
+                self.video_stream.pix_fmt = 'yuv420p'
 
-    def _check_ffmpeg(self) -> bool:
-        """Check if FFmpeg is available in the system."""
-        try:
-            result = subprocess.run(['ffmpeg', '-version'], 
-                                  capture_output=True, 
-                                  text=True, 
-                                  timeout=5)
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
+                # Set video bitrate
+                if 'video_bitrate' in self.config:
+                    self.video_stream.bit_rate = self._parse_bitrate(self.config['video_bitrate'])
 
-    async def _setup_raw_recording(self):
-        """Setup raw frame recording as fallback when FFmpeg is not available."""
-        logger.info(f"[{self.mint_id}] Setting up raw frame recording (no FFmpeg)")
-        logger.info(f"[{self.mint_id}] Output directory: {self.output_dir}")
-        logger.info(f"[{self.mint_id}] Mint ID: {self.mint_id}")
-        
-        try:
-            # Create raw frames directory
-            self.raw_frames_dir = self.output_dir / f"{self.mint_id}_frames"
-            logger.info(f"[{self.mint_id}] Creating raw frames directory: {self.raw_frames_dir}")
-            self.raw_frames_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"[{self.mint_id}] Raw frames directory created successfully")
-            
-            # Verify directory was created
-            if not self.raw_frames_dir.exists():
-                raise Exception(f"Failed to create raw frames directory: {self.raw_frames_dir}")
-                
-            logger.info(f"[{self.mint_id}] ✅ Raw recording setup complete")
-            
+                logger.info(f"[{self.mint_id}] ✅ Video stream added: {self.config['video_codec']} at {self.config['width']}x{self.config['height']}")
+
+            # Add audio stream
+            if self.audio_track:
+                self.audio_stream = self.container.add_stream(
+                    self.config['audio_codec'],
+                    rate=48000  # Standard sample rate
+                )
+                self.audio_stream.channels = 2  # Stereo
+                self.audio_stream.sample_rate = 48000
+
+                # Set audio bitrate
+                if 'audio_bitrate' in self.config:
+                    self.audio_stream.bit_rate = self._parse_bitrate(self.config['audio_bitrate'])
+
+                logger.info(f"[{self.mint_id}] ✅ Audio stream added: {self.config['audio_codec']} at 48kHz stereo")
+
+            logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete")
+
         except Exception as e:
-            logger.error(f"[{self.mint_id}] ❌ Failed to setup raw recording: {e}")
-            logger.error(f"[{self.mint_id}] This will cause memory issues - stopping recording")
-            logger.error(f"[{self.mint_id}] Please install FFmpeg to enable proper recording")
-            self._shutdown = True
-            raise
-        
-        # Create metadata file
-        metadata_file = self.raw_frames_dir / "metadata.json"
-        metadata = {
-            "mint_id": self.mint_id,
-            "start_time": datetime.now(timezone.utc).isoformat(),
-            "config": self.config,
-            "format": "raw_frames"
-        }
-        
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
-        logger.info(f"[{self.mint_id}] ✅ Raw frame recording setup complete: {self.raw_frames_dir}")
-        logger.info(f"[{self.mint_id}] Raw frames directory exists: {self.raw_frames_dir.exists()}")
-        logger.info(f"[{self.mint_id}] Raw frames directory is directory: {self.raw_frames_dir.is_dir()}")
+            logger.error(f"[{self.mint_id}] ❌ Failed to setup PyAV container: {e}")
+            if self.container:
+                self.container.close()
+                self.container = None
+            raise Exception(f"Failed to setup PyAV container: {e}")
+
+    async def _close_container(self):
+        """Close PyAV container and finalize recording."""
+        if self.container:
+            try:
+                logger.info(f"[{self.mint_id}] Closing PyAV container")
+                self.container.close()
+                logger.info(f"[{self.mint_id}] ✅ PyAV container closed")
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] Error closing container: {e}")
+            finally:
+                self.container = None
 
     async def _start_frame_processing(self):
         """Start frame processing tasks."""
         logger.info(f"[{self.mint_id}] Starting frame processing")
-        
+
         if self.video_track:
             logger.info(f"[{self.mint_id}] Video track available: {self.video_track.sid}")
         if self.audio_track:
             logger.info(f"[{self.mint_id}] Audio track available: {self.audio_track.sid}")
-        
+
         # Start the frame processing tasks
         logger.info(f"[{self.mint_id}] 🚀 Starting frame processing tasks...")
         await self._poll_frames()
@@ -1026,130 +938,38 @@ class FFmpegRecorder:
                 # Immediately free the numpy array to reduce memory pressure
                 del frame_data
                 
-                if self.ffmpeg_process:
-                    # Check if FFmpeg process is still alive
-                    if self.ffmpeg_process.poll() is not None:
-                        logger.error(f"[{self.mint_id}] FFmpeg process died with return code: {self.ffmpeg_process.returncode}")
-                        # Read FFmpeg log to see what happened
-                        ffmpeg_log = self._read_ffmpeg_log()
-                        logger.error(f"[{self.mint_id}] FFmpeg log output:\n{ffmpeg_log}")
-                        logger.error(f"[{self.mint_id}] FFmpeg failed due to bad input data - stopping recording")
-                        self.ffmpeg_process = None
-                        self._shutdown = True
-                        return
-                    
-                    # FFmpeg mode: pipe to FFmpeg
-                    logger.info(f"[{self.mint_id}] Attempting to write {len(frame_bytes)} bytes to FFmpeg")
-                    with self._ffmpeg_lock:
-                        if self.ffmpeg_process.stdin:
-                            # Check if FFmpeg process is still alive
-                            if self.ffmpeg_process.poll() is not None:
-                                logger.error(f"[{self.mint_id}] FFmpeg process died (exit code: {self.ffmpeg_process.poll()})")
-                                self.ffmpeg_process = None
-                                self._shutdown = True
-                                return
-                            
-                            try:
-                                self.ffmpeg_process.stdin.write(frame_bytes)
-                                self.ffmpeg_process.stdin.flush()  # Force flush to FFmpeg
-                                self.video_frames_written += 1
-                                
-                                if self.video_frames_written == 1:
-                                    logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME WRITTEN TO FFMPEG!")
-                                    logger.info(f"[{self.mint_id}] FFmpeg process status: {self.ffmpeg_process.poll()}")
-                                
-                                if self.video_frames_written % 30 == 0:  # Log every second
-                                    logger.info(f"[{self.mint_id}] Written {self.video_frames_written} video frames to FFmpeg")
-                                    
-                                    # Check if FFmpeg is still processing frames
-                                    if self.ffmpeg_process.poll() is not None:
-                                        logger.error(f"[{self.mint_id}] FFmpeg process died during processing")
-                                        ffmpeg_log = self._read_ffmpeg_log()
-                                        logger.error(f"[{self.mint_id}] FFmpeg log:\n{ffmpeg_log}")
-                                        self.ffmpeg_process = None
-                                        self._shutdown = True
-                                        return
-                                    
-                                    # Force FFmpeg to flush its buffers
-                                    try:
-                                        self.ffmpeg_process.stdin.flush()
-                                        logger.info(f"[{self.mint_id}] Forced FFmpeg buffer flush")
-                                    except Exception as flush_error:
-                                        logger.error(f"[{self.mint_id}] Failed to flush FFmpeg buffers: {flush_error}")
-                                        self.ffmpeg_process = None
-                                        self._shutdown = True
-                                        return
-                                    
-                                    # Check if output file is still growing
-                                    if self.output_path and self.output_path.exists():
-                                        current_size = self.output_path.stat().st_size
-                                        if hasattr(self, '_last_file_size'):
-                                            if current_size == self._last_file_size:
-                                                logger.warning(f"[{self.mint_id}] File size not growing: {current_size} bytes")
-                                                logger.warning(f"[{self.mint_id}] FFmpeg may be stuck - forcing flush")
-                                                try:
-                                                    self.ffmpeg_process.stdin.flush()
-                                                    # Send a small amount of data to wake up FFmpeg
-                                                    self.ffmpeg_process.stdin.write(b'\x00' * 1024)
-                                                    self.ffmpeg_process.stdin.flush()
-                                                except Exception as wake_error:
-                                                    logger.error(f"[{self.mint_id}] Failed to wake up FFmpeg: {wake_error}")
-                                                    self.ffmpeg_process = None
-                                                    self._shutdown = True
-                                                    return
-                                        self._last_file_size = current_size
-                            except BrokenPipeError:
-                                logger.error(f"[{self.mint_id}] FFmpeg process broken pipe - process may have died")
-                                logger.error(f"[{self.mint_id}] FFmpeg return code: {self.ffmpeg_process.poll()}")
-                                # Read FFmpeg log to see what happened
-                                ffmpeg_log = self._read_ffmpeg_log()
-                                logger.error(f"[{self.mint_id}] FFmpeg log:\n{ffmpeg_log}")
-                                logger.error(f"[{self.mint_id}] FFmpeg failed due to bad input data - stopping recording")
-                                self.ffmpeg_process = None
-                                self._shutdown = True
-                            except Exception as write_error:
-                                logger.error(f"[{self.mint_id}] Error writing to FFmpeg: {write_error}")
-                                # Read FFmpeg log to see what happened
-                                ffmpeg_log = self._read_ffmpeg_log()
-                                logger.error(f"[{self.mint_id}] FFmpeg log:\n{ffmpeg_log}")
-                                logger.error(f"[{self.mint_id}] FFmpeg failed due to bad input data - stopping recording")
-                                self.ffmpeg_process = None
-                                self._shutdown = True
-                        else:
-                            logger.error(f"[{self.mint_id}] FFmpeg stdin is None!")
-                            logger.error(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process}")
-                            logger.error(f"[{self.mint_id}] FFmpeg process status: {self.ffmpeg_process.poll() if self.ffmpeg_process else 'None'}")
-                else:
-                    # Raw mode: save individual frames
-                    logger.info(f"[{self.mint_id}] Checking raw frames directory: {self.raw_frames_dir}")
-                    logger.info(f"[{self.mint_id}] Raw frames directory is None: {self.raw_frames_dir is None}")
-                    
-                    # If raw recording is not available, we need to handle this gracefully
-                    if not self.raw_frames_dir:
-                        logger.warning(f"[{self.mint_id}] ⚠️ Raw recording not available - frames will be discarded")
-                        logger.warning(f"[{self.mint_id}] This is not ideal but prevents memory leaks")
-                        # Don't set _shutdown = True here - let frame processing continue
-                        # The frames will just be discarded instead of accumulated in memory
-                        return
-                    
-                    if self.raw_frames_dir:
-                        logger.info(f"[{self.mint_id}] Raw frames directory exists: {self.raw_frames_dir.exists()}")
-                        frame_file = self.raw_frames_dir / f"video_{self.video_frames_written:06d}.raw"
-                        logger.info(f"[{self.mint_id}] Saving video frame to: {frame_file}")
-                        with open(frame_file, 'wb') as f:
-                            f.write(frame_bytes)
+                # PyAV mode: encode and mux frame to container
+                if self.container and self.video_stream:
+                    try:
+                        # Convert RGB frame to YUV420P for encoding
+                        rgb_frame = frame_data.astype(np.uint8)
+
+                        # Create PyAV VideoFrame from RGB data
+                        av_frame = VideoFrame.from_ndarray(rgb_frame, format='rgb24')
+                        av_frame.pts = self.video_frames_written
+                        av_frame.time_base = self.video_stream.time_base
+
+                        # Encode frame
+                        packets = self.video_stream.encode(av_frame)
+                        for packet in packets:
+                            self.container.mux(packet)
+
                         self.video_frames_written += 1
-                        
+
                         if self.video_frames_written == 1:
-                            logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME SAVED TO DISK!")
-                        
+                            logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
+
                         if self.video_frames_written % 30 == 0:  # Log every second
-                            logger.info(f"[{self.mint_id}] Saved {self.video_frames_written} video frames to disk")
-                    else:
-                        logger.warning(f"[{self.mint_id}] Raw frames directory not available for video")
-                        logger.warning(f"[{self.mint_id}] FFmpeg process: {self.ffmpeg_process is not None}")
-                        logger.warning(f"[{self.mint_id}] Raw frames dir: {self.raw_frames_dir}")
-                        logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
+                            logger.info(f"[{self.mint_id}] Encoded {self.video_frames_written} video frames to PyAV")
+
+                    except Exception as e:
+                        logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")
+                        # Continue processing other frames
+                else:
+                    logger.warning(f"[{self.mint_id}] PyAV container or video stream not available")
+                    logger.warning(f"[{self.mint_id}] Container: {self.container is not None}")
+                    logger.warning(f"[{self.mint_id}] Video stream: {self.video_stream is not None}")
+                    logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
             else:
                 logger.warning(f"[{self.mint_id}] Invalid frame shape: {frame_data.shape}")
             
@@ -1194,85 +1014,97 @@ class FFmpegRecorder:
         """Handle audio frame from LiveKit."""
         if self._shutdown:
             return
-            
+
         try:
             self.audio_frames_received += 1
-            
+
             # Convert LiveKit audio frame to bytes
             audio_data = frame.data
             if hasattr(audio_data, 'tobytes'):
                 audio_bytes = audio_data.tobytes()
             else:
                 audio_bytes = bytes(audio_data)
-            
-            if self.ffmpeg_process:
-                # FFmpeg mode: pipe to FFmpeg
-                with self._ffmpeg_lock:
-                    if self.ffmpeg_process.stdin:
-                        # For now, skip audio - focus on getting video working first
-                        # TODO: Implement proper audio piping to FFmpeg
-                        self.audio_frames_written += 1
-            else:
-                # Raw mode: save individual audio frames
-                if self.raw_frames_dir:
-                    audio_file = self.raw_frames_dir / f"audio_{self.audio_frames_written:06d}.raw"
-                    with open(audio_file, 'wb') as f:
-                        f.write(audio_bytes)
+
+            # PyAV mode: encode and mux audio frame to container
+            if self.container and self.audio_stream:
+                try:
+                    # Create PyAV AudioFrame from audio data
+                    # Assume 16-bit signed integer PCM for now (common format)
+                    av_audio_frame = AudioFrame.from_ndarray(
+                        np.frombuffer(audio_bytes, dtype=np.int16).reshape(-1, 2),  # Stereo
+                        format='s16',
+                        layout='stereo'
+                    )
+                    av_audio_frame.pts = self.audio_frames_written
+                    av_audio_frame.time_base = self.audio_stream.time_base
+                    av_audio_frame.sample_rate = 48000
+
+                    # Encode frame
+                    packets = self.audio_stream.encode(av_audio_frame)
+                    for packet in packets:
+                        self.container.mux(packet)
+
                     self.audio_frames_written += 1
-                # Don't log warning in FFmpeg mode - this is expected
-            
+
+                    if self.audio_frames_written % 1000 == 0:  # Log every 1000 frames
+                        logger.info(f"[{self.mint_id}] Encoded {self.audio_frames_written} audio frames to PyAV")
+
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error encoding audio frame: {e}")
+                    # Continue processing other frames
+            else:
+                logger.debug(f"[{self.mint_id}] PyAV container or audio stream not available for audio")
+
             # CRITICAL: Free memory immediately after processing
             del audio_bytes
             del audio_data
-            
+
             # Force garbage collection to free memory
             import gc
             gc.collect()
-                    
+
         except Exception as e:
             logger.error(f"[{self.mint_id}] Audio frame processing error: {e}")
 
     async def _cleanup(self):
         """Clean up resources."""
         try:
-            if self.ffmpeg_process:
-                self.ffmpeg_process.terminate()
-                self.ffmpeg_process = None
+            await self._close_container()
         except Exception as e:
             logger.error(f"[{self.mint_id}] Cleanup error: {e}")
 
 
 class WebRTCRecordingService:
-    """WebRTC recording service using FFmpeg subprocess."""
-    
+    """WebRTC recording service using aiortc/PyAV."""
+
     _instance_count = 0
-    
+
     def __init__(self, output_dir: str = "recordings"):
         WebRTCRecordingService._instance_count += 1
         self._instance_id = WebRTCRecordingService._instance_count
-        
+
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Active recordings
-        self.active_recordings: Dict[str, FFmpegRecorder] = {}
-        
+        self.active_recordings: Dict[str, AiortcFileRecorder] = {}
+
         # Default recording configuration
         self.default_config = {
             "video_codec": "libx264",
             "audio_codec": "aac",
             "video_bitrate": "2M",
-            "audio_bitrate": "128k", 
+            "audio_bitrate": "128k",
             "format": "mpegts",
             "fps": 30,
             "width": 1920,
             "height": 1080,
         }
-        
+
         # Get StreamManager instance
         from app.services.stream_manager import StreamManager
         self.stream_manager = StreamManager()
-        
+
         logger.info(f"🎬 WebRTCRecordingService instance #{self._instance_id} created")
     
     def _log_memory_usage(self, context: str = ""):
@@ -1352,10 +1184,31 @@ class WebRTCRecordingService:
             
             logger.info(f"✅ Recording stopped for {mint_id}")
             return result
-            
+
         except Exception as e:
             logger.error(f"❌ Stop recording error: {e}")
             return {"success": False, "error": str(e)}
+
+    async def get_all_recordings(self) -> Dict[str, Any]:
+        """Get status of all active recordings."""
+        result = {}
+        for mint_id, recorder in self.active_recordings.items():
+            try:
+                status = await recorder.get_status()
+                result[mint_id] = status
+            except Exception as e:
+                logger.error(f"Error getting status for recording {mint_id}: {e}")
+                result[mint_id] = {
+                    "mint_id": mint_id,
+                    "state": "error",
+                    "error": str(e)
+                }
+
+        return {
+            "success": True,
+            "recordings": result,
+            "count": len(result)
+        }
 
     async def get_recording_status(self, mint_id: str) -> Dict[str, Any]:
         """Get recording status."""

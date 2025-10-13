@@ -71,45 +71,46 @@ class TestAudioEncodingFixes:
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_audio_array_reshape_stereo(self):
-        """Test that stereo audio is reshaped correctly (samples, channels)."""
+        """Test that stereo audio is reshaped correctly for PyAV packed format."""
         # Simulate stereo audio data (480 samples, 2 channels)
         audio_bytes = b'\x00\x01' * 480 * 2  # 960 bytes = 480 samples * 2 channels * 2 bytes/sample
-        
+
         # Mock audio track as stereo
         self.recorder.audio_track = Mock()
         self.recorder.audio_track.channels = 2
-        
+
         # Convert to numpy array
         audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-        
-        # Test the reshaping logic
-        samples_per_channel = len(audio_array) // 2
-        reshaped = audio_array.reshape(samples_per_channel, 2)
-        
-        # Verify shape is (samples, channels) not (channels, samples)
-        assert reshaped.shape == (480, 2), f"Expected (480, 2), got {reshaped.shape}"
-        assert reshaped.shape[0] == 480, "First dimension should be samples"
-        assert reshaped.shape[1] == 2, "Second dimension should be channels"
+
+        # Test the reshaping logic for PyAV packed format
+        # PyAV expects (1, samples*channels) for packed format
+        reshaped = audio_array.reshape(1, -1)
+
+        # Verify shape is (1, samples*channels) for packed format
+        assert reshaped.shape == (1, 960), f"Expected (1, 960), got {reshaped.shape}"
+        assert reshaped.shape[0] == 1, "First dimension should be 1 for packed format"
+        assert reshaped.shape[1] == 960, "Second dimension should be samples*channels"
 
     def test_audio_array_reshape_mono(self):
-        """Test that mono audio is reshaped correctly (samples, channels)."""
+        """Test that mono audio is reshaped correctly for PyAV packed format."""
         # Simulate mono audio data (480 samples, 1 channel)
         audio_bytes = b'\x00\x01' * 480  # 960 bytes = 480 samples * 1 channel * 2 bytes/sample
-        
+
         # Mock audio track as mono
         self.recorder.audio_track = Mock()
         self.recorder.audio_track.channels = 1
-        
+
         # Convert to numpy array
         audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-        
-        # Test the reshaping logic
-        reshaped = audio_array.reshape(-1, 1)
-        
-        # Verify shape is (samples, channels) not (channels, samples)
-        assert reshaped.shape == (480, 1), f"Expected (480, 1), got {reshaped.shape}"
-        assert reshaped.shape[0] == 480, "First dimension should be samples"
-        assert reshaped.shape[1] == 1, "Second dimension should be channels"
+
+        # Test the reshaping logic for PyAV packed format
+        # PyAV expects (1, samples) for mono packed format
+        reshaped = audio_array.reshape(1, -1)
+
+        # Verify shape is (1, samples) for packed format
+        assert reshaped.shape == (1, 480), f"Expected (1, 480), got {reshaped.shape}"
+        assert reshaped.shape[0] == 1, "First dimension should be 1 for packed format"
+        assert reshaped.shape[1] == 480, "Second dimension should be samples"
 
     @patch('av.AudioFrame.from_ndarray')
     def test_audio_frame_creation_with_correct_shape(self, mock_from_ndarray):
@@ -141,7 +142,7 @@ class TestAudioEncodingFixes:
         # Verify the array shape passed to from_ndarray
         call_args = mock_from_ndarray.call_args[0]
         array_arg = call_args[0]
-        assert array_arg.shape == (480, 2), f"Expected (480, 2), got {array_arg.shape}"
+        assert array_arg.shape == (1, 960), f"Expected (1, 960), got {array_arg.shape}"
 
     @patch('av.audio.resampler.AudioResampler')
     def test_audio_resampler_creation(self, mock_resampler_class):

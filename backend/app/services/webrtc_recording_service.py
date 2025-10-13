@@ -1284,15 +1284,17 @@ class AiortcFileRecorder:
                     # Determine if this is mono or stereo based on the audio track configuration
                     # Check if we have a stereo audio track (2 channels) or mono (1 channel)
                     if hasattr(self.audio_track, 'channels') and self.audio_track.channels == 1:
-                        # Mono audio - reshape to (samples, 1) for packed format
+                        # Mono audio - keep as 1D array for packed format (1, samples)
                         audio_layout = 'mono'
-                        audio_array = audio_array.reshape(-1, 1)  # Shape: (samples, 1)
+                        # For mono, PyAV expects (1, samples) shape for packed format
+                        audio_array = audio_array.reshape(1, -1)  # Shape: (1, samples)
                         logger.debug(f"[{self.mint_id}] Processing mono audio: {audio_array.shape}")
                     else:
-                        # Stereo audio - reshape to (samples_per_channel, 2) for packed format
-                        samples_per_channel = len(audio_array) // 2
-                        audio_array = audio_array.reshape(samples_per_channel, 2)  # Shape: (samples, 2)
+                        # Stereo audio - keep as 1D array for packed format (1, samples*channels)
                         audio_layout = 'stereo'
+                        # For stereo, PyAV expects (1, samples*channels) shape for packed format
+                        # Keep the interleaved format that LiveKit provides
+                        audio_array = audio_array.reshape(1, -1)  # Shape: (1, samples*channels)
                         logger.debug(f"[{self.mint_id}] Processing stereo audio: {audio_array.shape}")
                     
                     av_audio_frame = AudioFrame.from_ndarray(

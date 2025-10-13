@@ -1240,20 +1240,33 @@ class AiortcFileRecorder:
             # PyAV mode: encode and mux audio frame to container
             if self.container and self.audio_stream:
                 try:
-                    # Calculate samples in this frame (16-bit stereo)
-                    samples_per_frame = len(audio_bytes) // (2 * 2)  # int16 stereo
+                    # Calculate samples in this frame based on actual channel count
+                    # Determine channel count from audio track or assume stereo
+                    channel_count = 1 if (hasattr(self.audio_track, 'channels') and self.audio_track.channels == 1) else 2
+                    samples_per_frame = len(audio_bytes) // (2 * channel_count)  # int16 * channel_count
 
                     # Create PyAV AudioFrame from audio data
-                    # Reshape to (channels, samples) format for proper encoding
+                    # Detect audio channel count and handle both mono and stereo
                     audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-                    # For stereo: reshape to (2, samples_per_channel)
-                    samples_per_channel = len(audio_array) // 2
-                    audio_array = audio_array.reshape(2, samples_per_channel)
+                    
+                    # Determine if this is mono or stereo based on the audio track configuration
+                    # Check if we have a stereo audio track (2 channels) or mono (1 channel)
+                    if hasattr(self.audio_track, 'channels') and self.audio_track.channels == 1:
+                        # Mono audio - keep as 1D array
+                        audio_layout = 'mono'
+                        audio_array = audio_array.reshape(1, -1)  # Shape: (1, samples)
+                        logger.debug(f"[{self.mint_id}] Processing mono audio: {audio_array.shape}")
+                    else:
+                        # Stereo audio - reshape to (2, samples_per_channel)
+                        samples_per_channel = len(audio_array) // 2
+                        audio_array = audio_array.reshape(2, samples_per_channel)
+                        audio_layout = 'stereo'
+                        logger.debug(f"[{self.mint_id}] Processing stereo audio: {audio_array.shape}")
                     
                     av_audio_frame = AudioFrame.from_ndarray(
                         audio_array,
                         format='s16',
-                        layout='stereo'
+                        layout=audio_layout
                     )
                     # Set PTS based on cumulative samples
                     av_audio_frame.pts = self.audio_samples_written

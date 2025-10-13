@@ -1232,9 +1232,12 @@ class AiortcFileRecorder:
                 logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
             
             # CRITICAL: Free video frames immediately after processing to reduce memory usage
-            del av_frame
-            if 'normalized_frame' in locals() and normalized_frame is not av_frame:
-                del normalized_frame
+            if 'av_frame' in locals():
+                del av_frame
+            if 'normalized_frame' in locals():
+                # Only delete normalized_frame if it's different from av_frame (if av_frame exists)
+                if 'av_frame' not in locals() or normalized_frame is not av_frame:
+                    del normalized_frame
 
             # Check memory usage and stop if too high
             try:

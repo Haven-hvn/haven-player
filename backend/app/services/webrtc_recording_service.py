@@ -732,7 +732,18 @@ class AiortcFileRecorder:
                 logger.info(f"[{self.mint_id}] No tracks found, waiting 0.5s before retry...")
                 await asyncio.sleep(5)
         
-        logger.info(f"[{self.mint_id}] Final: video={self.video_track is not None}, audio={self.audio_track is not None}")
+        # Log track detection results
+        video_available = self.video_track is not None
+        audio_available = self.audio_track is not None
+        
+        if video_available and audio_available:
+            logger.info(f"[{self.mint_id}] ✅ Found both video and audio tracks")
+        elif video_available and not audio_available:
+            logger.info(f"[{self.mint_id}] 📹 Video-only recording: Found video track, no audio (stream may be muted)")
+        elif not video_available and audio_available:
+            logger.warning(f"[{self.mint_id}] ⚠️  Audio-only recording: Found audio track, no video")
+        else:
+            logger.warning(f"[{self.mint_id}] ❌ No tracks found")
         
         # Start polling for frames since direct handlers aren't available
         logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
@@ -808,7 +819,7 @@ class AiortcFileRecorder:
                 tasks.append(audio_task)
                 logger.info(f"[{self.mint_id}] Audio task created: {audio_task}")
             else:
-                logger.warning(f"[{self.mint_id}] ⚠️  No audio track available!")
+                logger.info(f"[{self.mint_id}] 📹 Video-only recording: No audio track available (stream may be muted)")
             
             if not tasks:
                 logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for processing")
@@ -1024,11 +1035,21 @@ class AiortcFileRecorder:
 
                 logger.info(f"[{self.mint_id}] ✅ Audio stream added: {self.config['audio_codec']} at 48kHz stereo (via codec_context)")
             else:
-                logger.warning(f"[{self.mint_id}] ⚠️  No audio track available for container setup")
+                logger.info(f"[{self.mint_id}] 📹 Video-only recording: No audio track available (stream may be muted)")
 
             # Mark as initialized
             self._container_initialized = True
-            logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete")
+            
+            # Log setup completion with track info
+            video_available = self.video_stream is not None
+            audio_available = self.audio_stream is not None
+            
+            if video_available and audio_available:
+                logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete (video + audio)")
+            elif video_available and not audio_available:
+                logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete (video-only recording)")
+            else:
+                logger.warning(f"[{self.mint_id}] ⚠️  PyAV container setup complete (no video stream)")
 
         except Exception as e:
             error_msg = str(e)
@@ -1268,7 +1289,8 @@ class AiortcFileRecorder:
 
         # Guard: Skip if audio stream not available after initialization
         if not self.audio_stream:
-            logger.warning(f"[{self.mint_id}] Audio stream not available after initialization, skipping frame")
+            # This is normal for video-only streams (muted audio)
+            logger.debug(f"[{self.mint_id}] Audio stream not available (video-only recording), skipping audio frame")
             return
 
         try:

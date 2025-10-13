@@ -962,10 +962,10 @@ class AiortcFileRecorder:
             if self.audio_track:
                 self.audio_stream = self.container.add_stream(
                     self.config['audio_codec'],
-                    rate=48000  # Standard sample rate
+                    rate=48000,  # Standard sample rate
+                    channels=2   # Stereo - set channels during creation
                 )
-                self.audio_stream.channels = 2  # Stereo
-                self.audio_stream.sample_rate = 48000
+                # Note: sample_rate is set automatically when rate is specified
 
                 # Set audio bitrate
                 if 'audio_bitrate' in self.config:

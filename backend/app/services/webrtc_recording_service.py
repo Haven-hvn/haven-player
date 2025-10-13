@@ -960,7 +960,7 @@ class AiortcFileRecorder:
             if self.container:
                 self.container.close()
                 self.container = None
-            raise Exception(f"Failed to setup PyAV container: {e}")
+            raise  # Re-raise to fail the recording start immediately
 
     async def _close_container(self):
         """Close PyAV container and finalize recording."""
@@ -1005,18 +1005,23 @@ class AiortcFileRecorder:
         """Handle video frame from LiveKit."""
         if self._shutdown_event.is_set():
             return
-            
+
+        # Guard: Skip if video stream not available
+        if not self.video_stream:
+            logger.warning(f"[{self.mint_id}] Video stream not available, skipping frame")
+            return
+
         try:
             self.video_frames_received += 1
             logger.info(f"[{self.mint_id}] 📹 Processing video frame #{self.video_frames_received}")
             logger.info(f"[{self.mint_id}] 📹 Frame details: {frame.width}x{frame.height}, data_len={len(frame.data) if hasattr(frame, 'data') else 'No data'}")
-            
+
             if self.video_frames_received == 1:
                 logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
                 logger.info(f"[{self.mint_id}] Frame type: {type(frame)}")
                 logger.info(f"[{self.mint_id}] Frame attributes: {[attr for attr in dir(frame) if not attr.startswith('_')]}")
                 self._log_memory_usage(f"{self.mint_id} first_frame")
-            
+
             # Use VideoNormalizer for flexible frame handling
             target_width = self.config.get('width', 1920)
             target_height = self.config.get('height', 1080)
@@ -1039,7 +1044,7 @@ class AiortcFileRecorder:
             av_frame = normalized_frame
 
             logger.info(f"[{self.mint_id}] ✅ Frame normalized: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
-            
+
             # Handle dynamic resolution - update config with actual dimensions
             actual_height, actual_width = av_frame.height, av_frame.width
             expected_height, expected_width = self.config['height'], self.config['width']
@@ -1129,6 +1134,11 @@ class AiortcFileRecorder:
     async def _on_audio_frame(self, frame: rtc.AudioFrame):
         """Handle audio frame from LiveKit."""
         if self._shutdown_event.is_set():
+            return
+
+        # Guard: Skip if audio stream not available
+        if not self.audio_stream:
+            logger.warning(f"[{self.mint_id}] Audio stream not available, skipping frame")
             return
 
         try:
@@ -1222,7 +1232,7 @@ class WebRTCRecordingService:
             "audio_codec": "aac",
             "video_bitrate": "2M",
             "audio_bitrate": "128k",
-            "format": "mpegts",
+            "format": "mp4",
             "fps": 30,
             "width": 1920,
             "height": 1080,

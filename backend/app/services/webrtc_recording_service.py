@@ -1017,6 +1017,11 @@ class AiortcFileRecorder:
                 if 'audio_bitrate' in self.config:
                     self.audio_stream.bit_rate = self._parse_bitrate(self.config['audio_bitrate'])
 
+                # Set explicit time_base for audio stream
+                self.audio_stream.time_base = Fraction(1, 48000)
+                logger.info(f"[{self.mint_id}] Audio stream time_base set to: {self.audio_stream.time_base}")
+                logger.info(f"[{self.mint_id}] Audio stream sample_rate: {self.audio_stream.sample_rate}")
+
                 logger.info(f"[{self.mint_id}] ✅ Audio stream added: {self.config['audio_codec']} at 48kHz stereo (via codec_context)")
             else:
                 logger.warning(f"[{self.mint_id}] ⚠️  No audio track available for container setup")
@@ -1112,8 +1117,8 @@ class AiortcFileRecorder:
 
         try:
             self.video_frames_received += 1
-            logger.info(f"[{self.mint_id}] 📹 Processing video frame #{self.video_frames_received}")
-            logger.info(f"[{self.mint_id}] 📹 Frame details: {frame.width}x{frame.height}, data_len={len(frame.data) if hasattr(frame, 'data') else 'No data'}")
+            logger.debug(f"[{self.mint_id}] 📹 Processing video frame #{self.video_frames_received}")
+            logger.debug(f"[{self.mint_id}] 📹 Frame details: {frame.width}x{frame.height}, data_len={len(frame.data) if hasattr(frame, 'data') else 'No data'}")
 
             if self.video_frames_received == 1:
                 logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
@@ -1142,7 +1147,7 @@ class AiortcFileRecorder:
             # normalized_frame is already a properly formatted PyAV frame
             av_frame = normalized_frame
 
-            logger.info(f"[{self.mint_id}] ✅ Frame normalized: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
+            logger.debug(f"[{self.mint_id}] ✅ Frame normalized: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
 
             # Handle dynamic resolution - update config with actual dimensions
             actual_height, actual_width = av_frame.height, av_frame.width
@@ -1194,7 +1199,7 @@ class AiortcFileRecorder:
                         logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
 
                     if self.video_frames_written % 30 == 0:  # Log every second
-                        logger.info(f"[{self.mint_id}] Encoded {self.video_frames_written} video frames to PyAV")
+                        logger.debug(f"[{self.mint_id}] Encoded {self.video_frames_written} video frames to PyAV")
 
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")
@@ -1204,6 +1209,11 @@ class AiortcFileRecorder:
                 logger.warning(f"[{self.mint_id}] Container: {self.container is not None}")
                 logger.warning(f"[{self.mint_id}] Video stream: {self.video_stream is not None}")
                 logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
+            
+            # CRITICAL: Free video frames immediately after processing to reduce memory usage
+            del av_frame
+            if 'normalized_frame' in locals() and normalized_frame is not av_frame:
+                del normalized_frame
 
             # Check memory usage and stop if too high
             try:
@@ -1217,9 +1227,11 @@ class AiortcFileRecorder:
             except ImportError:
                 pass  # psutil not available, continue
 
-            # Log memory usage every 100 frames
-            if self.video_frames_received % 100 == 0:
+            # Log memory usage and force garbage collection every 60 frames
+            if self.video_frames_received % 60 == 0:
                 self._log_memory_usage(f"{self.mint_id} frame_{self.video_frames_received}")
+                # Force garbage collection to free memory
+                gc.collect()
                             
         except MemoryError as e:
             logger.error(f"[{self.mint_id}] Memory allocation failed: {e}")
@@ -1304,8 +1316,11 @@ class AiortcFileRecorder:
                     )
                     # Set PTS based on cumulative samples
                     av_audio_frame.pts = self.audio_samples_written
-                    av_audio_frame.time_base = self.audio_stream.time_base
-                    av_audio_frame.sample_rate = self.audio_stream.sample_rate
+                    
+                    # Robust time_base fallback - use stream time_base or fallback to 1/48000
+                    frame_time_base = self.audio_stream.time_base if self.audio_stream.time_base else Fraction(1, 48000)
+                    av_audio_frame.time_base = frame_time_base
+                    av_audio_frame.sample_rate = 48000
 
                     # Create resampler on first frame to convert s16 -> fltp for AAC
                     if self.audio_resampler is None:
@@ -1329,6 +1344,9 @@ class AiortcFileRecorder:
                     try:
                         resampled_frames = self.audio_resampler.resample(av_audio_frame)
                         for resampled_frame in resampled_frames:
+                            # Ensure resampled frames have correct time_base and sample_rate
+                            resampled_frame.time_base = frame_time_base
+                            resampled_frame.sample_rate = 48000
                             packets = self.audio_stream.encode(resampled_frame)
                             for packet in packets:
                                 self.container.mux(packet)
@@ -1347,7 +1365,7 @@ class AiortcFileRecorder:
                         logger.debug(f"[{self.mint_id}] Audio at {self.audio_samples_written} samples (~{video_seconds:.2f}s)")
 
                     if self.audio_frames_written % 1000 == 0:  # Log every 1000 frames
-                        logger.info(f"[{self.mint_id}] Encoded {self.audio_frames_written} audio frames ({self.audio_samples_written} samples) to PyAV")
+                        logger.debug(f"[{self.mint_id}] Encoded {self.audio_frames_written} audio frames ({self.audio_samples_written} samples) to PyAV")
 
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error encoding audio frame: {e}")

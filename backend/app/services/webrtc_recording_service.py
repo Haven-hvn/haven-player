@@ -33,6 +33,24 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Valid container formats and their compatible codecs
+VALID_FORMATS = {
+    "mp4": {"video_codecs": ["libx264", "h264", "libx265", "h265"], "audio_codecs": ["aac"]},
+    "mpegts": {"video_codecs": ["libx264", "h264", "libx265", "h265"], "audio_codecs": ["aac", "mp3"]},
+    "webm": {"video_codecs": ["libvpx-vp9", "vp9"], "audio_codecs": ["opus", "vorbis"]},
+    "mkv": {"video_codecs": ["libx264", "h264", "libx265", "h265", "libvpx-vp9"], "audio_codecs": ["aac", "opus", "mp3"]}
+}
+
+# Map codec names to appropriate container formats
+CODEC_TO_FORMAT = {
+    "h264": "mp4",
+    "libx264": "mp4",
+    "h265": "mp4",
+    "libx265": "mp4",
+    "vp9": "webm",
+    "libvpx-vp9": "webm"
+}
+
 class RecordingState(Enum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting" 
@@ -962,7 +980,14 @@ class AiortcFileRecorder:
             logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete")
 
         except Exception as e:
-            logger.error(f"[{self.mint_id}] ❌ Failed to setup PyAV container: {e}")
+            error_msg = str(e)
+            if "does not support" in error_msg and "codec" in error_msg:
+                logger.error(f"[{self.mint_id}] ❌ Codec/format mismatch: {error_msg}")
+                logger.error(f"[{self.mint_id}] Format: {output_format}, Video: {self.config.get('video_codec')}, Audio: {self.config.get('audio_codec')}")
+                logger.error(f"[{self.mint_id}] Hint: Use 'mp4' for H.264/AAC, 'webm' for VP9/Opus, 'mpegts' for MPEG-TS")
+            else:
+                logger.error(f"[{self.mint_id}] ❌ Failed to setup PyAV container: {e}")
+            
             if self.container:
                 self.container.close()
                 self.container = None
@@ -1390,8 +1415,19 @@ class WebRTCRecordingService:
         return await recorder.get_status()
 
     def _get_recording_config(self, output_format: str, video_quality: str) -> Dict[str, Any]:
-        """Get recording configuration."""
+        """Get recording configuration with format validation."""
         config = self.default_config.copy()
+        
+        # Validate and correct format
+        if output_format not in VALID_FORMATS:
+            # Check if it's a codec name that was mistakenly passed as format
+            if output_format in CODEC_TO_FORMAT:
+                logger.warning(f"⚠️  '{output_format}' is a codec, not a format. Using '{CODEC_TO_FORMAT[output_format]}' as container format.")
+                output_format = CODEC_TO_FORMAT[output_format]
+            else:
+                logger.warning(f"⚠️  Invalid format '{output_format}', defaulting to 'mp4'")
+                output_format = "mp4"
+        
         config["format"] = output_format
         
         # Adjust quality settings
@@ -1401,5 +1437,21 @@ class WebRTCRecordingService:
         elif video_quality == "high":
             config["video_bitrate"] = "4M"
             config["audio_bitrate"] = "192k"
+        
+        # Ensure codec compatibility with format
+        video_codec = config["video_codec"]
+        audio_codec = config["audio_codec"]
+        
+        if output_format in VALID_FORMATS:
+            valid_video_codecs = VALID_FORMATS[output_format]["video_codecs"]
+            valid_audio_codecs = VALID_FORMATS[output_format]["audio_codecs"]
+            
+            if video_codec not in valid_video_codecs:
+                logger.warning(f"⚠️  Video codec '{video_codec}' not compatible with '{output_format}', using '{valid_video_codecs[0]}'")
+                config["video_codec"] = valid_video_codecs[0]
+            
+            if audio_codec not in valid_audio_codecs:
+                logger.warning(f"⚠️  Audio codec '{audio_codec}' not compatible with '{output_format}', using '{valid_audio_codecs[0]}'")
+                config["audio_codec"] = valid_audio_codecs[0]
         
         return config

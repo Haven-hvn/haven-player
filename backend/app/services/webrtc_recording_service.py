@@ -731,11 +731,32 @@ class AiortcFileRecorder:
             if attempt < 2:
                 logger.info(f"[{self.mint_id}] No tracks found, waiting 0.5s before retry...")
                 await asyncio.sleep(5)
-        
+
+        # Check if we have audio but no video - wait for video track
+        if self.audio_track and not self.video_track:
+            logger.warning(f"[{self.mint_id}] ⚠️  Found audio but no video - waiting for video track...")
+            # Wait up to 10 seconds for video track
+            for wait_attempt in range(20):  # 20 * 1s = 20s
+                await asyncio.sleep(1)
+                logger.debug(f"[{self.mint_id}] Waiting for video track... attempt {wait_attempt + 1}/20")
+
+                # Re-check for video track
+                for track_pub in participant.track_publications.values():
+                    if track_pub.track and track_pub.kind == rtc.TrackKind.KIND_VIDEO:
+                        self.video_track = track_pub.track
+                        logger.info(f"[{self.mint_id}] ✅ Video track found after waiting {wait_attempt + 1} attempts")
+                        break
+                if self.video_track:
+                    break
+
+            if not self.video_track:
+                logger.error(f"[{self.mint_id}] ❌ Timeout waiting for video track - cannot record audio-only livestream")
+                return  # Fail the recording
+
         # Log track detection results
         video_available = self.video_track is not None
         audio_available = self.audio_track is not None
-        
+
         if video_available and audio_available:
             logger.info(f"[{self.mint_id}] ✅ Found both video and audio tracks")
         elif video_available and not audio_available:
@@ -1211,19 +1232,36 @@ class AiortcFileRecorder:
                 try:
                     # Encode frame
                     packets = self.video_stream.encode(av_frame)
+                    packet_count = 0
                     for packet in packets:
                         self.container.mux(packet)
+                        packet_count += 1
+                        logger.debug(f"[{self.mint_id}] Muxed video packet: size={packet.size} bytes")
+
+                    if packet_count == 0:
+                        logger.warning(f"[{self.mint_id}] No packets generated from frame {self.video_frames_written}")
 
                     self.video_frames_written += 1
 
                     if self.video_frames_written == 1:
                         logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
 
-                    if self.video_frames_written % 30 == 0:  # Log every second
-                        logger.debug(f"[{self.mint_id}] Encoded {self.video_frames_written} video frames to PyAV")
+                    # Periodically verify file is growing
+                    if self.video_frames_written % 30 == 0:
+                        if self.output_path and self.output_path.exists():
+                            file_size = self.output_path.stat().st_size
+                            logger.info(f"[{self.mint_id}] File size: {file_size / 1024 / 1024:.2f} MB after {self.video_frames_written} frames")
+                            if file_size == 0:
+                                logger.error(f"[{self.mint_id}] ❌ WARNING: File size is 0 after {self.video_frames_written} frames!")
+                        else:
+                            logger.warning(f"[{self.mint_id}] Output path does not exist: {self.output_path}")
 
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")
+                    logger.error(f"[{self.mint_id}] Frame details: {av_frame.width}x{av_frame.height}, format={av_frame.format.name}")
+                    logger.error(f"[{self.mint_id}] Container state: {self.container is not None}, Stream: {self.video_stream is not None}")
+                    import traceback
+                    logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
                     # Continue processing other frames
             else:
                 logger.warning(f"[{self.mint_id}] PyAV container or video stream not available")
@@ -1256,6 +1294,13 @@ class AiortcFileRecorder:
                 self._log_memory_usage(f"{self.mint_id} frame_{self.video_frames_received}")
                 # Force garbage collection to free memory
                 gc.collect()
+
+            # Every 100 frames, log receive/write ratio
+            if self.video_frames_received % 100 == 0:
+                write_ratio = (self.video_frames_written / self.video_frames_received * 100) if self.video_frames_received > 0 else 0
+                logger.info(f"[{self.mint_id}] Frame stats: received={self.video_frames_received}, written={self.video_frames_written} ({write_ratio:.1f}%)")
+                if write_ratio < 50:
+                    logger.error(f"[{self.mint_id}] ❌ WARNING: Low write ratio - frames not being encoded properly!")
                             
         except MemoryError as e:
             logger.error(f"[{self.mint_id}] Memory allocation failed: {e}")

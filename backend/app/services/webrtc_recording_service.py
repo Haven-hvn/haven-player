@@ -86,9 +86,49 @@ class VideoNormalizer:
     def normalize_frame(self, frame: rtc.VideoFrame, target_width: int, target_height: int) -> Optional[av.VideoFrame]:
         """Normalize a video frame to the target format."""
         try:
-            buffer = frame.data
             source_width = frame.width
             source_height = frame.height
+            
+            # PREFERRED PATH: Use LiveKit SDK's to_ndarray() for reliable frame extraction
+            if hasattr(frame, 'to_ndarray'):
+                try:
+                    # Try RGB24 first (most common)
+                    img = frame.to_ndarray(format='rgb24')
+                    logger.debug(f"Successfully converted frame using to_ndarray('rgb24'): {img.shape}, {img.dtype}")
+                    
+                    # Validate array
+                    if img.ndim != 3 or img.shape[2] != 3 or img.dtype != np.uint8:
+                        logger.warning(f"Invalid ndarray from to_ndarray: shape={img.shape}, dtype={img.dtype}")
+                        raise ValueError("Invalid array dimensions or dtype")
+                    
+                    av_frame = av.VideoFrame.from_ndarray(img, format='rgb24')
+                    av_frame = av_frame.reformat(width=target_width, height=target_height, format='yuv420p')
+                    logger.debug(f"Frame converted via to_ndarray: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
+                    return av_frame
+                    
+                except Exception as e:
+                    # Fallback to BGR24
+                    logger.debug(f"RGB24 conversion failed ({e}), trying BGR24...")
+                    try:
+                        img = frame.to_ndarray(format='bgr24')
+                        logger.debug(f"Successfully converted frame using to_ndarray('bgr24'): {img.shape}, {img.dtype}")
+                        
+                        # Validate array
+                        if img.ndim != 3 or img.shape[2] != 3 or img.dtype != np.uint8:
+                            logger.warning(f"Invalid ndarray from to_ndarray(bgr24): shape={img.shape}, dtype={img.dtype}")
+                            raise ValueError("Invalid array dimensions or dtype")
+                        
+                        av_frame = av.VideoFrame.from_ndarray(img, format='bgr24')
+                        av_frame = av_frame.reformat(width=target_width, height=target_height, format='yuv420p')
+                        logger.debug(f"Frame converted via to_ndarray(bgr24): {av_frame.width}x{av_frame.height} {av_frame.format.name}")
+                        return av_frame
+                    except Exception as e2:
+                        logger.warning(f"to_ndarray() failed for both RGB24 and BGR24: {e}, {e2}")
+                        logger.info("Falling back to buffer-based detection...")
+            
+            # FALLBACK PATH: Use buffer-based pixel format detection (legacy approach)
+            logger.debug("Using fallback buffer-based frame extraction")
+            buffer = frame.data
 
             # Handle stride/alignment if specified
             if self.row_stride_bytes and self.row_stride_bytes != source_width * 3:
@@ -126,6 +166,8 @@ class VideoNormalizer:
 
         except Exception as e:
             logger.error(f"Frame normalization failed: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
 
     def _fix_stride(self, buffer, width: int, height: int) -> bytes:
@@ -387,6 +429,11 @@ class AiortcFileRecorder:
         
         # Audio resampler for format conversion (s16 -> fltp for AAC)
         self.audio_resampler = None
+        
+        # Video PTS tracking for proper packet generation
+        self.first_video_timestamp_us = None  # First video frame timestamp in microseconds
+        self.last_video_pts = -1  # Last PTS assigned to video frame
+        self.zero_packet_streak = 0  # Counter for consecutive frames that produced no packets
         
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
@@ -1190,6 +1237,18 @@ class AiortcFileRecorder:
             av_frame = normalized_frame
 
             logger.debug(f"[{self.mint_id}] ✅ Frame normalized: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
+            
+            # TELEMETRY: Detailed frame analysis for first 60 frames
+            if self.video_frames_received <= 60:
+                logger.info(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received}:")
+                logger.info(f"[{self.mint_id}]   - Source: {frame.width}x{frame.height}, data_len={len(frame.data) if hasattr(frame, 'data') else 'N/A'}")
+                logger.info(f"[{self.mint_id}]   - Normalized: {av_frame.width}x{av_frame.height}, format={av_frame.format.name}")
+                logger.info(f"[{self.mint_id}]   - Planes: {len(av_frame.planes)} planes")
+                for i, plane in enumerate(av_frame.planes):
+                    logger.info(f"[{self.mint_id}]     Plane {i}: {plane.width}x{plane.height}, line_size={plane.line_size}, buffer_size={plane.buffer_size}")
+                logger.info(f"[{self.mint_id}]   - to_ndarray available: {hasattr(frame, 'to_ndarray')}")
+                if hasattr(frame, 'timestamp_us'):
+                    logger.info(f"[{self.mint_id}]   - timestamp_us: {frame.timestamp_us}")
 
             # Handle dynamic resolution - update config with actual dimensions
             actual_height, actual_width = av_frame.height, av_frame.width
@@ -1201,22 +1260,60 @@ class AiortcFileRecorder:
                 self.config['width'] = actual_width
                 self.config['height'] = actual_height
 
-            # Set proper PTS based on frame timestamp
+            # Set proper PTS based on frame timestamp (RELATIVE to first frame)
             if not self.video_stream or not self.video_stream.time_base:
                 logger.warning(f"[{self.mint_id}] Video stream not properly initialized, skipping frame")
                 return
-                
+            
+            tb = self.video_stream.time_base
+            pts = None
+            
+            # Calculate PTS relative to first frame to avoid huge values
             if hasattr(frame, 'timestamp_us') and frame.timestamp_us is not None:
-                if self.first_video_timestamp is None:
-                    self.first_video_timestamp = frame.timestamp_us
-                # Convert microseconds to time_base units
-                pts = int(frame.timestamp_us * self.video_stream.time_base.numerator / (self.video_stream.time_base.denominator * 1000000))
+                if self.first_video_timestamp_us is None:
+                    self.first_video_timestamp_us = frame.timestamp_us
+                    logger.info(f"[{self.mint_id}] First video timestamp: {frame.timestamp_us}us")
+                
+                # Compute delta from first frame
+                delta_us = max(0, frame.timestamp_us - self.first_video_timestamp_us)
+                # Convert delta microseconds to time_base units
+                pts = int(delta_us * tb.numerator / (tb.denominator * 1_000_000))
+                
+                # Log detailed calculation for first few frames
+                if self.video_frames_received <= 5:
+                    logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: timestamp={frame.timestamp_us}us, delta={delta_us}us, pts={pts}, tb={tb}")
             else:
-                # Fallback to frame count if no timestamp available
-                pts = self.video_frames_written * int(self.video_stream.time_base.denominator / self.video_stream.time_base.numerator)
-
+                # Fallback to frame counter if no timestamp available
+                pts = self.video_frames_written
+                if self.video_frames_received <= 5:
+                    logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: No timestamp, using counter pts={pts}")
+            
+            # Enforce monotonic PTS (critical for encoder)
+            if pts <= self.last_video_pts:
+                corrected_pts = self.last_video_pts + 1
+                if self.video_frames_received <= 10:
+                    logger.warning(f"[{self.mint_id}] Non-increasing PTS detected: {pts} <= {self.last_video_pts}, correcting to {corrected_pts}")
+                pts = corrected_pts
+            
             av_frame.pts = pts
-            av_frame.time_base = self.video_stream.time_base
+            av_frame.time_base = tb
+            self.last_video_pts = pts
+            
+            # Log PTS for first 5 frames
+            if self.video_frames_written < 5:
+                logger.info(f"[{self.mint_id}] Frame {self.video_frames_written} final PTS={pts}, tb={tb}")
+            
+            # TELEMETRY: Log encoder context on first frame
+            if self.video_frames_received == 1 and self.video_stream:
+                logger.info(f"[{self.mint_id}] [TELEMETRY] Encoder Configuration:")
+                logger.info(f"[{self.mint_id}]   - Codec: {self.config.get('video_codec')}")
+                logger.info(f"[{self.mint_id}]   - Container format: {self.config.get('format')}")
+                logger.info(f"[{self.mint_id}]   - Resolution: {self.video_stream.width}x{self.video_stream.height}")
+                logger.info(f"[{self.mint_id}]   - Pixel format: {self.video_stream.pix_fmt}")
+                logger.info(f"[{self.mint_id}]   - Bitrate: {self.video_stream.bit_rate}")
+                logger.info(f"[{self.mint_id}]   - FPS/time_base: {self.config.get('fps')}/{self.video_stream.time_base}")
+                if hasattr(self.video_stream, 'options') and self.video_stream.options:
+                    logger.info(f"[{self.mint_id}]   - Options: {self.video_stream.options}")
 
             # A/V sync drift logging (every 60 frames)
             self.video_frames_logged += 1
@@ -1233,13 +1330,36 @@ class AiortcFileRecorder:
                     # Encode frame
                     packets = self.video_stream.encode(av_frame)
                     packet_count = 0
+                    total_bytes = 0
                     for packet in packets:
                         self.container.mux(packet)
                         packet_count += 1
-                        logger.debug(f"[{self.mint_id}] Muxed video packet: size={packet.size} bytes")
+                        total_bytes += packet.size
+                        logger.debug(f"[{self.mint_id}] Muxed video packet: size={packet.size} bytes, pts={packet.pts}, dts={packet.dts}")
+                    
+                    # TELEMETRY: Log packet details for first 60 frames
+                    if self.video_frames_received <= 60:
+                        if packet_count > 0:
+                            logger.info(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → {packet_count} packet(s), {total_bytes} bytes total")
+                        else:
+                            logger.warning(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → NO PACKETS (PTS={pts}, last_pts={self.last_video_pts})")
 
+                    # Track zero-packet streak for diagnostics
                     if packet_count == 0:
-                        logger.warning(f"[{self.mint_id}] No packets generated from frame {self.video_frames_written}")
+                        self.zero_packet_streak += 1
+                        logger.warning(f"[{self.mint_id}] No packets generated from frame {self.video_frames_written} (streak: {self.zero_packet_streak})")
+                        
+                        # Alert at specific milestones
+                        if self.zero_packet_streak in (10, 30, 60):
+                            logger.error(f"[{self.mint_id}] ❌ CRITICAL: {self.zero_packet_streak} consecutive frames produced no packets!")
+                            logger.error(f"[{self.mint_id}] Last PTS: {self.last_video_pts}, time_base: {tb}")
+                            logger.error(f"[{self.mint_id}] Frame: {av_frame.width}x{av_frame.height}, format: {av_frame.format.name}")
+                            logger.error(f"[{self.mint_id}] Encoder: {self.config.get('video_codec')}, Container: {self.config.get('format')}")
+                    else:
+                        # Reset streak on successful packet generation
+                        if self.zero_packet_streak > 0:
+                            logger.info(f"[{self.mint_id}] ✅ Packets generated after {self.zero_packet_streak} frame streak")
+                        self.zero_packet_streak = 0
 
                     self.video_frames_written += 1
 

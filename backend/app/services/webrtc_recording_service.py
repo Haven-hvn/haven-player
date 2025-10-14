@@ -1276,17 +1276,19 @@ class AiortcFileRecorder:
                 
                 # Compute delta from first frame
                 delta_us = max(0, frame.timestamp_us - self.first_video_timestamp_us)
-                # Convert delta microseconds to time_base units
-                pts = int(delta_us * tb.numerator / (tb.denominator * 1_000_000))
+                # Convert delta microseconds to time_base units (scaled correctly for tb.denominator)
+                pts = int((delta_us / 1_000_000) * tb.denominator)
                 
                 # Log detailed calculation for first few frames
                 if self.video_frames_received <= 5:
                     logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: timestamp={frame.timestamp_us}us, delta={delta_us}us, pts={pts}, tb={tb}")
+                if self.video_frames_received <= 10:
+                    logger.info(f"[{self.mint_id}] delta_us = {delta_us}")
             else:
-                # Fallback to frame counter if no timestamp available
-                pts = self.video_frames_written
+                # Fallback to frame counter if no timestamp available (scale for time_base)
+                pts = self.video_frames_written * (tb.denominator // self.config['fps'])
                 if self.video_frames_received <= 5:
-                    logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: No timestamp, using counter pts={pts}")
+                    logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: No timestamp, using counter pts={pts} (scaled by {tb.denominator // self.config['fps']})")
             
             # Enforce monotonic PTS (critical for encoder)
             if pts <= self.last_video_pts:

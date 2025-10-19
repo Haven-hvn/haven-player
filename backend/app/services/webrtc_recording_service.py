@@ -430,10 +430,26 @@ class AiortcFileRecorder:
         # Audio resampler for format conversion (s16 -> fltp for AAC)
         self.audio_resampler = None
         
-        # Video PTS tracking for proper packet generation
+        # Video PTS/DTS tracking for proper packet generation
         self.first_video_timestamp_us = None  # First video frame timestamp in microseconds
+        self.first_audio_timestamp_us = None  # First audio frame timestamp in microseconds
         self.last_video_pts = -1  # Last PTS assigned to video frame
+        self.last_video_dts = -1  # Last DTS assigned to video frame
+        self.last_audio_pts = -1  # Last PTS assigned to audio frame
         self.zero_packet_streak = 0  # Counter for consecutive frames that produced no packets
+        self.encoder_reorder_delay = 0  # B-frame reordering delay (set during setup)
+        self.encoder_frame_counter = 0  # Counter for encoder frames
+        self.last_encoder_flush_time = 0.0  # Last time encoder was flushed
+        
+        # Metrics for production monitoring
+        self.packets_written = 0  # Total packets written to container
+        self.pts_jitter_samples = []  # PTS jitter samples for monitoring
+        self.encoder_flush_count = 0  # Number of times encoder was flushed
+        
+        # Backpressure management
+        self.max_memory_mb = 1500  # Maximum memory usage before stopping (MB)
+        self.frame_processing_time_samples = []  # Frame processing time samples
+        self.frames_dropped_due_to_backpressure = 0  # Counter for dropped frames
         
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
@@ -457,6 +473,138 @@ class AiortcFileRecorder:
             return int(bitrate_str[:-1]) * 1000000
         else:
             return int(bitrate_str)
+    
+    def _calculate_video_pts_dts(self, frame: rtc.VideoFrame) -> tuple[int, int]:
+        """
+        Calculate proper PTS/DTS for video frames with jitter handling.
+        
+        Args:
+            frame: LiveKit video frame with timestamp_us
+            
+        Returns:
+            Tuple of (pts, dts) in stream time_base units
+        """
+        if not self.video_stream or not self.video_stream.time_base:
+            raise ValueError("Video stream not initialized")
+        
+        tb = self.video_stream.time_base
+        
+        # Handle first frame - establish baseline
+        if self.first_video_timestamp_us is None:
+            self.first_video_timestamp_us = frame.timestamp_us
+            self.encoder_frame_counter = 0
+            logger.info(f"[{self.mint_id}] First video timestamp baseline: {frame.timestamp_us}us")
+        
+        # Calculate time since first frame in microseconds
+        delta_us = max(0, frame.timestamp_us - self.first_video_timestamp_us)
+        
+        # Convert delta to stream time_base units
+        # tb.denominator is typically the FPS (e.g., 30 for 30fps)
+        pts = int((delta_us / 1_000_000) * tb.denominator)
+        
+        # Calculate DTS accounting for B-frame reordering
+        # For H.264 with B-frames, DTS typically lags behind PTS
+        # The delay depends on the number of B-frames in the GOP
+        dts = pts - (self.encoder_reorder_delay * tb.denominator // self.config['fps'])
+        
+        # Ensure DTS doesn't go negative
+        dts = max(0, dts)
+        
+        # Enforce monotonic PTS (critical for encoder)
+        if pts <= self.last_video_pts:
+            corrected_pts = self.last_video_pts + 1
+            logger.warning(f"[{self.mint_id}] Non-monotonic PTS detected: {pts} <= {self.last_video_pts}, correcting to {corrected_pts}")
+            pts = corrected_pts
+            # Adjust DTS accordingly
+            dts = max(0, pts - (self.encoder_reorder_delay * tb.denominator // self.config['fps']))
+        
+        # Enforce monotonic DTS (critical for muxer)
+        if dts <= self.last_video_dts:
+            corrected_dts = self.last_video_dts + 1
+            logger.debug(f"[{self.mint_id}] Non-monotonic DTS detected: {dts} <= {self.last_video_dts}, correcting to {corrected_dts}")
+            dts = corrected_dts
+        
+        # Track PTS jitter for monitoring
+        if self.last_video_pts >= 0:
+            pts_delta = pts - self.last_video_pts
+            expected_delta = tb.denominator // self.config['fps']
+            jitter = abs(pts_delta - expected_delta)
+            self.pts_jitter_samples.append(jitter)
+            # Keep only last 100 samples
+            if len(self.pts_jitter_samples) > 100:
+                self.pts_jitter_samples.pop(0)
+        
+        # Update tracking
+        self.last_video_pts = pts
+        self.last_video_dts = dts
+        self.encoder_frame_counter += 1
+        
+        # Log detailed info for first few frames
+        if self.encoder_frame_counter <= 5:
+            logger.info(f"[{self.mint_id}] Frame {self.encoder_frame_counter}: timestamp={frame.timestamp_us}us, delta={delta_us}us, pts={pts}, dts={dts}, tb={tb}")
+        
+        return pts, dts
+    
+    def _calculate_audio_pts(self, samples_in_frame: int) -> int:
+        """
+        Calculate proper PTS for audio frames.
+        
+        Args:
+            samples_in_frame: Number of audio samples in this frame
+            
+        Returns:
+            PTS in stream time_base units
+        """
+        if not self.audio_stream or not self.audio_stream.time_base:
+            raise ValueError("Audio stream not initialized")
+        
+        # For audio, PTS is based on cumulative sample count
+        # This ensures perfect A/V sync without jitter
+        pts = self.audio_samples_written
+        
+        # Enforce monotonic PTS
+        if pts <= self.last_audio_pts:
+            corrected_pts = self.last_audio_pts + 1
+            logger.warning(f"[{self.mint_id}] Non-monotonic audio PTS detected: {pts} <= {self.last_audio_pts}, correcting to {corrected_pts}")
+            pts = corrected_pts
+        
+        self.last_audio_pts = pts
+        return pts
+    
+    async def _flush_encoder(self) -> None:
+        """
+        Flush video and audio encoders to ensure all buffered frames are written.
+        This is critical to prevent encoder buffer accumulation.
+        """
+        try:
+            # Flush video encoder if available
+            if self.video_stream and self.container:
+                logger.debug(f"[{self.mint_id}] Flushing video encoder")
+                for packet in self.video_stream.encode(None):
+                    self.container.mux(packet)
+                    self.packets_written += 1
+            
+            # Flush audio encoder if available
+            if self.audio_stream and self.container:
+                logger.debug(f"[{self.mint_id}] Flushing audio encoder")
+                for packet in self.audio_stream.encode(None):
+                    self.container.mux(packet)
+                    self.packets_written += 1
+            
+            # Flush container to ensure data is written to disk
+            if self.container:
+                self.container.flush()
+            
+            # Update metrics
+            self.encoder_flush_count += 1
+            self.last_encoder_flush_time = time.time()
+            
+            logger.debug(f"[{self.mint_id}] Encoder flush complete (count: {self.encoder_flush_count})")
+            
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Error flushing encoder: {e}")
+            import traceback
+            logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
     
     async def _continuous_track_detection(self):
         """Continuously try to find tracks and start frame processing."""
@@ -692,6 +840,14 @@ class AiortcFileRecorder:
                 "audio_frames_received": self.audio_frames_received,
                 "video_frames_written": self.video_frames_written,
                 "audio_frames_written": self.audio_frames_written,
+                "packets_written": self.packets_written,
+                "encoder_flush_count": self.encoder_flush_count,
+                "zero_packet_streak": self.zero_packet_streak,
+                "pts_jitter_avg": sum(self.pts_jitter_samples) / len(self.pts_jitter_samples) if self.pts_jitter_samples else 0,
+                "pts_jitter_max": max(self.pts_jitter_samples) if self.pts_jitter_samples else 0,
+                "encoder_frame_counter": self.encoder_frame_counter,
+                "frames_dropped_backpressure": self.frames_dropped_due_to_backpressure,
+                "avg_frame_processing_ms": (sum(self.frame_processing_time_samples) / len(self.frame_processing_time_samples) * 1000) if self.frame_processing_time_samples else 0,
                 "dropped_frames": 0,
                 "pli_requests": 0,
                 "track_subscriptions": len(self.tracks),
@@ -1041,25 +1197,58 @@ class AiortcFileRecorder:
             # Create PyAV output container
             self.container = av.open(str(self.output_path), mode='w', format=output_format)
 
-            # Add video stream
+            # Add video stream with low-latency encoder options
             if self.video_track:
+                # Determine GOP size (defaults to 2x FPS for quick seeking)
+                gop_size = self.config.get('gop_size', self.config['fps'] * 2)
+                
+                # Configure encoder options based on codec
+                encoder_options = {}
+                if self.config['video_codec'] in ['libx264', 'h264']:
+                    # H.264 low-latency configuration
+                    encoder_options = {
+                        'preset': 'ultrafast',  # Fastest encoding for real-time
+                        'tune': 'zerolatency',  # Optimize for low-latency streaming
+                        'g': str(gop_size),  # Set explicit GOP size
+                        'profile:v': 'main',  # MP4 compatibility
+                    }
+                    # Add progressive MP4 flags if using MP4 container
+                    if self.config.get('format') == 'mp4':
+                        encoder_options['movflags'] = '+frag_keyframe+empty_moov+default_base_moof'
+                elif self.config['video_codec'] in ['libvpx-vp9', 'vp9']:
+                    # VP9 low-latency configuration
+                    encoder_options = {
+                        'deadline': 'realtime',
+                        'cpu-used': '8',  # Fastest encoding
+                        'g': str(gop_size),
+                    }
+                
                 self.video_stream = self.container.add_stream(
                     self.config['video_codec'],
-                    rate=self.config['fps']
+                    rate=self.config['fps'],
+                    options=encoder_options
                 )
                 self.video_stream.width = self.config['width']
                 self.video_stream.height = self.config['height']
                 self.video_stream.pix_fmt = 'yuv420p'
                 
-                # Set explicit time_base
+                # Set explicit time_base and codec context
                 self.video_stream.time_base = Fraction(1, self.config['fps'])
+                self.video_stream.codec_context.framerate = Fraction(self.config['fps'], 1)
+                self.video_stream.codec_context.time_base = Fraction(1, self.config['fps'])
+                
+                # Set reorder delay based on GOP size (typical B-frame delay)
+                self.encoder_reorder_delay = min(10, gop_size // 2)
+                
                 logger.info(f"[{self.mint_id}] Video stream time_base set to 1/{self.config['fps']}")
+                logger.info(f"[{self.mint_id}] Encoder reorder delay: {self.encoder_reorder_delay} frames")
 
                 # Set video bitrate
                 if 'video_bitrate' in self.config:
                     self.video_stream.bit_rate = self._parse_bitrate(self.config['video_bitrate'])
 
                 logger.info(f"[{self.mint_id}] ✅ Video stream added: {self.config['video_codec']} at {self.config['width']}x{self.config['height']}")
+                logger.info(f"[{self.mint_id}] Encoder options: {encoder_options}")
             else:
                 logger.warning(f"[{self.mint_id}] ⚠️  No video track available for container setup")
 
@@ -1177,8 +1366,35 @@ class AiortcFileRecorder:
 
     async def _on_video_frame(self, frame: rtc.VideoFrame):
         """Handle video frame from LiveKit."""
+        frame_start_time = time.time()
+        
         if self._shutdown_event.is_set():
             return
+
+        # Backpressure check: Monitor memory usage
+        try:
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            if memory_mb > self.max_memory_mb:
+                logger.error(f"[{self.mint_id}] ❌ Memory usage too high: {memory_mb:.1f}MB (limit: {self.max_memory_mb}MB)")
+                logger.error(f"[{self.mint_id}] Stopping recording to prevent OOM")
+                self._shutdown_event.set()
+                return
+            
+            # Drop frames if processing is falling behind
+            if len(self.frame_processing_time_samples) > 10:
+                avg_processing_time = sum(self.frame_processing_time_samples) / len(self.frame_processing_time_samples)
+                frame_interval = 1.0 / self.config['fps']  # Expected time between frames
+                
+                # If processing time is consistently > 80% of frame interval, we're falling behind
+                if avg_processing_time > frame_interval * 0.8:
+                    # Drop this frame to catch up
+                    self.frames_dropped_due_to_backpressure += 1
+                    if self.frames_dropped_due_to_backpressure % 10 == 0:
+                        logger.warning(f"[{self.mint_id}] ⚠️ Dropping frame due to backpressure (total dropped: {self.frames_dropped_due_to_backpressure})")
+                    return
+        except ImportError:
+            pass  # psutil not available
 
         # Lazy initialization with backoff - setup container on first frame
         if not self._container_initialized:
@@ -1260,50 +1476,24 @@ class AiortcFileRecorder:
                 self.config['width'] = actual_width
                 self.config['height'] = actual_height
 
-            # Set proper PTS based on frame timestamp (RELATIVE to first frame)
+            # Calculate proper PTS/DTS using new robust method
             if not self.video_stream or not self.video_stream.time_base:
                 logger.warning(f"[{self.mint_id}] Video stream not properly initialized, skipping frame")
                 return
             
-            tb = self.video_stream.time_base
-            pts = None
+            try:
+                pts, dts = self._calculate_video_pts_dts(frame)
+            except ValueError as e:
+                logger.error(f"[{self.mint_id}] Failed to calculate PTS/DTS: {e}")
+                return
             
-            # Calculate PTS relative to first frame to avoid huge values
-            if hasattr(frame, 'timestamp_us') and frame.timestamp_us is not None:
-                if self.first_video_timestamp_us is None:
-                    self.first_video_timestamp_us = frame.timestamp_us
-                    logger.info(f"[{self.mint_id}] First video timestamp: {frame.timestamp_us}us")
-                
-                # Compute delta from first frame
-                delta_us = max(0, frame.timestamp_us - self.first_video_timestamp_us)
-                # Convert delta microseconds to time_base units (scaled correctly for tb.denominator)
-                pts = int((delta_us / 1_000_000) * tb.denominator)
-                
-                # Log detailed calculation for first few frames
-                if self.video_frames_received <= 5:
-                    logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: timestamp={frame.timestamp_us}us, delta={delta_us}us, pts={pts}, tb={tb}")
-                if self.video_frames_received <= 10:
-                    logger.info(f"[{self.mint_id}] delta_us = {delta_us}")
-            else:
-                # Fallback to frame counter if no timestamp available (scale for time_base)
-                pts = self.video_frames_written * (tb.denominator // self.config['fps'])
-                if self.video_frames_received <= 5:
-                    logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: No timestamp, using counter pts={pts} (scaled by {tb.denominator // self.config['fps']})")
-            
-            # Enforce monotonic PTS (critical for encoder)
-            if pts <= self.last_video_pts:
-                corrected_pts = self.last_video_pts + 1
-                if self.video_frames_received <= 10:
-                    logger.warning(f"[{self.mint_id}] Non-increasing PTS detected: {pts} <= {self.last_video_pts}, correcting to {corrected_pts}")
-                pts = corrected_pts
-            
+            # Set PTS and DTS on the frame
             av_frame.pts = pts
-            av_frame.time_base = tb
-            self.last_video_pts = pts
+            av_frame.time_base = self.video_stream.time_base
             
-            # Log PTS for first 5 frames
-            if self.video_frames_written < 5:
-                logger.info(f"[{self.mint_id}] Frame {self.video_frames_written} final PTS={pts}, tb={tb}")
+            # Note: PyAV doesn't support setting DTS directly on frames
+            # The encoder will calculate DTS internally based on frame reordering
+            # Our DTS calculation is primarily for validation and monitoring
             
             # TELEMETRY: Log encoder context on first frame
             if self.video_frames_received == 1 and self.video_stream:
@@ -1337,6 +1527,7 @@ class AiortcFileRecorder:
                         self.container.mux(packet)
                         packet_count += 1
                         total_bytes += packet.size
+                        self.packets_written += 1
                         logger.debug(f"[{self.mint_id}] Muxed video packet: size={packet.size} bytes, pts={packet.pts}, dts={packet.dts}")
                     
                     # TELEMETRY: Log packet details for first 60 frames
@@ -1344,19 +1535,27 @@ class AiortcFileRecorder:
                         if packet_count > 0:
                             logger.info(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → {packet_count} packet(s), {total_bytes} bytes total")
                         else:
-                            logger.warning(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → NO PACKETS (PTS={pts}, last_pts={self.last_video_pts})")
+                            logger.warning(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → NO PACKETS (PTS={pts})")
 
                     # Track zero-packet streak for diagnostics
                     if packet_count == 0:
                         self.zero_packet_streak += 1
                         logger.warning(f"[{self.mint_id}] No packets generated from frame {self.video_frames_written} (streak: {self.zero_packet_streak})")
                         
-                        # Alert at specific milestones
-                        if self.zero_packet_streak in (10, 30, 60):
+                        # Alert at specific milestones and flush encoder to force output
+                        if self.zero_packet_streak in (10, 30):
                             logger.error(f"[{self.mint_id}] ❌ CRITICAL: {self.zero_packet_streak} consecutive frames produced no packets!")
-                            logger.error(f"[{self.mint_id}] Last PTS: {self.last_video_pts}, time_base: {tb}")
+                            logger.error(f"[{self.mint_id}] Last PTS: {pts}, DTS: {dts}")
                             logger.error(f"[{self.mint_id}] Frame: {av_frame.width}x{av_frame.height}, format: {av_frame.format.name}")
                             logger.error(f"[{self.mint_id}] Encoder: {self.config.get('video_codec')}, Container: {self.config.get('format')}")
+                            # Force flush encoder to try to produce packets
+                            logger.info(f"[{self.mint_id}] Forcing encoder flush to resolve packet starvation")
+                            await self._flush_encoder()
+                        elif self.zero_packet_streak >= 60:
+                            # Critical threshold - stop recording to prevent memory issues
+                            logger.error(f"[{self.mint_id}] ❌ CRITICAL: 60+ frames with no packets - stopping recording")
+                            self._shutdown_event.set()
+                            return
                     else:
                         # Reset streak on successful packet generation
                         if self.zero_packet_streak > 0:
@@ -1368,15 +1567,27 @@ class AiortcFileRecorder:
                     if self.video_frames_written == 1:
                         logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
 
+                    # Periodic encoder flush every 50 frames to prevent buffer accumulation
+                    if self.video_frames_written % 50 == 0:
+                        await self._flush_encoder()
+                        logger.debug(f"[{self.mint_id}] Periodic encoder flush at frame {self.video_frames_written}")
+                    
                     # Periodically verify file is growing
                     if self.video_frames_written % 30 == 0:
                         if self.output_path and self.output_path.exists():
                             file_size = self.output_path.stat().st_size
                             logger.info(f"[{self.mint_id}] File size: {file_size / 1024 / 1024:.2f} MB after {self.video_frames_written} frames")
+                            logger.info(f"[{self.mint_id}] Packets written: {self.packets_written}, Encoder flushes: {self.encoder_flush_count}")
                             if file_size == 0:
                                 logger.error(f"[{self.mint_id}] ❌ WARNING: File size is 0 after {self.video_frames_written} frames!")
                         else:
                             logger.warning(f"[{self.mint_id}] Output path does not exist: {self.output_path}")
+                    
+                    # Flush encoder if timestamp gap detected (indicates stream pause/reconnect)
+                    current_time = time.time()
+                    if self.last_encoder_flush_time > 0 and (current_time - self.last_encoder_flush_time) > 2.0:
+                        logger.info(f"[{self.mint_id}] Timestamp gap detected, flushing encoder")
+                        await self._flush_encoder()
 
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")
@@ -1423,6 +1634,16 @@ class AiortcFileRecorder:
                 logger.info(f"[{self.mint_id}] Frame stats: received={self.video_frames_received}, written={self.video_frames_written} ({write_ratio:.1f}%)")
                 if write_ratio < 50:
                     logger.error(f"[{self.mint_id}] ❌ WARNING: Low write ratio - frames not being encoded properly!")
+                
+                # Log backpressure stats
+                if self.frames_dropped_due_to_backpressure > 0:
+                    logger.info(f"[{self.mint_id}] Backpressure: {self.frames_dropped_due_to_backpressure} frames dropped")
+            
+            # Track frame processing time for backpressure detection
+            frame_processing_time = time.time() - frame_start_time
+            self.frame_processing_time_samples.append(frame_processing_time)
+            if len(self.frame_processing_time_samples) > 100:
+                self.frame_processing_time_samples.pop(0)
                             
         except MemoryError as e:
             logger.error(f"[{self.mint_id}] Memory allocation failed: {e}")
@@ -1506,8 +1727,15 @@ class AiortcFileRecorder:
                         format='s16',
                         layout=audio_layout
                     )
-                    # Set PTS based on cumulative samples
-                    av_audio_frame.pts = self.audio_samples_written
+                    
+                    # Calculate PTS using new robust method
+                    try:
+                        pts = self._calculate_audio_pts(samples_per_frame)
+                    except ValueError as e:
+                        logger.error(f"[{self.mint_id}] Failed to calculate audio PTS: {e}")
+                        return
+                    
+                    av_audio_frame.pts = pts
                     
                     # Robust time_base fallback - use stream time_base or fallback to 1/48000
                     frame_time_base = self.audio_stream.time_base if self.audio_stream.time_base else Fraction(1, 48000)
@@ -1609,6 +1837,7 @@ class WebRTCRecordingService:
             "fps": 30,
             "width": 1920,
             "height": 1080,
+            "gop_size": 60,  # GOP size (defaults to 2x FPS)
             # Video flexibility options
             "rgb_order": "RGB",  # RGB or BGR
             "row_stride_bytes": None,  # Optional: force row stride (bytes per row)

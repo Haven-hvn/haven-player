@@ -1114,10 +1114,8 @@ class AiortcFileRecorder:
             last_frame_time = time.time()
             
             logger.debug(f"[{self.mint_id}] Entering VideoStream async loop for {self.video_track.sid}")
-            # CRITICAL: Pass maxsize to limit VideoStream's internal queue (prevents 9GB buffering!)
-            # Default is unlimited → causes memory explosion
-            # Set to 30 frames (~1 second at 30fps) - frames beyond this are DROPPED by LiveKit
-            async for event in rtc.VideoStream(self.video_track, maxsize=30):
+            # Process frames as fast as possible - the semaphore provides backpressure
+            async for event in rtc.VideoStream(self.video_track):
                 current_time = time.time()
                 time_since_last = current_time - last_frame_time
                 logger.info(f"[{self.mint_id}] 📹 VideoStream event received! (time since last: {time_since_last:.2f}s)")
@@ -1194,9 +1192,8 @@ class AiortcFileRecorder:
             frame_count = 0
             
             logger.debug(f"[{self.mint_id}] Entering AudioStream async loop for {self.audio_track.sid}")
-            # CRITICAL: Pass maxsize to limit AudioStream's internal queue
-            # Set to 30 frames (~0.5 seconds of audio) - prevents buffering
-            async for event in rtc.AudioStream(self.audio_track, maxsize=30):
+            # Process frames as fast as possible - the semaphore provides backpressure
+            async for event in rtc.AudioStream(self.audio_track):
                 if self._shutdown_event.is_set():
                     logger.info(f"[{self.mint_id}] Stop signal received, ending audio processing")
                     break
@@ -1480,24 +1477,38 @@ class AiortcFileRecorder:
 
     async def _on_video_frame(self, frame: rtc.VideoFrame):
         """Handle video frame from LiveKit."""
+        # CRITICAL: Time everything to find the 13-31 second delay
+        frame_start_time = time.time()
+        
         if self._shutdown_event.is_set():
             return
 
         # Lazy initialization with backoff - setup container on first frame
+        t_init_start = time.time()
         if not self._container_initialized:
             # Backoff guard to avoid retry spam
             if time.time() < self._next_container_setup_time:
                 return
             try:
                 logger.info(f"[{self.mint_id}] 🎬 First video frame received, initializing container...")
+                t_setup_start = time.time()
                 await self._setup_container()
-                logger.info(f"[{self.mint_id}] ✅ Container initialized on first video frame")
+                t_setup_end = time.time()
+                setup_duration = (t_setup_end - t_setup_start) * 1000
+                logger.info(f"[{self.mint_id}] ✅ Container initialized in {setup_duration:.1f}ms")
+                if setup_duration > 1000:
+                    logger.warning(f"[{self.mint_id}] ⚠️ SLOW CONTAINER SETUP: {setup_duration:.1f}ms")
             except Exception as e:
                 logger.error(f"[{self.mint_id}] Failed to initialize container: {e}")
                 # Backoff 1s before trying again
                 self._next_container_setup_time = time.time() + 1.0
                 return
 
+        t_init_end = time.time()
+        init_duration = (t_init_end - t_init_start) * 1000
+        if init_duration > 100:
+            logger.warning(f"[{self.mint_id}] ⚠️ SLOW INIT CHECK: {init_duration:.1f}ms")
+        
         # Guard: Skip if video stream not available after initialization
         if not self.video_stream or not self.video_stream.time_base:
             logger.warning(f"[{self.mint_id}] Video stream not properly initialized")
@@ -1508,6 +1519,7 @@ class AiortcFileRecorder:
             return
 
         try:
+            # Increment received counter
             self.video_frames_received += 1
             self.metrics['frames_received'] += 1
             logger.debug(f"[{self.mint_id}] 📹 Processing video frame #{self.video_frames_received}")
@@ -1520,6 +1532,7 @@ class AiortcFileRecorder:
                 self._log_memory_usage(f"{self.mint_id} first_frame")
 
             # Use VideoNormalizer for flexible frame handling
+            t_normalize_start = time.time()
             target_width = self.config.get('width', 1920)
             target_height = self.config.get('height', 1080)
 
@@ -1531,6 +1544,10 @@ class AiortcFileRecorder:
                 logger.info(f"[{self.mint_id}] Resolution changed to {frame.width}x{frame.height}")
 
             normalized_frame = self.video_normalizer.normalize_frame(frame, target_width, target_height)
+            t_normalize_end = time.time()
+            normalize_duration = (t_normalize_end - t_normalize_start) * 1000
+            if normalize_duration > 50:
+                logger.warning(f"[{self.mint_id}] ⚠️ SLOW NORMALIZE: {normalize_duration:.1f}ms")
 
             if normalized_frame is None:
                 logger.warning(f"[{self.mint_id}] Failed to normalize frame, skipping")
@@ -1565,7 +1582,12 @@ class AiortcFileRecorder:
                 self.config['height'] = actual_height
 
             # Calculate PTS/DTS with robust fallback mechanisms
+            t_pts_start = time.time()
             pts, dts = self._calculate_video_pts_dts(frame, av_frame)
+            t_pts_end = time.time()
+            pts_duration = (t_pts_end - t_pts_start) * 1000
+            if pts_duration > 10:
+                logger.warning(f"[{self.mint_id}] ⚠️ SLOW PTS CALC: {pts_duration:.1f}ms")
             
             av_frame.pts = pts
             av_frame.dts = dts
@@ -1601,10 +1623,15 @@ class AiortcFileRecorder:
             if self.video_stream:
                 try:
                     # Encode frame
+                    t_encode_start = time.time()
                     packets = self.video_stream.encode(av_frame)
+                    t_encode_end = time.time()
+                    encode_duration = (t_encode_end - t_encode_start) * 1000
+                    
                     packet_count = 0
                     total_bytes = 0
                     
+                    t_write_start = time.time()
                     for packet in packets:
                         # Write packet bytes directly to disk
                         self._write_packet_direct(packet)
@@ -1613,11 +1640,24 @@ class AiortcFileRecorder:
                         self.metrics['packets_written'] += 1
                         
                         logger.debug(f"[{self.mint_id}] Wrote video packet: size={packet.size} bytes, pts={packet.pts}, dts={packet.dts}")
+                    t_write_end = time.time()
+                    write_duration = (t_write_end - t_write_start) * 1000
                     
-                    # TELEMETRY: Log packet details for first 60 frames
+                    # Log timing for slow operations
+                    if encode_duration > 50:
+                        logger.warning(f"[{self.mint_id}] ⚠️ SLOW ENCODE: {encode_duration:.1f}ms")
+                    if write_duration > 50:
+                        logger.warning(f"[{self.mint_id}] ⚠️ SLOW WRITE: {write_duration:.1f}ms")
+                    
+                    # TELEMETRY: Log packet details and timing for first 60 frames
+                    frame_total_time = (time.time() - frame_start_time) * 1000
                     if self.video_frames_received <= 60:
                         if packet_count > 0:
-                            logger.info(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → {packet_count} packet(s), {total_bytes} bytes total")
+                            logger.info(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received}: "
+                                      f"{packet_count} packet(s), {total_bytes} bytes, "
+                                      f"timing: normalize={normalize_duration:.1f}ms, "
+                                      f"encode={encode_duration:.1f}ms, write={write_duration:.1f}ms, "
+                                      f"TOTAL={frame_total_time:.1f}ms")
                         else:
                             logger.warning(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → NO PACKETS (PTS={pts}, last_pts={self.last_video_pts})")
 
@@ -1640,7 +1680,7 @@ class AiortcFileRecorder:
                     if self.video_frames_written == 1:
                         logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
 
-                    # Periodically verify file is growing (check temp path during recording)
+                    # Periodically verify file is growing and log performance
                     if self.video_frames_written % 30 == 0:
                         check_path = self.temp_output_path if self.temp_output_path else self.output_path
                         if check_path and check_path.exists():
@@ -1650,9 +1690,15 @@ class AiortcFileRecorder:
                                 logger.error(f"[{self.mint_id}] ❌ WARNING: File size is 0 after {self.video_frames_written} frames!")
                         else:
                             logger.warning(f"[{self.mint_id}] Recording file does not exist: {check_path}")
+                        
+                        # Log performance summary every 30 frames
+                        logger.info(f"[{self.mint_id}] 📊 PERFORMANCE: Last frame took {frame_total_time:.1f}ms total")
+                        if frame_total_time > 100:
+                            logger.error(f"[{self.mint_id}] ❌ CRITICAL: Frame processing >100ms will cause buffering!")
 
                 except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")
+                    frame_error_time = (time.time() - frame_start_time) * 1000
+                    logger.error(f"[{self.mint_id}] Error encoding video frame after {frame_error_time:.1f}ms: {e}")
                     logger.error(f"[{self.mint_id}] Frame details: {av_frame.width}x{av_frame.height}, format={av_frame.format.name}")
                     logger.error(f"[{self.mint_id}] Container state: {self.container is not None}, Stream: {self.video_stream is not None}")
                     import traceback
@@ -1704,11 +1750,22 @@ class AiortcFileRecorder:
             gc.collect()
             return
         except Exception as e:
-            logger.error(f"[{self.mint_id}] Video frame processing error: {e}")
+            frame_error_time = (time.time() - frame_start_time) * 1000
+            logger.error(f"[{self.mint_id}] Video frame processing error after {frame_error_time:.1f}ms: {e}")
+            if frame_error_time > 1000:
+                logger.error(f"[{self.mint_id}] ❌ CRITICAL: Frame error took {frame_error_time:.1f}ms!")
             import traceback
             logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
             # Log memory usage on error
             self._log_memory_usage(f"{self.mint_id} frame_error")
+        
+        # Final timing check - log every frame's total duration
+        frame_end_time = time.time()
+        frame_total_duration = (frame_end_time - frame_start_time) * 1000
+        if frame_total_duration > 100:
+            logger.error(f"[{self.mint_id}] ❌ CRITICAL PERFORMANCE: Frame took {frame_total_duration:.1f}ms (should be <33ms for 30fps)")
+        elif frame_total_duration > 50:
+            logger.warning(f"[{self.mint_id}] ⚠️ SLOW FRAME: {frame_total_duration:.1f}ms")
 
     async def _on_audio_frame(self, frame: rtc.AudioFrame):
         """Handle audio frame from LiveKit."""

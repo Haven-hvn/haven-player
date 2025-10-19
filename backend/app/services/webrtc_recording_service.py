@@ -479,7 +479,7 @@ class AiortcFileRecorder:
         Calculate proper PTS/DTS for video frames with jitter handling.
         
         Args:
-            frame: LiveKit video frame with timestamp_us
+            frame: LiveKit video frame (may or may not have timestamp_us)
             
         Returns:
             Tuple of (pts, dts) in stream time_base units
@@ -489,14 +489,36 @@ class AiortcFileRecorder:
         
         tb = self.video_stream.time_base
         
+        # Get timestamp from frame (with fallback to frame counter)
+        # LiveKit frames may have timestamp_us, time_us, or timestamp attributes
+        frame_timestamp_us = None
+        if hasattr(frame, 'timestamp_us') and frame.timestamp_us is not None:
+            frame_timestamp_us = frame.timestamp_us
+        elif hasattr(frame, 'time_us') and frame.time_us is not None:
+            frame_timestamp_us = frame.time_us
+        elif hasattr(frame, 'timestamp') and frame.timestamp is not None:
+            # Convert from seconds to microseconds if needed
+            frame_timestamp_us = int(frame.timestamp * 1_000_000)
+        
         # Handle first frame - establish baseline
         if self.first_video_timestamp_us is None:
-            self.first_video_timestamp_us = frame.timestamp_us
+            if frame_timestamp_us is not None:
+                self.first_video_timestamp_us = frame_timestamp_us
+                logger.info(f"[{self.mint_id}] First video timestamp baseline: {frame_timestamp_us}us")
+            else:
+                # No timestamp available, use wall clock as baseline
+                self.first_video_timestamp_us = int(time.time() * 1_000_000)
+                logger.warning(f"[{self.mint_id}] No frame timestamp available, using wall clock baseline")
             self.encoder_frame_counter = 0
-            logger.info(f"[{self.mint_id}] First video timestamp baseline: {frame.timestamp_us}us")
         
         # Calculate time since first frame in microseconds
-        delta_us = max(0, frame.timestamp_us - self.first_video_timestamp_us)
+        if frame_timestamp_us is not None:
+            delta_us = max(0, frame_timestamp_us - self.first_video_timestamp_us)
+        else:
+            # Fallback: calculate based on frame counter and FPS
+            delta_us = int((self.encoder_frame_counter * 1_000_000) / self.config['fps'])
+            if self.encoder_frame_counter == 0:
+                logger.warning(f"[{self.mint_id}] No timestamp on frames, using frame counter for PTS calculation")
         
         # Convert delta to stream time_base units
         # tb.denominator is typically the FPS (e.g., 30 for 30fps)
@@ -541,7 +563,7 @@ class AiortcFileRecorder:
         
         # Log detailed info for first few frames
         if self.encoder_frame_counter <= 5:
-            logger.info(f"[{self.mint_id}] Frame {self.encoder_frame_counter}: timestamp={frame.timestamp_us}us, delta={delta_us}us, pts={pts}, dts={dts}, tb={tb}")
+            logger.info(f"[{self.mint_id}] Frame {self.encoder_frame_counter}: timestamp={frame_timestamp_us}us, delta={delta_us}us, pts={pts}, dts={dts}, tb={tb}")
         
         return pts, dts
     
@@ -1465,8 +1487,15 @@ class AiortcFileRecorder:
                 for i, plane in enumerate(av_frame.planes):
                     logger.info(f"[{self.mint_id}]     Plane {i}: {plane.width}x{plane.height}, line_size={plane.line_size}, buffer_size={plane.buffer_size}")
                 logger.info(f"[{self.mint_id}]   - to_ndarray available: {hasattr(frame, 'to_ndarray')}")
-                if hasattr(frame, 'timestamp_us'):
+                # Log any available timestamp attribute
+                if hasattr(frame, 'timestamp_us') and frame.timestamp_us is not None:
                     logger.info(f"[{self.mint_id}]   - timestamp_us: {frame.timestamp_us}")
+                elif hasattr(frame, 'time_us') and frame.time_us is not None:
+                    logger.info(f"[{self.mint_id}]   - time_us: {frame.time_us}")
+                elif hasattr(frame, 'timestamp') and frame.timestamp is not None:
+                    logger.info(f"[{self.mint_id}]   - timestamp: {frame.timestamp}")
+                else:
+                    logger.info(f"[{self.mint_id}]   - No timestamp attribute found on frame")
 
             # Handle dynamic resolution - update config with actual dimensions
             actual_height, actual_width = av_frame.height, av_frame.width

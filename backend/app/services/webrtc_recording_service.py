@@ -23,6 +23,7 @@ import time
 
 import numpy as np
 from livekit import rtc
+from PIL import Image
 
 from app.services.stream_manager import StreamManager
 
@@ -67,6 +68,7 @@ class TrackContext:
     frame_count: int = 0
     last_rtp_timestamp: Optional[int] = None
     is_active: bool = False
+    last_pts: int = 0  # Last presentation timestamp used
 
 
 @dataclass
@@ -219,34 +221,48 @@ class WebRTCRecordingService:
         }
 
     async def start_recording(
-        self, 
-        mint_id: str, 
-        output_format: str = "mp4", 
+        self,
+        mint_id: str,
+        output_format: str = "mp4",
         video_quality: str = "medium"
     ) -> Dict[str, Any]:
-        """Start recording a stream using WebRTC best practices."""
+        """Start recording a pump.fun livestream directly using WebRTC best practices."""
         try:
-            logger.info(f"📹 Starting WebRTC recording for mint_id: {mint_id}")
-            
+            logger.info(f"📹 Starting WebRTC recording for pump.fun mint_id: {mint_id}")
+
             if mint_id in self.active_recordings:
                 logger.warning(f"⚠️  Recording already active for {mint_id}")
                 return {"success": False, "error": f"Recording already active for {mint_id}"}
-            
-            # Get stream info from StreamManager
-            stream_info = await self.stream_manager.get_stream_info(mint_id)
+
+            # Check if stream is live on pump.fun directly
+            pumpfun_service = self.stream_manager.pumpfun_service
+            stream_info = await pumpfun_service.get_stream_info(mint_id)
             if not stream_info:
-                logger.error(f"❌ No active stream found for {mint_id}")
-                return {"success": False, "error": f"No active stream found for {mint_id}"}
-            
-            # Get the LiveKit room from StreamManager
-            room = self.stream_manager.room
-            if not room:
-                logger.error(f"❌ No active LiveKit room found")
-                return {"success": False, "error": "No active LiveKit room found"}
-            
+                logger.error(f"❌ Stream not found or not live on pump.fun for {mint_id}")
+                logger.error(f"💡 Check if the stream is live at: https://pump.fun/coin/{mint_id}")
+                return {"success": False, "error": f"Stream not found or not live on pump.fun for {mint_id}"}
+
+            # Get LiveKit token for the stream
+            token = await pumpfun_service.get_livestream_token(mint_id)
+            if not token:
+                logger.error(f"❌ Failed to get LiveKit token for {mint_id}")
+                return {"success": False, "error": "Failed to get LiveKit token"}
+
+            # Create LiveKit room connection
+            livekit_url = pumpfun_service.get_livekit_url()
+            room = rtc.Room()
+            connect_options = rtc.RoomOptions(auto_subscribe=True)
+
+            try:
+                await room.connect(livekit_url, token, connect_options)
+                logger.info(f"✅ Connected to LiveKit room for {mint_id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to connect to LiveKit room: {e}")
+                return {"success": False, "error": f"Failed to connect to LiveKit room: {e}"}
+
             # Create recording configuration
             config = self._get_recording_config(output_format, video_quality)
-            
+
             # Create WebRTC recorder
             recorder = WebRTCRecorder(
                 mint_id=mint_id,
@@ -257,14 +273,14 @@ class WebRTCRecordingService:
                 timeouts=self.timeouts,
                 queue_config=self.queue_config
             )
-            
+
             # Start recording
             result = await recorder.start()
-            
+
             if result["success"]:
                 self.active_recordings[mint_id] = recorder
                 logger.info(f"✅ WebRTC recording started successfully: {recorder.output_path}")
-                
+
                 return {
                     "success": True,
                     "mint_id": mint_id,
@@ -273,8 +289,13 @@ class WebRTCRecordingService:
                 }
             else:
                 logger.error(f"❌ WebRTC recorder failed to start: {result.get('error')}")
+                # Clean up room connection on failure
+                try:
+                    await room.disconnect()
+                except:
+                    pass
                 return result
-                
+
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
@@ -286,20 +307,28 @@ class WebRTCRecordingService:
         """Stop recording a stream."""
         try:
             logger.info(f"🛑 Stop WebRTC recording called for mint_id: {mint_id}")
-            
+
             if mint_id not in self.active_recordings:
                 logger.warning(f"No active recording found for {mint_id}")
                 return {"success": False, "error": f"No active recording for {mint_id}"}
-            
+
             recorder = self.active_recordings[mint_id]
             result = await recorder.stop()
-            
+
+            # Disconnect the room after recording stops
+            try:
+                if recorder.room:
+                    await recorder.room.disconnect()
+                    logger.info(f"✅ Disconnected LiveKit room for {mint_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Error disconnecting room for {mint_id}: {e}")
+
             # Remove from active recordings
             del self.active_recordings[mint_id]
             logger.info(f"Removed {mint_id} from active recordings")
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Failed to stop WebRTC recording for {mint_id}: {e}")
             import traceback
@@ -431,7 +460,7 @@ class WebRTCRecorder:
             connection_start = time.time()
             
             # Verify room is connected
-            if not self.room.is_connected():
+            if not self.room.isconnected():
                 logger.error(f"[{self.mint_id}] Room not connected")
                 return {"success": False, "error": "Room not connected"}
             
@@ -444,10 +473,10 @@ class WebRTCRecorder:
             self.state = RecordingState.SUBSCRIBING
             subscription_start = time.time()
             
-            # Find target participant
-            participant = self._find_participant()
+            # Wait for participants to join the room
+            participant = await self._wait_for_participant()
             if not participant:
-                return {"success": False, "error": "Participant not found"}
+                return {"success": False, "error": "No participants found in room"}
             
             # Subscribe to tracks
             await self._subscribe_to_tracks(participant)
@@ -556,93 +585,165 @@ class WebRTCRecorder:
             "config": self.config
         }
 
-    def _find_participant(self) -> Optional[rtc.RemoteParticipant]:
-        """Find the target participant."""
-        for participant in self.room.remote_participants.values():
-            if participant.sid == self.stream_info.participant_sid:
-                logger.info(f"[{self.mint_id}] ✅ Found participant: {participant.sid}")
+    async def _wait_for_participant(self) -> Optional[rtc.RemoteParticipant]:
+        """Wait for participants to join the room. For pump.fun streams, there's typically only one participant (the streamer)."""
+        logger.info(f"[{self.mint_id}] Waiting for participants to join the room...")
+
+        # Wait up to 10 seconds for participants to join
+        timeout = 10.0
+        start_time = time.time()
+
+        while (time.time() - start_time) < timeout:
+            participants = list(self.room.remote_participants.values())
+            if participants:
+                # For pump.fun livestreams, there's typically only one participant (the streamer)
+                participant = participants[0]
+                logger.info(f"[{self.mint_id}] ✅ Found participant: {participant.sid} (identity: {participant.identity})")
                 return participant
-        
-        logger.error(f"[{self.mint_id}] ❌ Participant {self.stream_info.participant_sid} not found")
+
+            await asyncio.sleep(0.5)  # Check every 500ms
+
+        logger.error(f"[{self.mint_id}] ❌ No participants found in room after {timeout} seconds")
         return None
 
     async def _subscribe_to_tracks(self, participant: rtc.RemoteParticipant):
         """Subscribe to tracks following WebRTC best practices."""
         logger.info(f"[{self.mint_id}] Subscribing to tracks for participant {participant.sid}")
-        
+
         for track_pub in participant.track_publications.values():
-            if track_pub.kind not in [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]:
+            logger.info(f"[{self.mint_id}] Checking track publication: {track_pub.sid}, subscribed: {track_pub.subscribed}")
+
+            # Handle track kind - may be int or enum
+            track_kind = track_pub.kind
+            track_kind_name = None
+
+            if isinstance(track_kind, int):
+                # Handle int track kinds
+                if track_kind == 1:  # Video
+                    track_kind_name = "VIDEO"
+                    track_kind_enum = rtc.TrackKind.KIND_VIDEO
+                elif track_kind == 2:  # Audio
+                    track_kind_name = "AUDIO"
+                    track_kind_enum = rtc.TrackKind.KIND_AUDIO
+                else:
+                    logger.debug(f"[{self.mint_id}] Skipping unknown track kind int: {track_kind}")
+                    continue
+            elif hasattr(track_kind, 'name'):
+                # Handle enum track kinds
+                track_kind_name = track_kind.name
+                track_kind_enum = track_kind
+            else:
+                logger.debug(f"[{self.mint_id}] Skipping unexpected track kind type: {type(track_kind)}")
                 continue
-                
-            logger.info(f"[{self.mint_id}] Found {track_pub.kind.name} track publication")
-            
+
+            if track_kind_enum not in [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]:
+                continue
+
+            logger.info(f"[{self.mint_id}] Found {track_kind_name} track publication: {track_pub.sid}")
+
             # Explicitly subscribe if not already subscribed
             if not track_pub.subscribed:
-                logger.info(f"[{self.mint_id}] 📡 Subscribing to {track_pub.kind.name} track")
+                logger.info(f"[{self.mint_id}] 📡 Subscribing to {track_kind_name} track: {track_pub.sid}")
                 track_pub.set_subscribed(True)
                 await asyncio.sleep(0.1)  # Brief wait for subscription
-            
+
             # Wait for subscription to complete
             timeout = self.timeouts['subscription']
             start_time = time.time()
-            
+
             while not track_pub.subscribed and (time.time() - start_time) < timeout:
                 await asyncio.sleep(0.1)
-            
+
             if not track_pub.subscribed:
-                logger.warning(f"[{self.mint_id}] ⚠️ {track_pub.kind.name} track subscription timeout")
+                logger.warning(f"[{self.mint_id}] ⚠️ {track_kind_name} track subscription timeout: {track_pub.sid}")
                 continue
-            
-            logger.info(f"[{self.mint_id}] ✅ {track_pub.kind.name} track subscribed")
+
+            logger.info(f"[{self.mint_id}] ✅ {track_kind_name} track subscribed: {track_pub.sid}")
 
     async def _await_track_subscriptions(self):
         """Wait for track subscriptions to be ready."""
         logger.info(f"[{self.mint_id}] Awaiting track subscriptions...")
-        
+
         timeout = self.timeouts['subscription']
         start_time = time.time()
-        
+
         while (time.time() - start_time) < timeout:
-            # Check for subscribed tracks
+            # Check for subscribed tracks from all participants
             for participant in self.room.remote_participants.values():
-                if participant.sid != self.stream_info.participant_sid:
-                    continue
-                    
                 for track_pub in participant.track_publications.values():
-                    if (track_pub.subscribed and 
-                        track_pub.track is not None and 
-                        track_pub.kind in [rtc.TrackKind.KIND_VIDEO, rtc.TrackKind.KIND_AUDIO]):
-                        
-                        track_id = f"{participant.sid}_{track_pub.kind.name}"
-                        
+                    # Handle track kind - may be int or enum
+                    track_kind = track_pub.kind
+                    track_kind_name = None
+
+                    if isinstance(track_kind, int):
+                        # Handle int track kinds
+                        if track_kind == 1:  # Video
+                            track_kind_name = "VIDEO"
+                            track_kind_enum = rtc.TrackKind.KIND_VIDEO
+                        elif track_kind == 2:  # Audio
+                            track_kind_name = "AUDIO"
+                            track_kind_enum = rtc.TrackKind.KIND_AUDIO
+                        else:
+                            continue
+                    elif hasattr(track_kind, 'name'):
+                        # Handle enum track kinds
+                        track_kind_name = track_kind.name
+                        track_kind_enum = track_kind
+                    else:
+                        continue
+
+                    if track_pub.subscribed and track_pub.track is not None:
+                        # Check actual track type instead of relying on publication kind
+                        actual_track = track_pub.track
+                        if isinstance(actual_track, rtc.RemoteVideoTrack):
+                            actual_kind = rtc.TrackKind.KIND_VIDEO
+                            actual_kind_name = "VIDEO"
+                        elif isinstance(actual_track, rtc.RemoteAudioTrack):
+                            actual_kind = rtc.TrackKind.KIND_AUDIO
+                            actual_kind_name = "AUDIO"
+                        else:
+                            logger.debug(f"[{self.mint_id}] Skipping non-media track: {type(actual_track)}")
+                            continue
+
+                        # Log if publication kind doesn't match actual track type
+                        if track_kind_enum != actual_kind:
+                            logger.warning(f"[{self.mint_id}] Track publication kind mismatch: pub={track_kind_name}, actual={actual_kind_name}, sid={actual_track.sid}")
+
+                        track_id = f"{participant.sid}_{actual_kind_name}"
+
                         if track_id not in self.tracks:
-                            # Create track context
+                            # Create track context using actual track type
                             track_context = TrackContext(
                                 track_id=track_id,
-                                track=track_pub.track,
+                                track=actual_track,
                                 publication=track_pub,
-                                kind=track_pub.kind
+                                kind=actual_kind
                             )
-                            
+
                             self.tracks[track_id] = track_context
                             self.stats['track_subscriptions'] += 1
-                            
-                            logger.info(f"[{self.mint_id}] ✅ Track ready: {track_id}")
-            
+
+                            logger.info(f"[{self.mint_id}] ✅ Track ready: {track_id} ({actual_kind_name})")
+
             # Check if we have both video and audio
             video_tracks = [t for t in self.tracks.values() if t.kind == rtc.TrackKind.KIND_VIDEO]
             audio_tracks = [t for t in self.tracks.values() if t.kind == rtc.TrackKind.KIND_AUDIO]
-            
+
             if video_tracks and audio_tracks:
                 logger.info(f"[{self.mint_id}] ✅ All required tracks ready")
                 return
-            
+
             await asyncio.sleep(0.1)
-        
+
         # Timeout - check what we have
         if not self.tracks:
-            raise Exception("No tracks subscribed within timeout")
-        
+            logger.error(f"[{self.mint_id}] ❌ No valid media tracks found within timeout")
+            logger.error(f"[{self.mint_id}] 💡 This could mean:")
+            logger.error(f"[{self.mint_id}]    - The stream is not actually live")
+            logger.error(f"[{self.mint_id}]    - The streamer hasn't started broadcasting yet")
+            logger.error(f"[{self.mint_id}]    - There are network/connectivity issues")
+            raise Exception("No valid media tracks found within timeout")
+
         logger.warning(f"[{self.mint_id}] ⚠️ Subscription timeout, proceeding with {len(self.tracks)} tracks")
 
     async def _setup_output_container(self):
@@ -735,10 +836,16 @@ class WebRTCRecorder:
             frame_count = 0
             first_frame_time = None
             
-            # Use the appropriate stream iterator
+            # Use the appropriate stream iterator with validation
             if track_context.kind == rtc.TrackKind.KIND_VIDEO:
+                if not isinstance(track_context.track, rtc.RemoteVideoTrack):
+                    logger.error(f"[{self.mint_id}] Cannot create VideoStream: track is not a RemoteVideoTrack")
+                    return
                 stream = rtc.VideoStream(track_context.track)
-            else:
+            else:  # Audio
+                if not isinstance(track_context.track, rtc.RemoteAudioTrack):
+                    logger.error(f"[{self.mint_id}] Cannot create AudioStream: track is not a RemoteAudioTrack")
+                    return
                 stream = rtc.AudioStream(track_context.track)
             
             async for event in stream:
@@ -752,7 +859,9 @@ class WebRTCRecorder:
                 if first_frame_time is None:
                     first_frame_time = time.time()
                     track_context.first_wall_time = first_frame_time
-                    logger.info(f"[{self.mint_id}] First {track_context.kind.name} frame received for {track_context.track_id}")
+                    # Safely get kind name
+                    kind_name = track_context.kind.name if hasattr(track_context.kind, 'name') else str(track_context.kind)
+                    logger.info(f"[{self.mint_id}] First {kind_name} frame received for {track_context.track_id}")
                 
                 # Put frame in queue
                 success = queue.put(frame)
@@ -762,9 +871,11 @@ class WebRTCRecorder:
                     
                     # Log progress
                     if frame_count % 300 == 0:  # Every 10 seconds at 30fps
-                        logger.info(f"[{self.mint_id}] Processed {frame_count} {track_context.kind.name} frames for {track_context.track_id}")
+                        kind_name = track_context.kind.name if hasattr(track_context.kind, 'name') else str(track_context.kind)
+                        logger.info(f"[{self.mint_id}] Processed {frame_count} {kind_name} frames for {track_context.track_id}")
                 else:
-                    logger.warning(f"[{self.mint_id}] Failed to enqueue {track_context.kind.name} frame")
+                    kind_name = track_context.kind.name if hasattr(track_context.kind, 'name') else str(track_context.kind)
+                    logger.warning(f"[{self.mint_id}] Failed to enqueue {kind_name} frame")
                 
                 # Check for read deadline
                 if time.time() - first_frame_time > self.timeouts['read_deadline']:
@@ -830,25 +941,28 @@ class WebRTCRecorder:
         try:
             if not self.video_stream or not self.output_container:
                 return
-            
+
             # Convert LiveKit frame to PyAV frame
             av_frame = await self._convert_video_frame(frame)
             if av_frame is None:
                 return
-            
-            # Set PTS using media clock
-            pts = self.media_clock.rtp_to_pts(track_context.track_id, 0)  # Simplified for now
+
+            # Calculate monotonically increasing PTS
+            # Use frame count * frame duration for proper timing
+            frame_duration = int(self.video_stream.time_base.denominator / self.config['fps'])
+            pts = track_context.last_pts + frame_duration
+            track_context.last_pts = pts
             av_frame.pts = pts
-            
+
             # Encode and write
             for packet in self.video_stream.encode(av_frame):
                 self.output_container.mux(packet)
-            
+
             self.stats['video_frames'] += 1
-            
+
             # Cleanup
             del av_frame
-            
+
         except Exception as e:
             logger.error(f"[{self.mint_id}] Video frame encoding error: {e}")
 
@@ -857,49 +971,166 @@ class WebRTCRecorder:
         try:
             if not self.audio_stream or not self.output_container:
                 return
-            
+
             # Convert LiveKit frame to PyAV frame
             av_frame = await self._convert_audio_frame(frame)
             if av_frame is None:
                 return
-            
-            # Set PTS using media clock
-            pts = self.media_clock.rtp_to_pts(track_context.track_id, 0)  # Simplified for now
+
+            # Calculate monotonically increasing PTS for audio
+            # Use sample-based timing for audio
+            try:
+                # Try to get sample count from the frame
+                if hasattr(av_frame, 'samples') and av_frame.samples:
+                    if isinstance(av_frame.samples, (list, tuple)):
+                        samples_per_frame = len(av_frame.samples)
+                    elif isinstance(av_frame.samples, int):
+                        samples_per_frame = av_frame.samples
+                    else:
+                        samples_per_frame = 1024  # Default assumption
+                else:
+                    samples_per_frame = 1024  # Default assumption
+
+                sample_rate = av_frame.sample_rate or 48000
+                frame_duration = int((samples_per_frame / sample_rate) * self.audio_stream.time_base.denominator)
+                pts = track_context.last_pts + max(frame_duration, 1)  # Ensure at least 1
+                track_context.last_pts = pts
+            except Exception as e:
+                # Fallback: increment by a reasonable amount
+                logger.debug(f"[{self.mint_id}] Audio PTS calculation failed: {e}, using fallback")
+                pts = track_context.last_pts + 1024  # Assume 1024 samples per frame
+                track_context.last_pts = pts
+
             av_frame.pts = pts
-            
+
             # Encode and write
             for packet in self.audio_stream.encode(av_frame):
                 self.output_container.mux(packet)
-            
+
             self.stats['audio_frames'] += 1
-            
+
             # Cleanup
             del av_frame
-            
+
         except Exception as e:
             logger.error(f"[{self.mint_id}] Audio frame encoding error: {e}")
 
     async def _convert_video_frame(self, frame: rtc.VideoFrame) -> Optional[av.VideoFrame]:
         """Convert LiveKit video frame to PyAV frame."""
         try:
-            # Get frame data
+            # Debug: Check frame properties
+            logger.debug(f"[{self.mint_id}] VideoFrame - width: {frame.width}, height: {frame.height}, data size: {len(frame.data) if hasattr(frame, 'data') else 'N/A'}")
+
+            # Try different methods to get frame data
             if hasattr(frame, 'to_ndarray'):
-                img = frame.to_ndarray(format='argb')
-                av_frame = av.VideoFrame.from_ndarray(img, format='argb')
-                
-                # Reformat to yuv420p and resize
-                av_frame = av_frame.reformat(
-                    format='yuv420p',
-                    width=self.config['width'],
-                    height=self.config['height']
-                )
-                
-                del img
-                return av_frame
-            else:
-                logger.warning(f"[{self.mint_id}] Video frame conversion not supported")
-                return None
-                
+                try:
+                    # Try different formats
+                    for fmt in ['rgb', 'bgr', 'rgba', 'bgra']:
+                        try:
+                            img = frame.to_ndarray(format=fmt)
+                            av_frame = av.VideoFrame.from_ndarray(img, format=fmt)
+
+                            # Reformat to yuv420p and resize
+                            av_frame = av_frame.reformat(
+                                format='yuv420p',
+                                width=self.config['width'],
+                                height=self.config['height']
+                            )
+
+                            del img
+                            return av_frame
+                        except Exception as e:
+                            logger.debug(f"[{self.mint_id}] Format {fmt} failed: {e}")
+                            continue
+                except Exception as e:
+                    logger.warning(f"[{self.mint_id}] to_ndarray failed: {e}")
+
+            # Try alternative methods with proper dimensions
+            if hasattr(frame, 'data') and hasattr(frame, 'width') and hasattr(frame, 'height'):
+                try:
+                    from PIL import Image
+                    import numpy as np
+
+                    data_size = len(frame.data)
+                    expected_rgb_size = frame.width * frame.height * 3
+
+                    # Try different approaches to create a valid image
+                    if data_size == expected_rgb_size:
+                        # RGB format - convert via PIL
+                        img_array = np.frombuffer(frame.data, dtype=np.uint8).reshape((frame.height, frame.width, 3))
+                        pil_img = Image.fromarray(img_array, mode='RGB')
+                        # Convert to YUV420P compatible format
+                        pil_img = pil_img.convert('RGB')
+                        img_array = np.array(pil_img)
+                        av_frame = av.VideoFrame.from_ndarray(img_array, format='rgb')
+                    elif data_size == frame.width * frame.height * 4:
+                        # RGBA format - convert via PIL
+                        img_array = np.frombuffer(frame.data, dtype=np.uint8).reshape((frame.height, frame.width, 4))
+                        pil_img = Image.fromarray(img_array, mode='RGBA')
+                        # Convert to RGB first
+                        pil_img = pil_img.convert('RGB')
+                        img_array = np.array(pil_img)
+                        av_frame = av.VideoFrame.from_ndarray(img_array, format='rgb')
+                    else:
+                        # Try to guess dimensions and convert via PIL
+                        for channels in [3, 4]:
+                            expected_pixels = data_size // channels
+                            if expected_pixels * channels != data_size:
+                                continue
+
+                            # Try common resolutions
+                            for height in [frame.height, 720, 1080, 480, 576]:
+                                width = expected_pixels // height
+                                if width * height * channels == data_size:
+                                    img_array = np.frombuffer(frame.data, dtype=np.uint8).reshape((height, width, channels))
+                                    mode = 'RGB' if channels == 3 else 'RGBA'
+                                    pil_img = Image.fromarray(img_array, mode=mode)
+                                    if channels == 4:
+                                        pil_img = pil_img.convert('RGB')
+                                    img_array = np.array(pil_img)
+                                    av_frame = av.VideoFrame.from_ndarray(img_array, format='rgb')
+                                    break
+                            if 'av_frame' in locals():
+                                break
+
+                    if 'av_frame' not in locals():
+                        # Debug: Show first few bytes to understand format
+                        if len(frame.data) > 20:
+                            logger.debug(f"[{self.mint_id}] First 20 bytes: {frame.data[:20].hex()}")
+                        logger.warning(f"[{self.mint_id}] Could not determine frame format. Data size: {data_size}, reported dimensions: {frame.width}x{frame.height}")
+
+                        # Try creating a simple placeholder frame instead of failing
+                        try:
+                            import numpy as np
+
+                            # Create a simple gray frame using PIL with BGR24 format (PyAV compatible)
+                            pil_img = Image.new('RGB', (self.config['width'], self.config['height']), color=(128, 128, 128))
+                            # Convert RGB PIL image to BGR numpy array
+                            rgb_array = np.array(pil_img)
+                            # Convert RGB to BGR
+                            bgr_array = rgb_array[:, :, ::-1]  # Reverse channel order
+                            av_frame = av.VideoFrame.from_ndarray(bgr_array, format='bgr24')
+                            av_frame = av_frame.reformat(format='yuv420p', width=self.config['width'], height=self.config['height'])
+                            logger.info(f"[{self.mint_id}] Using BGR24 placeholder frame due to conversion issues")
+                            return av_frame
+                        except Exception as e:
+                            logger.error(f"[{self.mint_id}] Even PIL placeholder frame failed: {e}")
+                            return None
+
+                    # Reformat to yuv420p and resize
+                    av_frame = av_frame.reformat(
+                        format='yuv420p',
+                        width=self.config['width'],
+                        height=self.config['height']
+                    )
+
+                    return av_frame
+                except Exception as e:
+                    logger.warning(f"[{self.mint_id}] Frame data conversion failed: {e}")
+
+            logger.warning(f"[{self.mint_id}] Video frame conversion not supported - no suitable method found")
+            return None
+
         except Exception as e:
             logger.error(f"[{self.mint_id}] Video frame conversion error: {e}")
             return None

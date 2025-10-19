@@ -27,14 +27,15 @@ class StopRecordingRequest(BaseModel):
 @router.post("/start", response_model=Dict[str, Any])
 async def start_recording(request: StartRecordingRequest):
     """
-    Start recording a pump.fun stream using WebRTC best practices.
-    
-    - **mint_id**: Pump.fun mint ID of the stream to record
+    Start recording a pump.fun livestream directly using WebRTC best practices.
+
+    - **mint_id**: Pump.fun mint ID of the live stream to record
     - **output_format**: Output codec (h264, av1, webm)
     - **video_quality**: Video quality preset (low, medium, high)
-    
-    Note: Requires an active stream session first via /api/live-sessions/start
-    
+
+    This endpoint works directly with pump.fun livestreams - no live session required.
+    The stream must be currently live on pump.fun for recording to work.
+
     This implementation follows WebRTC fundamentals:
     - Proper state machine for connection lifecycle
     - Reliable track subscription with PLI/FIR support

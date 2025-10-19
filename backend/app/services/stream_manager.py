@@ -173,11 +173,14 @@ class StreamManager:
         """Get stream information for a mint_id."""
         logger.info(f"🔍 Looking up stream info for: {mint_id}")
         logger.info(f"📋 Available streams: {list(self.active_streams.keys())}")
+        logger.info(f"📊 Total active streams count: {len(self.active_streams)}")
+
         result = self.active_streams.get(mint_id)
         if result:
-            logger.info(f"✅ Found stream info for {mint_id}")
+            logger.info(f"✅ Found stream info for {mint_id}: room={result.room_name}, participant={result.participant_sid}")
         else:
             logger.error(f"❌ Stream info not found for {mint_id}")
+            logger.error(f"💡 This usually means the live session wasn't started first. Call POST /api/live-sessions/start with this mint_id before recording.")
         return result
 
     def register_video_frame_handler(self, mint_id: str, handler: Callable) -> None:

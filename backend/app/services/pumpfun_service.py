@@ -171,27 +171,43 @@ class PumpFunService:
     async def get_stream_info(self, mint_id: str) -> Optional[Dict[str, Any]]:
         """
         Get detailed information about a specific stream by mint_id.
-        
+
         Args:
             mint_id: The mint ID to look for
-            
+
         Returns:
             Stream info dict or None if not found
         """
         try:
+            logger.info(f"🔍 Checking if stream is live for mint_id: {mint_id}")
+
             # Get all live streams and find the one with matching mint_id
             streams = await self.get_currently_live_streams(limit=100)
-            
+            logger.info(f"📊 Found {len(streams)} total live streams from pump.fun API")
+
+            # Log some example mint_ids for debugging
+            if streams:
+                sample_mints = [s.get("mint") for s in streams[:5] if s.get("mint")]
+                logger.info(f"📋 Sample live mint_ids: {sample_mints}")
+
             for stream in streams:
-                if stream.get("mint") == mint_id:
-                    logger.info(f"Found stream info for {mint_id}: {stream['name']} ({stream['symbol']})")
-                    return stream
-                    
-            logger.warning(f"Stream not found for mint_id: {mint_id}")
-            
+                stream_mint = stream.get("mint")
+                if stream_mint == mint_id:
+                    is_live = stream.get("is_currently_live", False)
+                    logger.info(f"✅ Found stream for {mint_id}: {stream.get('name')} ({stream.get('symbol')}) - live: {is_live}")
+                    if is_live:
+                        return stream
+                    else:
+                        logger.warning(f"⚠️ Stream found but not currently live: {mint_id}")
+                        return None
+
+            logger.error(f"❌ Stream not found in live streams for mint_id: {mint_id}")
+            logger.error(f"💡 This could mean: 1) Stream is not live, 2) Wrong mint_id, 3) API issue")
+            logger.error(f"💡 Check https://pump.fun/coin/{mint_id} to verify the stream is live")
+
         except Exception as e:
             logger.error(f"Error getting stream info for {mint_id}: {e}")
-            
+
         return None
 
     def get_livekit_url(self) -> str:

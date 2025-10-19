@@ -443,6 +443,15 @@ class AiortcFileRecorder:
         self.max_queue_size = 30  # Maximum frames to buffer
         self.frames_dropped = 0  # Count of dropped frames due to backpressure
         
+        # Direct file writing (bypasses PyAV container buffering)
+        # This is the ONLY method - PyAV container buffering doesn't work
+        self.output_file = None  # Direct file handle for writing packets
+        self.last_disk_write = None  # Last disk write timestamp
+        self.temp_output_path = None  # Temporary file path for crash recovery
+        self.final_output_path = None  # Final output path after successful recording
+        self.bytes_since_last_flush = 0  # Track bytes written since last flush
+        self.flush_threshold = 4 * 1024 * 1024  # Flush every 4MB (not every packet!)
+        
         # Performance metrics
         self.metrics = {
             'frames_received': 0,
@@ -561,6 +570,42 @@ class AiortcFileRecorder:
             # TODO: Implement keyframe request when LiveKit SDK supports it
         except Exception as e:
             logger.warning(f"[{self.mint_id}] Could not request keyframe: {e}")
+    
+    def _write_packet_direct(self, packet: av.Packet) -> None:
+        """
+        Write packet directly to disk with buffered flushing.
+        
+        IMPORTANT: We flush every 4MB, not every packet, to avoid I/O bottleneck.
+        Per-packet flushing would kill throughput by 100-1000x.
+        """
+        if not self.output_file:
+            logger.error(f"[{self.mint_id}] Direct write failed: file not open")
+            raise RuntimeError("Output file not open for direct write")
+        
+        # Get packet bytes
+        packet_bytes = bytes(packet)
+        packet_size = len(packet_bytes)
+        
+        # Write directly to file (buffered by OS)
+        bytes_written = self.output_file.write(packet_bytes)
+        
+        # Update metrics
+        self.metrics['bytes_written'] += bytes_written
+        self.bytes_since_last_flush += bytes_written
+        
+        # SMART FLUSHING: Only flush when buffer reaches threshold (4MB)
+        # This balances memory usage with I/O performance
+        if self.bytes_since_last_flush >= self.flush_threshold:
+            self.output_file.flush()
+            self.last_disk_write = time.time()
+            self.bytes_since_last_flush = 0
+            
+            if self.metrics['packets_written'] % 100 == 0:
+                logger.debug(f"[{self.mint_id}] Flushed buffer: {self.metrics['bytes_written']} bytes total")
+        
+        # Log periodically for verification
+        if self.metrics['packets_written'] % 500 == 0:
+            logger.debug(f"[{self.mint_id}] Direct write: {packet_size} bytes (total: {self.metrics['bytes_written']})")
         
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
@@ -1177,24 +1222,24 @@ class AiortcFileRecorder:
         logger.info(f"[{self.mint_id}] Available tracks: video={self.video_track is not None}, audio={self.audio_track is not None}")
 
         try:
-            # Create PyAV output container
-            # For MP4, use progressive writing flags (but MP4 still buffers internally)
-            # MPEG-TS is STRONGLY PREFERRED for real-time recording
-            if output_format == 'mp4':
-                container_options = {
-                    'movflags': 'frag_keyframe+empty_moov+default_base_moof'
-                }
-                self.container = av.open(str(self.output_path), mode='w', format=output_format, options=container_options)
-                logger.warning(f"[{self.mint_id}] ⚠️  Using MP4 format - may buffer packets in memory. MPEG-TS is recommended for real-time recording.")
-            elif output_format == 'mpegts':
-                # MPEG-TS specific options for minimal latency and immediate writes
-                ts_options = {
-                    'mpegts_flags': 'resend_headers',  # Resend PAT/PMT periodically
-                }
-                self.container = av.open(str(self.output_path), mode='w', format=output_format, options=ts_options)
-                logger.info(f"[{self.mint_id}] ✅ Using MPEG-TS format for real-time streaming with immediate disk writes")
-            else:
-                self.container = av.open(str(self.output_path), mode='w', format=output_format)
+            # DIRECT FILE WRITING: Only method that works (PyAV container buffers in memory)
+            logger.info(f"[{self.mint_id}] 🚀 Using DIRECT FILE WRITING with buffered flushing (4MB threshold)")
+            
+            # Use temporary file for crash recovery
+            # If process crashes, temp file can be recovered/validated
+            self.final_output_path = self.output_path
+            self.temp_output_path = self.output_path.with_suffix('.recording' + self.output_path.suffix)
+            
+            # Open temp file directly for writing
+            self.output_file = open(str(self.temp_output_path), 'wb')
+            self.last_disk_write = time.time()
+            self.bytes_since_last_flush = 0
+            
+            # For encoder setup, we still need a container object but we won't use it for muxing
+            # The container is only used to configure the encoder streams
+            self.container = av.open(str(self.temp_output_path), mode='w', format=output_format)
+            
+            logger.info(f"[{self.mint_id}] ✅ Direct file writer initialized: {self.temp_output_path}")
 
             # Add video stream
             if self.video_track:
@@ -1304,46 +1349,73 @@ class AiortcFileRecorder:
             raise  # Re-raise to fail the recording start immediately
 
     async def _close_container(self):
-        """Close PyAV container and finalize recording - ONLY call encode(None) here."""
-        if self.container:
-            try:
-                logger.info(f"[{self.mint_id}] Closing PyAV container and flushing encoders")
+        """Close PyAV container/file and finalize recording - ONLY call encode(None) here."""
+        try:
+            logger.info(f"[{self.mint_id}] Finalizing recording and flushing encoders")
 
-                # Flush video encoder if available - ONLY TIME encode(None) should be called
-                if self.video_stream and not self.encoder_finalized:
-                    logger.info(f"[{self.mint_id}] Flushing video encoder (finalizing)")
-                    try:
-                        for packet in self.video_stream.encode(None):
-                            self.container.mux(packet)
-                        logger.info(f"[{self.mint_id}] ✅ Video encoder flushed successfully")
-                    except EOFError as e:
-                        logger.warning(f"[{self.mint_id}] Video encoder already finalized: {e}")
-                    except Exception as e:
-                        logger.error(f"[{self.mint_id}] Error flushing video encoder: {e}")
+            # Flush video encoder if available - ONLY TIME encode(None) should be called
+            if self.video_stream and not self.encoder_finalized:
+                logger.info(f"[{self.mint_id}] Flushing video encoder (finalizing)")
+                try:
+                    for packet in self.video_stream.encode(None):
+                        self._write_packet_direct(packet)
+                    logger.info(f"[{self.mint_id}] ✅ Video encoder flushed successfully")
+                except EOFError as e:
+                    logger.warning(f"[{self.mint_id}] Video encoder already finalized: {e}")
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error flushing video encoder: {e}")
 
-                # Flush audio encoder if available
-                if self.audio_stream:
-                    logger.info(f"[{self.mint_id}] Flushing audio encoder (finalizing)")
-                    try:
-                        for packet in self.audio_stream.encode(None):
-                            self.container.mux(packet)
-                        logger.info(f"[{self.mint_id}] ✅ Audio encoder flushed successfully")
-                    except EOFError as e:
-                        logger.warning(f"[{self.mint_id}] Audio encoder already finalized: {e}")
-                    except Exception as e:
-                        logger.error(f"[{self.mint_id}] Error flushing audio encoder: {e}")
+            # Flush audio encoder if available
+            if self.audio_stream:
+                logger.info(f"[{self.mint_id}] Flushing audio encoder (finalizing)")
+                try:
+                    for packet in self.audio_stream.encode(None):
+                        self._write_packet_direct(packet)
+                    logger.info(f"[{self.mint_id}] ✅ Audio encoder flushed successfully")
+                except EOFError as e:
+                    logger.warning(f"[{self.mint_id}] Audio encoder already finalized: {e}")
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error flushing audio encoder: {e}")
 
-                # Mark encoder as finalized
-                self.encoder_finalized = True
+            # Mark encoder as finalized
+            self.encoder_finalized = True
 
-                # Close container
-                self.container.close()
-                logger.info(f"[{self.mint_id}] ✅ PyAV container closed")
-            except Exception as e:
-                logger.error(f"[{self.mint_id}] Error closing container: {e}")
-            finally:
-                self.container = None
-                self.encoder_finalized = True
+            # Close direct file writer and finalize recording
+            if self.output_file:
+                try:
+                    # Final flush of any remaining buffered data
+                    self.output_file.flush()
+                    self.output_file.close()
+                    logger.info(f"[{self.mint_id}] ✅ Direct file writer closed ({self.metrics['bytes_written']} bytes written)")
+                    
+                    # Move temp file to final location (crash recovery)
+                    if self.temp_output_path and self.temp_output_path.exists():
+                        if self.final_output_path:
+                            self.temp_output_path.rename(self.final_output_path)
+                            logger.info(f"[{self.mint_id}] ✅ Recording finalized: {self.final_output_path}")
+                        else:
+                            logger.warning(f"[{self.mint_id}] No final output path set, temp file remains: {self.temp_output_path}")
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error closing direct file writer: {e}")
+                finally:
+                    self.output_file = None
+
+            # Close PyAV container (only used for encoder setup, not for muxing)
+            if self.container:
+                try:
+                    self.container.close()
+                    logger.debug(f"[{self.mint_id}] PyAV container closed (was only used for encoder setup)")
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error closing container: {e}")
+                finally:
+                    self.container = None
+
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Error during finalization: {e}")
+        finally:
+            self.encoder_finalized = True
+            self.container = None
+            self.output_file = None
 
     async def _start_frame_processing(self):
         """Start frame processing tasks."""
@@ -1477,20 +1549,22 @@ class AiortcFileRecorder:
                 if drift > 1.0:
                     logger.warning(f"[{self.mint_id}] A/V sync drift: {drift:.2f}s (video: {video_seconds:.2f}s, audio: {audio_seconds:.2f}s)")
 
-            # PyAV mode: encode and mux frame to container
-            if self.container and self.video_stream:
+            # Encode and write frame
+            if self.video_stream:
                 try:
                     # Encode frame
                     packets = self.video_stream.encode(av_frame)
                     packet_count = 0
                     total_bytes = 0
+                    
                     for packet in packets:
-                        self.container.mux(packet)
+                        # Write packet bytes directly to disk
+                        self._write_packet_direct(packet)
                         packet_count += 1
                         total_bytes += packet.size
                         self.metrics['packets_written'] += 1
-                        self.metrics['bytes_written'] += packet.size
-                        logger.debug(f"[{self.mint_id}] Muxed video packet: size={packet.size} bytes, pts={packet.pts}, dts={packet.dts}")
+                        
+                        logger.debug(f"[{self.mint_id}] Wrote video packet: size={packet.size} bytes, pts={packet.pts}, dts={packet.dts}")
                     
                     # TELEMETRY: Log packet details for first 60 frames
                     if self.video_frames_received <= 60:
@@ -1679,7 +1753,7 @@ class AiortcFileRecorder:
                             # Fallback: try direct encoding (may fail with AAC)
                             packets = self.audio_stream.encode(av_audio_frame)
                             for packet in packets:
-                                self.container.mux(packet)
+                                self._write_packet_direct(packet)
                             return
 
                     # Resample frame to AAC-compatible format
@@ -1691,7 +1765,7 @@ class AiortcFileRecorder:
                             resampled_frame.sample_rate = 48000
                             packets = self.audio_stream.encode(resampled_frame)
                             for packet in packets:
-                                self.container.mux(packet)
+                                self._write_packet_direct(packet)
                     except Exception as encode_err:
                         logger.error(f"[{self.mint_id}] Audio resampling/encoding failed: {encode_err}")
                         # Continue processing other frames

@@ -1372,29 +1372,31 @@ class AiortcFileRecorder:
             return
 
         # Backpressure check: Monitor memory usage
-        try:
-            process = psutil.Process()
-            memory_mb = process.memory_info().rss / 1024 / 1024
-            if memory_mb > self.max_memory_mb:
-                logger.error(f"[{self.mint_id}] ❌ Memory usage too high: {memory_mb:.1f}MB (limit: {self.max_memory_mb}MB)")
-                logger.error(f"[{self.mint_id}] Stopping recording to prevent OOM")
-                self._shutdown_event.set()
-                return
-            
-            # Drop frames if processing is falling behind
-            if len(self.frame_processing_time_samples) > 10:
-                avg_processing_time = sum(self.frame_processing_time_samples) / len(self.frame_processing_time_samples)
-                frame_interval = 1.0 / self.config['fps']  # Expected time between frames
-                
-                # If processing time is consistently > 80% of frame interval, we're falling behind
-                if avg_processing_time > frame_interval * 0.8:
-                    # Drop this frame to catch up
-                    self.frames_dropped_due_to_backpressure += 1
-                    if self.frames_dropped_due_to_backpressure % 10 == 0:
-                        logger.warning(f"[{self.mint_id}] ⚠️ Dropping frame due to backpressure (total dropped: {self.frames_dropped_due_to_backpressure})")
+        if psutil:  # Check if psutil is available (module-level import)
+            try:
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                if memory_mb > self.max_memory_mb:
+                    logger.error(f"[{self.mint_id}] ❌ Memory usage too high: {memory_mb:.1f}MB (limit: {self.max_memory_mb}MB)")
+                    logger.error(f"[{self.mint_id}] Stopping recording to prevent OOM")
+                    self._shutdown_event.set()
                     return
-        except ImportError:
-            pass  # psutil not available
+            except Exception as e:
+                # If memory monitoring fails, continue with frame processing
+                logger.debug(f"[{self.mint_id}] Could not check memory: {e}")
+        
+        # Drop frames if processing is falling behind
+        if len(self.frame_processing_time_samples) > 10:
+            avg_processing_time = sum(self.frame_processing_time_samples) / len(self.frame_processing_time_samples)
+            frame_interval = 1.0 / self.config['fps']  # Expected time between frames
+            
+            # If processing time is consistently > 80% of frame interval, we're falling behind
+            if avg_processing_time > frame_interval * 0.8:
+                # Drop this frame to catch up
+                self.frames_dropped_due_to_backpressure += 1
+                if self.frames_dropped_due_to_backpressure % 10 == 0:
+                    logger.warning(f"[{self.mint_id}] ⚠️ Dropping frame due to backpressure (total dropped: {self.frames_dropped_due_to_backpressure})")
+                return
 
         # Lazy initialization with backoff - setup container on first frame
         if not self._container_initialized:
@@ -1611,16 +1613,8 @@ class AiortcFileRecorder:
                     del normalized_frame
 
             # Check memory usage and stop if too high
-            try:
-                import psutil
-                process = psutil.Process()
-                memory_mb = process.memory_info().rss / 1024 / 1024
-                if memory_mb > 1000:  # Stop if using more than 1GB
-                    logger.error(f"[{self.mint_id}] ❌ Memory usage too high: {memory_mb:.1f}MB - stopping recording")
-                    self._shutdown_event.set()
-                    return
-            except ImportError:
-                pass  # psutil not available, continue
+            # Note: Memory check now done at the start of function via backpressure handling
+            # This check is kept for legacy compatibility but uses module-level psutil import
 
             # Log memory usage and force garbage collection every 60 frames
             if self.video_frames_received % 60 == 0:

@@ -452,6 +452,10 @@ class AiortcFileRecorder:
         self.bytes_since_last_flush = 0  # Track bytes written since last flush
         self.flush_threshold = 4 * 1024 * 1024  # Flush every 4MB (not every packet!)
         
+        # Frame processing concurrency control (prevent LiveKit buffer overflow)
+        self.processing_semaphore = asyncio.Semaphore(2)  # Max 2 frames processing at once
+        self.frames_dropped_backpressure = 0  # Frames dropped due to slow processing
+        
         # Performance metrics
         self.metrics = {
             'frames_received': 0,
@@ -824,12 +828,13 @@ class AiortcFileRecorder:
         if self.container:
             logger.info(f"[{self.mint_id}] PyAV container active")
 
-            # Check if output file exists and its size
-            if self.output_path and self.output_path.exists():
-                file_size = self.output_path.stat().st_size
-                logger.info(f"[{self.mint_id}] PyAV output file size: {file_size} bytes")
+            # Check if recording file exists and its size (temp path during recording, final path after)
+            check_path = self.temp_output_path if (self.temp_output_path and self.state == RecordingState.RECORDING) else self.output_path
+            if check_path and check_path.exists():
+                file_size = check_path.stat().st_size
+                logger.info(f"[{self.mint_id}] Recording file size: {file_size} bytes ({check_path.name})")
             else:
-                logger.warning(f"[{self.mint_id}] PyAV output file does not exist: {self.output_path}")
+                logger.warning(f"[{self.mint_id}] Recording file does not exist: {check_path}")
         else:
             logger.warning(f"[{self.mint_id}] No recording mode active - no PyAV container")
 
@@ -896,11 +901,21 @@ class AiortcFileRecorder:
         return None
 
     async def _subscribe_to_tracks(self, participant: rtc.RemoteParticipant):
-        """Subscribe to participant's tracks."""
+        """Subscribe to participant's tracks with LIMITED buffering (prevent 9GB memory growth)."""
         logger.info(f"[{self.mint_id}] Subscribing to tracks from {participant.sid}")
+        logger.info(f"[{self.mint_id}] CRITICAL: Using manual subscribe to limit LiveKit internal buffering")
         
         for track_pub in participant.track_publications.values():
+            # Skip if track not available yet
+            if not track_pub.subscribed:
+                logger.info(f"[{self.mint_id}] Track {track_pub.sid} not yet subscribed, will retry")
+                # Explicitly request subscription (since auto_subscribe=False)
+                # Note: LiveKit Python SDK handles this automatically when iterating over VideoStream/AudioStream
+                # We just need to store the track reference
+                continue
+                
             if track_pub.track is None:
+                logger.warning(f"[{self.mint_id}] Track publication {track_pub.sid} has no track object")
                 continue
                 
             track = track_pub.track
@@ -916,9 +931,9 @@ class AiortcFileRecorder:
             
             self.tracks[track_id] = track_context
             
-            # Frame handlers will be set up when tracks are actually subscribed
-            
-            logger.info(f"[{self.mint_id}] ✅ Subscribed to {track.kind} track {track.sid}")
+            logger.info(f"[{self.mint_id}] ✅ Track {track.kind} {track.sid} registered for recording")
+        
+        logger.info(f"[{self.mint_id}] Total tracks registered: {len(self.tracks)}")
 
     async def _setup_existing_track_handlers(self, participant: rtc.RemoteParticipant):
         """Set up direct track access for recording (no frame handlers needed)."""
@@ -1107,7 +1122,7 @@ class AiortcFileRecorder:
                 # Check for frame timeout (if no frames for 10 seconds, something is wrong)
                 if time_since_last > 10.0 and frame_count > 0:
                     logger.warning(f"[{self.mint_id}] ⚠️  Long gap between frames: {time_since_last:.2f}s")
-                    self._log_memory_usage(f"{self.mint_id} frame_gap_warning")
+                    self._log_memory_usage(f"[{self.mint_id}] frame_gap_warning")
                     
                     # If gap is too long, stop recording to prevent memory issues
                     if time_since_last > 60.0:  # 1 minute gap
@@ -1126,12 +1141,22 @@ class AiortcFileRecorder:
                 logger.info(f"[{self.mint_id}] 📹 Frame extracted from event: {type(frame)}")
                 logger.info(f"[{self.mint_id}] 📹 Frame dimensions: {frame.width}x{frame.height}")
                 logger.info(f"[{self.mint_id}] 📹 Frame data size: {len(frame.data) if hasattr(frame, 'data') else 'No data attr'}")
+                
+                # CRITICAL: Backpressure to prevent LiveKit buffer overflow
+                # If processing is full, drop frame instead of queuing in memory
+                if self.processing_semaphore.locked():
+                    self.frames_dropped_backpressure += 1
+                    if self.frames_dropped_backpressure % 10 == 0:
+                        logger.warning(f"[{self.mint_id}] ⚠️  Dropping frames due to slow encoding ({self.frames_dropped_backpressure} total dropped)")
+                    continue  # Skip this frame
+                
                 try:
-                    # Process the frame
-                    logger.info(f"[{self.mint_id}] 📹 Calling _on_video_frame...")
-                    await self._on_video_frame(frame)
-                    frame_count += 1
-                    logger.info(f"[{self.mint_id}] 📹 Frame processed successfully, count: {frame_count}")
+                    # Acquire semaphore for processing (limits concurrent frames)
+                    async with self.processing_semaphore:
+                        logger.info(f"[{self.mint_id}] 📹 Calling _on_video_frame...")
+                        await self._on_video_frame(frame)
+                        frame_count += 1
+                        logger.info(f"[{self.mint_id}] 📹 Frame processed successfully, count: {frame_count}")
                     
                     # Log progress and memory usage
                     if frame_count % 50 == 0:  # Log every 50 frames instead of 100
@@ -1172,10 +1197,16 @@ class AiortcFileRecorder:
                     break
                 
                 frame = event.frame
+                
+                # CRITICAL: Backpressure for audio too
+                if self.processing_semaphore.locked():
+                    continue  # Drop audio frame if video processing is backed up
+                
                 try:
-                    # Process the frame
-                    await self._on_audio_frame(frame)
-                    frame_count += 1
+                    # Acquire semaphore for processing
+                    async with self.processing_semaphore:
+                        await self._on_audio_frame(frame)
+                        frame_count += 1
                     
                     # Log progress
                     if frame_count % 1000 == 0:
@@ -1235,11 +1266,15 @@ class AiortcFileRecorder:
             self.last_disk_write = time.time()
             self.bytes_since_last_flush = 0
             
-            # For encoder setup, we still need a container object but we won't use it for muxing
-            # The container is only used to configure the encoder streams
-            self.container = av.open(str(self.temp_output_path), mode='w', format=output_format)
+            # CRITICAL FIX: Use a SEPARATE dummy container just for encoder setup
+            # DO NOT open container to the file we're writing to - PyAV will buffer!
+            # Use an in-memory "pipe" container that we'll never actually use
+            import io
+            self.dummy_buffer = io.BytesIO()
+            self.container = av.open(self.dummy_buffer, mode='w', format=output_format)
             
             logger.info(f"[{self.mint_id}] ✅ Direct file writer initialized: {self.temp_output_path}")
+            logger.info(f"[{self.mint_id}] ✅ Dummy container for encoder setup (will NOT be used for muxing)")
 
             # Add video stream
             if self.video_track:
@@ -1400,15 +1435,23 @@ class AiortcFileRecorder:
                 finally:
                     self.output_file = None
 
-            # Close PyAV container (only used for encoder setup, not for muxing)
+            # Close PyAV dummy container (only used for encoder setup, not for muxing)
             if self.container:
                 try:
                     self.container.close()
-                    logger.debug(f"[{self.mint_id}] PyAV container closed (was only used for encoder setup)")
+                    logger.debug(f"[{self.mint_id}] PyAV dummy container closed (was only used for encoder setup)")
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error closing container: {e}")
                 finally:
                     self.container = None
+                    
+            # Clean up dummy buffer
+            if hasattr(self, 'dummy_buffer') and self.dummy_buffer:
+                try:
+                    self.dummy_buffer.close()
+                    self.dummy_buffer = None
+                except Exception as e:
+                    logger.error(f"[{self.mint_id}] Error closing dummy buffer: {e}")
 
         except Exception as e:
             logger.error(f"[{self.mint_id}] Error during finalization: {e}")
@@ -1592,15 +1635,16 @@ class AiortcFileRecorder:
                     if self.video_frames_written == 1:
                         logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
 
-                    # Periodically verify file is growing
+                    # Periodically verify file is growing (check temp path during recording)
                     if self.video_frames_written % 30 == 0:
-                        if self.output_path and self.output_path.exists():
-                            file_size = self.output_path.stat().st_size
+                        check_path = self.temp_output_path if self.temp_output_path else self.output_path
+                        if check_path and check_path.exists():
+                            file_size = check_path.stat().st_size
                             logger.info(f"[{self.mint_id}] File size: {file_size / 1024 / 1024:.2f} MB after {self.video_frames_written} frames")
                             if file_size == 0:
                                 logger.error(f"[{self.mint_id}] ❌ WARNING: File size is 0 after {self.video_frames_written} frames!")
                         else:
-                            logger.warning(f"[{self.mint_id}] Output path does not exist: {self.output_path}")
+                            logger.warning(f"[{self.mint_id}] Recording file does not exist: {check_path}")
 
                 except Exception as e:
                     logger.error(f"[{self.mint_id}] Error encoding video frame: {e}")

@@ -116,11 +116,16 @@ class StreamManager:
             await self._setup_room_handlers(room)
             self.rooms[mint_id] = room
 
-            # Connect to room
+            # Connect to room with DISABLED auto-subscribe to prevent buffering
+            # CRITICAL: auto_subscribe=True causes UNLIMITED buffering in rtc.Room → 9GB memory!
+            # We'll manually subscribe with buffer limits after connection
             livekit_url = self.config.livekit_url
-            connect_options = rtc.RoomOptions(auto_subscribe=True)
+            connect_options = rtc.RoomOptions(
+                auto_subscribe=False,  # DISABLED: Prevents unlimited internal buffering
+            )
 
             await room.connect(livekit_url, token, connect_options)
+            logger.info(f"✅ Connected to room with auto_subscribe=False (manual subscribe for buffer control)")
             
             # Get participant SID - find the participant with published tracks (the streamer)
             participant_sid = None

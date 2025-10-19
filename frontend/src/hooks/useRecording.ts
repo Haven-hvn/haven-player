@@ -70,7 +70,7 @@ export const useRecording = (mintId: string): UseRecordingReturn => {
       // Step 2: Start recording
       const recordingRequest: StartRecordingRequest = {
         mint_id: mintId,
-        output_format: 'mp4',  // MP4 container with H.264 codec (faster and more reliable than AV1)
+        output_format: 'mpegts',  // MPEG-TS for real-time streaming (writes immediately to disk, no buffering)
         video_quality: 'medium',
       };
 

@@ -1182,7 +1182,7 @@ class AiortcFileRecorder:
             # MPEG-TS is STRONGLY PREFERRED for real-time recording
             if output_format == 'mp4':
                 container_options = {
-                    'movflags': '+frag_keyframe+empty_moov+default_base_moof+flush_packets'
+                    'movflags': 'frag_keyframe+empty_moov+default_base_moof'
                 }
                 self.container = av.open(str(self.output_path), mode='w', format=output_format, options=container_options)
                 logger.warning(f"[{self.mint_id}] ⚠️  Using MP4 format - may buffer packets in memory. MPEG-TS is recommended for real-time recording.")
@@ -1897,8 +1897,8 @@ class WebRTCRecordingService:
                 logger.warning(f"⚠️  '{output_format}' is a codec, not a format. Using '{CODEC_TO_FORMAT[output_format]}' as container format.")
                 output_format = CODEC_TO_FORMAT[output_format]
             else:
-                logger.warning(f"⚠️  Invalid format '{output_format}', defaulting to 'mp4'")
-                output_format = "mp4"
+                logger.warning(f"⚠️  Invalid format '{output_format}', defaulting to 'mpegts'")
+                output_format = "mpegts"  # Default to MPEG-TS for real-time recording
         
         config["format"] = output_format
         

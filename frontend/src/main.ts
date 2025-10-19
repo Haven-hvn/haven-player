@@ -55,7 +55,7 @@ ipcMain.handle('select-video', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [
-      { name: 'Videos', extensions: ['mp4', 'webm', 'mkv'] }
+      { name: 'Videos', extensions: ['ts', 'mp4', 'webm', 'mkv'] }
     ]
   });
 

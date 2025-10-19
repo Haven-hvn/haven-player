@@ -1178,12 +1178,21 @@ class AiortcFileRecorder:
 
         try:
             # Create PyAV output container
-            # For MP4, use progressive writing flags for streamability
+            # For MP4, use progressive writing flags (but MP4 still buffers internally)
+            # MPEG-TS is STRONGLY PREFERRED for real-time recording
             if output_format == 'mp4':
                 container_options = {
-                    'movflags': '+frag_keyframe+empty_moov+default_base_moof'
+                    'movflags': '+frag_keyframe+empty_moov+default_base_moof+flush_packets'
                 }
                 self.container = av.open(str(self.output_path), mode='w', format=output_format, options=container_options)
+                logger.warning(f"[{self.mint_id}] ⚠️  Using MP4 format - may buffer packets in memory. MPEG-TS is recommended for real-time recording.")
+            elif output_format == 'mpegts':
+                # MPEG-TS specific options for minimal latency and immediate writes
+                ts_options = {
+                    'mpegts_flags': 'resend_headers',  # Resend PAT/PMT periodically
+                }
+                self.container = av.open(str(self.output_path), mode='w', format=output_format, options=ts_options)
+                logger.info(f"[{self.mint_id}] ✅ Using MPEG-TS format for real-time streaming with immediate disk writes")
             else:
                 self.container = av.open(str(self.output_path), mode='w', format=output_format)
 
@@ -1462,7 +1471,7 @@ class AiortcFileRecorder:
             # A/V sync drift logging (every 60 frames)
             self.video_frames_logged += 1
             if self.video_frames_logged % 60 == 0 and self.audio_samples_written > 0:
-                video_seconds = av_frame.pts * self.video_stream.time_base
+                video_seconds = float(av_frame.pts * self.video_stream.time_base)
                 audio_seconds = self.audio_samples_written / self.audio_stream.sample_rate
                 drift = abs(video_seconds - audio_seconds)
                 if drift > 1.0:
@@ -1746,7 +1755,7 @@ class WebRTCRecordingService:
             "audio_codec": "aac",
             "video_bitrate": "2M",
             "audio_bitrate": "128k",
-            "format": "mp4",
+            "format": "mpegts",  # CRITICAL: Use MPEG-TS for real-time streaming (not MP4)
             "fps": 30,
             "gop_size": 60,  # GOP size in frames (2 seconds at 30fps)
             "width": 1920,

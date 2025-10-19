@@ -1114,7 +1114,10 @@ class AiortcFileRecorder:
             last_frame_time = time.time()
             
             logger.debug(f"[{self.mint_id}] Entering VideoStream async loop for {self.video_track.sid}")
-            async for event in rtc.VideoStream(self.video_track):
+            # CRITICAL: Pass maxsize to limit VideoStream's internal queue (prevents 9GB buffering!)
+            # Default is unlimited → causes memory explosion
+            # Set to 30 frames (~1 second at 30fps) - frames beyond this are DROPPED by LiveKit
+            async for event in rtc.VideoStream(self.video_track, maxsize=30):
                 current_time = time.time()
                 time_since_last = current_time - last_frame_time
                 logger.info(f"[{self.mint_id}] 📹 VideoStream event received! (time since last: {time_since_last:.2f}s)")
@@ -1191,7 +1194,9 @@ class AiortcFileRecorder:
             frame_count = 0
             
             logger.debug(f"[{self.mint_id}] Entering AudioStream async loop for {self.audio_track.sid}")
-            async for event in rtc.AudioStream(self.audio_track):
+            # CRITICAL: Pass maxsize to limit AudioStream's internal queue
+            # Set to 30 frames (~0.5 seconds of audio) - prevents buffering
+            async for event in rtc.AudioStream(self.audio_track, maxsize=30):
                 if self._shutdown_event.is_set():
                     logger.info(f"[{self.mint_id}] Stop signal received, ending audio processing")
                     break

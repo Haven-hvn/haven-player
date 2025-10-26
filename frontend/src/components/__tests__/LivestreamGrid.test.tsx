@@ -4,10 +4,10 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import LivestreamGrid from '../../components/LivestreamRecorder/LivestreamGrid';
 import { StreamInfo } from '../../types/video';
 
-// Mock the useRecording hook
-jest.mock('../../hooks/useRecording');
-import { useRecording } from '../../hooks/useRecording';
-const mockUseRecording = useRecording as jest.MockedFunction<typeof useRecording>;
+// Mock the useLiveKitRecording hook
+jest.mock('../../hooks/useLiveKitRecording');
+import { useLiveKitRecording } from '../../hooks/useLiveKitRecording';
+const mockUseLiveKitRecording = useLiveKitRecording as jest.MockedFunction<typeof useLiveKitRecording>;
 
 const theme = createTheme({});
 
@@ -24,7 +24,6 @@ const mockStreams: StreamInfo[] = [
     is_currently_live: true,
     usd_market_cap: 1234567,
     nsfw: false,
-    recording: false,
   },
   {
     mint_id: 'mint-2',
@@ -35,20 +34,26 @@ const mockStreams: StreamInfo[] = [
     is_currently_live: true,
     usd_market_cap: 2345678,
     nsfw: false,
-    recording: false,
   },
 ];
 
 describe('LivestreamGrid', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockUseRecording.mockReturnValue({
-      isRecording: false,
-      duration: 0,
-      progress: 0,
-      error: null,
+    mockUseLiveKitRecording.mockReturnValue({
+      status: {
+        isRecording: false,
+        duration: 0,
+        progress: 0,
+        error: null,
+        isConnected: false,
+        participantId: null,
+        participantSid: null,
+      },
       startRecording: jest.fn(),
       stopRecording: jest.fn(),
+      connectToRoom: jest.fn(),
+      disconnectFromRoom: jest.fn(),
       isLoading: false,
     });
   });

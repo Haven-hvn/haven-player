@@ -52,34 +52,4 @@ export interface StreamInfo {
   website?: string;
   twitter?: string;
   telegram?: string;
-  recording: boolean;
-}
-
-// Recording-related types
-export interface RecordingStatus {
-  mint_id: string;
-  is_recording: boolean;
-  duration_seconds: number;
-  output_format: string;
-  video_quality: string;
-  started_at?: string;
-  file_path?: string;
-}
-
-export interface StartRecordingRequest {
-  mint_id: string;
-  output_format: string;
-  video_quality: string;
-}
-
-export interface StopRecordingRequest {
-  mint_id: string;
-}
-
-export interface StartSessionRequest {
-  mint_id: string;
-}
-
-export interface StopSessionRequest {
-  mint_id: string;
 } 

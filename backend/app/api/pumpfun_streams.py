@@ -160,6 +160,99 @@ async def get_stream_token(mint_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get token: {str(e)}")
 
 
+@router.get("/connection/{mint_id}")
+async def get_stream_connection_details(mint_id: str):
+    """
+    Get complete LiveKit connection details for frontend recording.
+    
+    This endpoint leverages the StreamManager to provide all necessary
+    connection information for browser-side recording using RecordRTC.js.
+    
+    - **mint_id**: The mint ID of the coin/stream
+    """
+    try:
+        from app.services.stream_manager import StreamManager
+        
+        # Initialize StreamManager
+        stream_manager = StreamManager()
+        await stream_manager.initialize()
+        
+        # Start stream connection using StreamManager
+        stream_result = await stream_manager.start_stream(mint_id)
+        
+        if not stream_result.get("success"):
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Failed to connect to stream: {stream_result.get('error', 'Unknown error')}"
+            )
+        
+        # Get LiveKit token for frontend connection
+        token = await pumpfun_service.get_livestream_token(mint_id, role="viewer")
+        
+        if not token:
+            raise HTTPException(status_code=500, detail=f"Failed to get token for mint_id: {mint_id}")
+        
+        # Get stream info from StreamManager
+        stream_info = await stream_manager.get_stream_info(mint_id)
+        
+        if not stream_info:
+            raise HTTPException(status_code=500, detail="Stream info not available")
+        
+        return {
+            "success": True,
+            "mint_id": mint_id,
+            "room_name": stream_info.room_name,
+            "participant_sid": stream_info.participant_sid,
+            "livekit_url": stream_info.stream_url,
+            "token": token,
+            "role": "viewer",
+            "stream_data": stream_info.stream_data,
+            "connection_status": "active"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get connection details: {str(e)}")
+
+
+@router.post("/disconnect/{mint_id}")
+async def disconnect_stream(mint_id: str):
+    """
+    Disconnect from a LiveKit stream.
+    
+    This endpoint cleans up the StreamManager connection for the given mint_id.
+    
+    - **mint_id**: The mint ID of the coin/stream to disconnect
+    """
+    try:
+        from app.services.stream_manager import StreamManager
+        
+        # Initialize StreamManager
+        stream_manager = StreamManager()
+        await stream_manager.initialize()
+        
+        # Stop stream connection
+        result = await stream_manager.stop_stream(mint_id)
+        
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Failed to disconnect stream: {result.get('error', 'Unknown error')}"
+            )
+        
+        return {
+            "success": True,
+            "mint_id": mint_id,
+            "message": "Stream disconnected successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to disconnect stream: {str(e)}")
+
+
 @router.get("/stats")
 async def get_stream_stats():
     """

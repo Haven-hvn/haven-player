@@ -1,8 +1,10 @@
 from typing import List, Optional
 import os
 import json
+import uuid
+import aiofiles
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.video import Video, Timestamp
@@ -221,4 +223,106 @@ def move_to_front(video_path: str, db: Session = Depends(get_db)) -> dict:
     max_position = db.query(Video).order_by(Video.position.desc()).first()
     video.position = (max_position.position + 1) if max_position else 0
     db.commit()
-    return {"message": "Video moved to front successfully"} 
+    return {"message": "Video moved to front successfully"}
+
+@router.post("/upload")
+async def upload_livekit_recording(
+    video_file: UploadFile = File(...),
+    participant_id: str = Form(...),
+    mint_id: str = Form(...),
+    source: str = Form("livekit"),
+    mime_type: str = Form("video/webm;codecs=vp9"),
+    db: Session = Depends(get_db)
+) -> dict:
+    """
+    Upload a recorded blob from LiveKit frontend recording.
+    This endpoint receives pre-recorded video blobs from RecordRTC.js
+    and stores them for analysis.
+    """
+    try:
+        # Generate unique upload ID
+        upload_id = str(uuid.uuid4())
+        
+        # Create recordings directory if it doesn't exist
+        recordings_dir = "recordings"
+        os.makedirs(recordings_dir, exist_ok=True)
+        
+        # Generate filepath
+        file_extension = "webm" if "webm" in mime_type else "mp4"
+        filename = f"livekit_{mint_id}_{participant_id}_{upload_id}.{file_extension}"
+        filepath = os.path.join(recordings_dir, filename)
+        
+        # Save the uploaded file
+        async with aiofiles.open(filepath, 'wb') as f:
+            content = await video_file.read()
+            await f.write(content)
+        
+        print(f"✅ Uploaded LiveKit recording: {filename} ({len(content)} bytes)")
+        
+        # Get video duration
+        try:
+            duration = int(get_video_duration(filepath))
+        except Exception as e:
+            print(f"Error getting video duration: {e}")
+            duration = 0
+        
+        # Calculate phash asynchronously
+        try:
+            phash = await asyncio.to_thread(calculate_phash, filepath)
+        except Exception as e:
+            print(f"Error calculating phash: {e}")
+            phash = None
+        
+        # Check for duplicates using pHash
+        if phash:
+            existing_phashes = db.query(Video.id, Video.phash).filter(Video.phash.isnot(None)).all()
+            for vid_id, existing in existing_phashes:
+                distance = hex_to_hash(phash) - hex_to_hash(existing)
+                if distance <= 5:
+                    print(f"⚠️ Duplicate detected (Video ID {vid_id}, distance {distance}). Skipping insert.")
+                    # Clean up the uploaded file
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Duplicate video detected! Recording was skipped."
+                    )
+        
+        # Get max position
+        max_position = db.query(Video).order_by(Video.position.desc()).first()
+        position = (max_position.position + 1) if max_position else 0
+        
+        # Create video entry
+        db_video = Video(
+            path=filepath,
+            title=f"LiveKit Recording - {participant_id}",
+            duration=duration,
+            has_ai_data=False,  # Will be set to True after analysis
+            thumbnail_path=None,
+            position=position,
+            phash=phash
+        )
+        db.add(db_video)
+        db.commit()
+        db.refresh(db_video)
+        
+        # TODO: Trigger analysis pipeline on uploaded blob
+        # This would start the AI analysis process for the uploaded recording
+        # await start_analysis_pipeline(upload_id, filepath)
+        
+        return {
+            "status": "uploaded",
+            "upload_id": upload_id,
+            "video_id": db_video.id,
+            "filepath": filepath,
+            "duration": duration,
+            "message": "LiveKit recording uploaded and queued for analysis"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error uploading LiveKit recording: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload recording: {str(e)}") 

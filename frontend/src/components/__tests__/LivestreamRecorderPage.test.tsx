@@ -24,7 +24,6 @@ const mockStreams: StreamInfo[] = [
     is_currently_live: true,
     usd_market_cap: 1234567,
     nsfw: false,
-    recording: false,
   },
   {
     mint_id: 'mint-2',
@@ -35,7 +34,6 @@ const mockStreams: StreamInfo[] = [
     is_currently_live: true,
     usd_market_cap: 2345678,
     nsfw: false,
-    recording: false,
   },
 ];
 

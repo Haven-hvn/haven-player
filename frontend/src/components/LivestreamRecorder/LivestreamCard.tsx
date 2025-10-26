@@ -22,7 +22,8 @@ import {
   Close as CloseIcon,
 } from "@mui/icons-material";
 import { StreamInfo } from "@/types/video";
-import { useRecording } from "@/hooks/useRecording";
+import { useLiveKitRecording } from "@/hooks/useLiveKitRecording";
+import { LiveKitConnectionConfig } from "@/services/livekitClient";
 
 type LivestreamCardProps = {
   item: StreamInfo;
@@ -33,13 +34,24 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
   item,
   onHide,
 }) => {
-  const { isRecording, progress, startRecording, stopRecording, isLoading, error } = useRecording(item.mint_id);
+  const { 
+    status, 
+    startRecording, 
+    stopRecording, 
+    connectToRoom, 
+    disconnectFromRoom, 
+    isLoading 
+  } = useLiveKitRecording(item.mint_id);
+  
   const [imageError, setImageError] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     mouseX: number;
     mouseY: number;
   } | null>(null);
-  const progressWidth = `${Math.max(0, Math.min(100, progress))}%`;
+  const [isConnected, setIsConnected] = useState(false);
+  const [participantSid, setParticipantSid] = useState<string | null>(null);
+  
+  const progressWidth = `${Math.max(0, Math.min(100, status.progress))}%`;
 
   const marketCapLabel = useMemo(() => {
     try {
@@ -70,12 +82,66 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     handleClose();
   };
 
+  // Connect to LiveKit room when component mounts
+  useEffect(() => {
+    const connectToLiveKit = async () => {
+      try {
+        // Get complete connection details from backend using StreamManager
+        const response = await fetch(`http://localhost:8000/api/pumpfun-streams/connection/${item.mint_id}`);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to get connection details');
+        }
+        
+        const connectionData = await response.json();
+        
+        if (!connectionData.success) {
+          throw new Error(connectionData.error || 'Connection failed');
+        }
+        
+        const config: LiveKitConnectionConfig = {
+          url: connectionData.livekit_url,
+          token: connectionData.token,
+          roomName: connectionData.room_name
+        };
+        
+        await connectToRoom(config);
+        setIsConnected(true);
+        setParticipantSid(connectionData.participant_sid);
+        
+        console.log(`✅ Connected to LiveKit room: ${connectionData.room_name}`);
+        console.log(`📊 Stream data:`, connectionData.stream_data);
+        console.log(`👤 Participant SID: ${connectionData.participant_sid}`);
+      } catch (error) {
+        console.error('Failed to connect to LiveKit:', error);
+      }
+    };
+
+    connectToLiveKit();
+
+    // Cleanup on unmount
+    return () => {
+      if (isConnected) {
+        // Disconnect from backend StreamManager
+        fetch(`http://localhost:8000/api/pumpfun-streams/disconnect/${item.mint_id}`, {
+          method: 'POST'
+        }).catch(console.error);
+        
+        disconnectFromRoom();
+      }
+    };
+  }, [item.mint_id, connectToRoom, disconnectFromRoom, isConnected]);
+
   const handleToggleRecord = async () => {
-    if (isRecording) {
+    if (status.isRecording) {
       await stopRecording();
     } else {
-      // Clear any previous errors and try recording
-      await startRecording();
+      // Use the participant SID from the backend StreamManager
+      if (participantSid) {
+        await startRecording(participantSid);
+      } else {
+        console.error('No participant SID available for recording');
+      }
     }
   };
 
@@ -148,7 +214,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         />
 
         {/* Error indicator */}
-        {error && (
+        {status.error && (
           <Box
             sx={{
               position: "absolute",
@@ -179,11 +245,42 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
           </Box>
         )}
 
+        {/* Connection status indicator */}
+        {!status.isConnected && !status.error && (
+          <Box
+            sx={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              backgroundColor: "#FFF",
+              borderRadius: "20px",
+              padding: "4px 10px",
+              border: "2px solid #FFA726",
+              boxShadow: "0 2px 8px rgba(255, 167, 38, 0.2)",
+            }}
+          >
+            <Typography
+              variant="caption"
+              sx={{
+                color: "#FFA726",
+                fontWeight: 700,
+                fontSize: "11px",
+                letterSpacing: "0.5px",
+              }}
+            >
+              CONNECTING...
+            </Typography>
+          </Box>
+        )}
+
 
         {/* Hover overlay REC */}
         <Box
           role="button"
-          aria-label={isRecording ? "Stop recording" : "Start recording"}
+          aria-label={status.isRecording ? "Stop recording" : "Start recording"}
           onClick={handleToggleRecord}
           sx={{
             position: "absolute",
@@ -198,8 +295,8 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               opacity: 1,
               background: "rgba(0,0,0,0.6)",
             },
-            cursor: isLoading ? "not-allowed" : "pointer",
-            pointerEvents: isLoading ? "none" : "auto",
+            cursor: isLoading || !status.isConnected ? "not-allowed" : "pointer",
+            pointerEvents: isLoading || !status.isConnected ? "none" : "auto",
           }}
         >
           <Box
@@ -214,7 +311,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
             }}
           >
-            <FiberManualRecordIcon sx={{ color: "#FF4D4D", animation: isRecording ? "pulse 1.5s infinite" : "none" }} />
+            <FiberManualRecordIcon sx={{ color: "#FF4D4D", animation: status.isRecording ? "pulse 1.5s infinite" : "none" }} />
           </Box>
         </Box>
       </Box>
@@ -234,7 +331,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
             sx={{
               height: 8,
               borderRadius: 999,
-              backgroundColor: error ? "#FFEBEE" : isRecording ? "#FFEBEE" : "#F0F0F0",
+              backgroundColor: status.error ? "#FFEBEE" : status.isRecording ? "#FFEBEE" : "#F0F0F0",
               overflow: "hidden",
               position: "relative",
             }}
@@ -245,14 +342,14 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
                 top: 0,
                 left: 0,
                 bottom: 0,
-                width: isRecording ? progressWidth : 0,
+                width: status.isRecording ? progressWidth : 0,
                 backgroundColor: "#FF4D4D",
                 transition: "width 0.2s linear",
               }}
             />
           </Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.75 }}>
-            {error ? (
+            {status.error ? (
               <>
                 <ErrorIcon sx={{ color: "#FF4D4D", fontSize: 14 }} />
                 <Typography 
@@ -264,16 +361,22 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
-                  title={error}
+                  title={status.error}
                 >
-                  {error}
+                  {status.error}
+                </Typography>
+              </>
+            ) : !status.isConnected ? (
+              <>
+                <Typography variant="caption" sx={{ color: "#FFA726" }}>
+                  Connecting to LiveKit...
                 </Typography>
               </>
             ) : (
               <>
-                <FiberManualRecordIcon sx={{ color: isRecording ? "#FF4D4D" : "#9E9E9E", fontSize: 12 }} />
-                <Typography variant="caption" sx={{ color: isRecording ? "#FF4D4D" : "#9E9E9E" }}>
-                  {isRecording ? "Recording..." : "Ready to Record"}
+                <FiberManualRecordIcon sx={{ color: status.isRecording ? "#FF4D4D" : "#9E9E9E", fontSize: 12 }} />
+                <Typography variant="caption" sx={{ color: status.isRecording ? "#FF4D4D" : "#9E9E9E" }}>
+                  {status.isRecording ? `Recording... ${status.duration}s` : "Ready to Record"}
                 </Typography>
               </>
             )}
@@ -345,7 +448,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         },
       }}
     >
-      {isRecording && (
+      {status.isRecording && (
         <MenuItem
           onClick={handleStopRecording}
           sx={{

@@ -1,23 +1,17 @@
 """
-WebRTC recording service using aiortc/PyAV for direct file recording.
+WebRTC recording service using LiveKit's ParticipantRecorder.
 
-This approach eliminates FFmpeg subprocess by using PyAV directly
-for encoding and muxing to disk in various formats.
+Migrated from custom PyAV implementation to use built-in ParticipantRecorder
+for better memory efficiency and simplified maintenance.
 """
 
 import asyncio
 import logging
-import numpy as np
-import json
 import psutil
-import gc
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime, timezone
-from dataclasses import dataclass
 from enum import Enum
-import time
-from fractions import Fraction
 
 import livekit.rtc as rtc
 from app.services.stream_manager import StreamManager
@@ -34,23 +28,57 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Valid container formats and their compatible codecs
-VALID_FORMATS = {
-    "mp4": {"video_codecs": ["libx264", "h264", "libx265", "h265"], "audio_codecs": ["aac"]},
-    "mpegts": {"video_codecs": ["libx264", "h264", "libx265", "h265"], "audio_codecs": ["aac", "mp3"]},
-    "webm": {"video_codecs": ["libvpx-vp9", "vp9"], "audio_codecs": ["opus", "vorbis"]},
-    "mkv": {"video_codecs": ["libx264", "h264", "libx265", "h265", "libvpx-vp9"], "audio_codecs": ["aac", "opus", "mp3"]}
-}
-
-# Map codec names to appropriate container formats
-CODEC_TO_FORMAT = {
-    "h264": "mp4",
-    "libx264": "mp4",
-    "h265": "mp4",
-    "libx265": "mp4",
-    "vp9": "webm",
-    "libvpx-vp9": "webm"
-}
+# Try importing ParticipantRecorder from LiveKit SDK
+try:
+    from livekit.rtc import ParticipantRecorder
+    PARTICIPANT_RECORDER_AVAILABLE = True
+    
+    # Try importing exception types (may not exist in all SDK versions)
+    try:
+        from livekit.rtc import ParticipantNotFoundError, RecordingError
+        PARTICIPANT_NOT_FOUND_ERROR_AVAILABLE = True
+        RECORDING_ERROR_AVAILABLE = True
+    except ImportError:
+        # Create fallback exception classes if not available
+        class ParticipantNotFoundError(Exception):
+            """Raised when participant not found in room."""
+            pass
+        
+        class RecordingError(Exception):
+            """Raised for general recording errors."""
+            pass
+        
+        PARTICIPANT_NOT_FOUND_ERROR_AVAILABLE = False
+        RECORDING_ERROR_AVAILABLE = False
+    
+    # Try importing WebMEncoderNotAvailableError (may not exist)
+    try:
+        from livekit.rtc import WebMEncoderNotAvailableError
+        WEBM_ENCODER_ERROR_AVAILABLE = True
+    except ImportError:
+        class WebMEncoderNotAvailableError(Exception):
+            """Raised when WebM encoder (PyAV) not available."""
+            pass
+        WEBM_ENCODER_ERROR_AVAILABLE = False
+        
+except ImportError:
+    PARTICIPANT_RECORDER_AVAILABLE = False
+    ParticipantRecorder = None
+    PARTICIPANT_NOT_FOUND_ERROR_AVAILABLE = False
+    RECORDING_ERROR_AVAILABLE = False
+    WEBM_ENCODER_ERROR_AVAILABLE = False
+    
+    class ParticipantNotFoundError(Exception):
+        """Raised when participant not found in room."""
+        pass
+    
+    class RecordingError(Exception):
+        """Raised for general recording errors."""
+        pass
+    
+    class WebMEncoderNotAvailableError(Exception):
+        """Raised when WebM encoder (PyAV) not available."""
+        pass
 
 class RecordingState(Enum):
     DISCONNECTED = "disconnected"
@@ -62,306 +90,15 @@ class RecordingState(Enum):
     STOPPING = "stopping"
     STOPPED = "stopped"
 
-@dataclass
-class TrackContext:
-    """Context for a track being recorded."""
-    track_id: str
-    track: rtc.RemoteTrack
-    kind: int  # rtc.TrackKind
-    participant_sid: str
 
-
-class VideoNormalizer:
-    """Normalizes various video pixel formats to a consistent encoder format."""
-
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.rgb_order = config.get("rgb_order", "RGB")
-        self.row_stride_bytes = config.get("row_stride_bytes")
-        self.resolution_strategy = config.get("resolution_strategy", "scale_to_config")
-        self.colorspace = config.get("colorspace", "bt709")
-        self.range = config.get("range", "limited")
-        self.coerce_unknown_to_rgb = config.get("coerce_unknown_to_rgb", False)
-
-    def normalize_frame(self, frame: rtc.VideoFrame, target_width: int, target_height: int) -> Optional[av.VideoFrame]:
-        """Normalize a video frame to the target format."""
-        try:
-            source_width = frame.width
-            source_height = frame.height
-            
-            # PREFERRED PATH: Use LiveKit SDK's to_ndarray() for reliable frame extraction
-            if hasattr(frame, 'to_ndarray'):
-                try:
-                    # Try RGB24 first (most common)
-                    img = frame.to_ndarray(format='rgb24')
-                    logger.debug(f"Successfully converted frame using to_ndarray('rgb24'): {img.shape}, {img.dtype}")
-                    
-                    # Validate array
-                    if img.ndim != 3 or img.shape[2] != 3 or img.dtype != np.uint8:
-                        logger.warning(f"Invalid ndarray from to_ndarray: shape={img.shape}, dtype={img.dtype}")
-                        raise ValueError("Invalid array dimensions or dtype")
-                    
-                    av_frame = av.VideoFrame.from_ndarray(img, format='rgb24')
-                    av_frame = av_frame.reformat(width=target_width, height=target_height, format='yuv420p')
-                    logger.debug(f"Frame converted via to_ndarray: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
-                    return av_frame
-                    
-                except Exception as e:
-                    # Fallback to BGR24
-                    logger.debug(f"RGB24 conversion failed ({e}), trying BGR24...")
-                    try:
-                        img = frame.to_ndarray(format='bgr24')
-                        logger.debug(f"Successfully converted frame using to_ndarray('bgr24'): {img.shape}, {img.dtype}")
-                        
-                        # Validate array
-                        if img.ndim != 3 or img.shape[2] != 3 or img.dtype != np.uint8:
-                            logger.warning(f"Invalid ndarray from to_ndarray(bgr24): shape={img.shape}, dtype={img.dtype}")
-                            raise ValueError("Invalid array dimensions or dtype")
-                        
-                        av_frame = av.VideoFrame.from_ndarray(img, format='bgr24')
-                        av_frame = av_frame.reformat(width=target_width, height=target_height, format='yuv420p')
-                        logger.debug(f"Frame converted via to_ndarray(bgr24): {av_frame.width}x{av_frame.height} {av_frame.format.name}")
-                        return av_frame
-                    except Exception as e2:
-                        logger.warning(f"to_ndarray() failed for both RGB24 and BGR24: {e}, {e2}")
-                        logger.info("Falling back to buffer-based detection...")
-            
-            # FALLBACK PATH: Use buffer-based pixel format detection (legacy approach)
-            logger.debug("Using fallback buffer-based frame extraction")
-            buffer = frame.data
-
-            # Handle stride/alignment if specified
-            if self.row_stride_bytes and self.row_stride_bytes != source_width * 3:
-                buffer = self._fix_stride(buffer, source_width, source_height)
-
-            # Detect and handle pixel format
-            pixel_format = self._detect_pixel_format(buffer, source_width, source_height)
-
-            if pixel_format == "unknown" and not self.coerce_unknown_to_rgb:
-                logger.error(f"[{frame}] Unknown pixel format and coercion disabled")
-                return None
-
-            # Create PyAV frame based on detected format
-            if pixel_format in ["rgb24", "bgr24"]:
-                av_frame = self._handle_rgb_format(buffer, source_width, source_height, pixel_format)
-            elif pixel_format == "rgba":
-                av_frame = self._handle_rgba_format(buffer, source_width, source_height)
-            elif pixel_format in ["i420", "yuv420p"]:
-                av_frame = self._handle_yuv420_format(buffer, source_width, source_height)
-            elif pixel_format == "nv12":
-                av_frame = self._handle_nv12_format(buffer, source_width, source_height)
-            elif pixel_format == "yuy2":
-                av_frame = self._handle_yuy2_format(buffer, source_width, source_height)
-            else:
-                # Unknown format - try to coerce to RGB
-                if self.coerce_unknown_to_rgb:
-                    av_frame = self._coerce_to_rgb(buffer, source_width, source_height)
-                else:
-                    return None
-
-            # Handle resolution strategy
-            av_frame = self._handle_resolution(av_frame, source_width, source_height, target_width, target_height)
-
-            return av_frame
-
-        except Exception as e:
-            logger.error(f"Frame normalization failed: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
-
-    def _fix_stride(self, buffer, width: int, height: int) -> bytes:
-        """Fix row stride by copying to a contiguous buffer."""
-        stride = self.row_stride_bytes
-        expected_stride = width * 3
-
-        if stride == expected_stride:
-            return buffer
-
-        # Create contiguous buffer
-        contiguous = bytearray(width * height * 3)
-
-        for y in range(height):
-            src_offset = y * stride
-            dst_offset = y * expected_stride
-            # Copy only the valid pixels, ignore padding
-            src_end = min(src_offset + expected_stride, len(buffer))
-            dst_end = dst_offset + expected_stride
-            contiguous[dst_offset:dst_end] = buffer[src_offset:src_end]
-
-        return bytes(contiguous)
-
-    def _detect_pixel_format(self, buffer, width: int, height: int) -> str:
-        """Detect pixel format from buffer size and content."""
-        size = len(buffer)
-
-        # RGB24
-        if size == width * height * 3:
-            # Check if it looks like RGB or BGR by sampling
-            if width > 10 and height > 10:
-                # Sample a few pixels to detect RGB vs BGR order
-                sample_points = [(10, 10), (width//2, height//2), (width-10, height-10)]
-                rgb_score = 0
-                bgr_score = 0
-
-                for x, y in sample_points:
-                    offset = (y * width + x) * 3
-                    if offset + 3 <= len(buffer):
-                        r, g, b = buffer[offset:offset+3]
-                        # Simple heuristic: higher values in R channel suggest RGB order
-                        rgb_score += r
-                        bgr_score += b
-
-                if rgb_score > bgr_score:
-                    return "rgb24"
-                else:
-                    return "bgr24"
-            return "rgb24"  # Default assumption
-
-        # RGBA
-        elif size == width * height * 4:
-            return "rgba"
-
-        # I420/YUV420p (1.5 bytes per pixel)
-        elif size == int(width * height * 1.5):
-            return "i420"
-
-        # NV12 (1.5 bytes per pixel, different plane layout)
-        elif size == int(width * height * 1.5):
-            # NV12 has UV plane starting at width*height, check if it looks like UV data
-            uv_start = width * height
-            if uv_start + 10 < len(buffer):
-                # UV plane should have lower variance (chroma vs luma)
-                y_plane = buffer[:uv_start]
-                uv_plane = buffer[uv_start:uv_start + width * height // 2]
-                if len(uv_plane) > 0:
-                    y_var = sum((y_plane[i] - y_plane[i-1])**2 for i in range(1, min(100, len(y_plane))))
-                    uv_var = sum((uv_plane[i] - uv_plane[i-1])**2 for i in range(1, min(100, len(uv_plane))))
-                    if uv_var < y_var * 0.1:  # UV variance much lower than Y
-                        return "nv12"
-
-        # YUY2 (2 bytes per pixel)
-        elif size == width * height * 2:
-            return "yuy2"
-
-        return "unknown"
-
-    def _handle_rgb_format(self, buffer, width: int, height: int, format_type: str) -> av.VideoFrame:
-        """Handle RGB24 or BGR24 formats."""
-        # Convert to numpy array
-        frame_data = np.frombuffer(buffer, dtype=np.uint8)
-
-        if format_type == "bgr24":
-            # Convert BGR to RGB
-            frame_data = frame_data.reshape(height, width, 3)
-            frame_data = frame_data[:, :, [2, 1, 0]]  # BGR -> RGB
-        else:
-            # RGB24 - just reshape
-            frame_data = frame_data.reshape(height, width, 3)
-
-        # Create PyAV frame
-        return av.VideoFrame.from_ndarray(frame_data, format='rgb24')
-
-    def _handle_rgba_format(self, buffer, width: int, height: int) -> av.VideoFrame:
-        """Handle RGBA format (drop alpha channel)."""
-        frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 4)
-        # Drop alpha channel
-        frame_data = frame_data[:, :, :3]
-        return av.VideoFrame.from_ndarray(frame_data, format='rgb24')
-
-    def _handle_yuv420_format(self, buffer, width: int, height: int) -> av.VideoFrame:
-        """Handle I420/YUV420p format."""
-        # I420: Y plane (width*height) + U plane (width*height/4) + V plane (width*height/4)
-        y_size = width * height
-        uv_size = width * height // 4
-
-        y_plane = buffer[:y_size]
-        u_plane = buffer[y_size:y_size + uv_size]
-        v_plane = buffer[y_size + uv_size:y_size + 2 * uv_size]
-
-        # Create YUV420P frame
-        frame = av.VideoFrame(width, height, format='yuv420p')
-        frame.planes[0].update(y_plane)
-        frame.planes[1].update(u_plane)
-        frame.planes[2].update(v_plane)
-
-        return frame
-
-    def _handle_nv12_format(self, buffer, width: int, height: int) -> av.VideoFrame:
-        """Handle NV12 format."""
-        # NV12: Y plane (width*height) + UV plane (width*height/2, interleaved)
-        y_size = width * height
-        uv_size = width * height // 2
-
-        y_plane = buffer[:y_size]
-        uv_plane = buffer[y_size:y_size + uv_size]
-
-        # Create NV12 frame
-        frame = av.VideoFrame(width, height, format='nv12')
-        frame.planes[0].update(y_plane)
-        frame.planes[1].update(uv_plane)
-
-        return frame
-
-    def _handle_yuy2_format(self, buffer, width: int, height: int) -> av.VideoFrame:
-        """Handle YUY2 format (YUYV422)."""
-        # YUY2 is packed YUYV, 2 bytes per pixel
-        frame_data = np.frombuffer(buffer, dtype=np.uint8).reshape(height, width, 2)
-
-        # Extract Y channel (every other byte)
-        y_plane = frame_data[:, :, 0]
-
-        # For simplicity, create grayscale RGB from Y
-        # In a full implementation, we'd properly unpack U and V
-        rgb_data = np.stack([y_plane, y_plane, y_plane], axis=2)
-
-        return av.VideoFrame.from_ndarray(rgb_data, format='rgb24')
-
-    def _coerce_to_rgb(self, buffer, width: int, height: int) -> av.VideoFrame:
-        """Coerce unknown format to RGB as fallback."""
-        frame_data = np.frombuffer(buffer, dtype=np.uint8)
-
-        # Try to reshape as RGB
-        expected_size = width * height * 3
-        if len(frame_data) >= expected_size:
-            frame_data = frame_data[:expected_size].reshape(height, width, 3)
-        else:
-            # Pad with zeros
-            padding = np.zeros(expected_size - len(frame_data), dtype=np.uint8)
-            frame_data = np.concatenate([frame_data, padding]).reshape(height, width, 3)
-
-        return av.VideoFrame.from_ndarray(frame_data, format='rgb24')
-
-    def _handle_resolution(self, av_frame: av.VideoFrame, source_width: int, source_height: int,
-                          target_width: int, target_height: int) -> av.VideoFrame:
-        """Handle resolution changes based on strategy."""
-        strategy = self.resolution_strategy
-
-        if source_width == target_width and source_height == target_height:
-            return av_frame
-
-        if strategy == "scale_to_config":
-            # Scale to configured resolution
-            return av_frame.reformat(width=target_width, height=target_height,
-                                   format='yuv420p')
-
-        elif strategy == "match_source":
-            # Use source resolution (update target for next frames)
-            return av_frame.reformat(width=source_width, height=source_height,
-                                   format='yuv420p')
-
-        elif strategy == "recreate_on_change":
-            # For now, fall back to scale_to_config
-            # In a full implementation, this would trigger container recreation
-            logger.warning("Resolution change detected, recreating container not yet implemented")
-            return av_frame.reformat(width=target_width, height=target_height,
-                                   format='yuv420p')
-
-        return av_frame
-
-class AiortcFileRecorder:
-    """WebRTC recorder using aiortc/PyAV for direct file recording."""
-
+class ParticipantRecorderWrapper:
+    """
+    Wrapper for LiveKit's ParticipantRecorder that maps participant_sid to participant_identity.
+    
+    Maintains compatibility with existing AiortcFileRecorder interface while using
+    the built-in ParticipantRecorder for memory-efficient recording.
+    """
+    
     def __init__(
         self,
         mint_id: str,
@@ -370,262 +107,307 @@ class AiortcFileRecorder:
         config: Dict[str, Any],
         room: rtc.Room
     ):
+        if not PARTICIPANT_RECORDER_AVAILABLE:
+            raise ImportError(
+                "ParticipantRecorder not available in LiveKit SDK. "
+                "Ensure you have the latest version: pip install livekit"
+            )
+        
         if not AV_AVAILABLE:
-            raise ImportError("PyAV (av) is required for aiortc recording. Install with: pip install av")
-
+            raise WebMEncoderNotAvailableError(
+                "PyAV (av) is required for ParticipantRecorder. Install with: pip install av>=11.0.0"
+            )
+        
         self.mint_id = mint_id
         self.stream_info = stream_info
         self.output_dir = output_dir
         self.config = config
         self.room = room
-
+        
         self.state = RecordingState.DISCONNECTED
-        self.tracks: Dict[str, TrackContext] = {}
-        self.container: Optional[av.container.OutputContainer] = None
-        self.output_path: Optional[Path] = None
         self.start_time: Optional[datetime] = None
-
-        # Track references for frame access
-        self.video_track: Optional[rtc.RemoteVideoTrack] = None
-        self.audio_track: Optional[rtc.RemoteAudioTrack] = None
-
-        # Frame processing
-        self.video_frames_received = 0
-        self.audio_frames_received = 0
-        self.video_frames_written = 0
-        self.audio_frames_written = 0
-
-        # PyAV streams
-        self.video_stream: Optional[av.video.VideoStream] = None
-        self.audio_stream: Optional[av.audio.AudioStream] = None
-
-        # Shutdown event for thread-safe signaling
-        self._shutdown_event = asyncio.Event()
-
-        # Polling guard to prevent duplicates
-        self._polling_started = False
-
-        # Timestamp tracking for A/V synchronization
-        self.recording_start_time = None  # Wall clock time when recording started
-        self.first_video_timestamp = None  # First video frame RTP timestamp
-        self.first_audio_timestamp = None  # First audio frame RTP timestamp
-        self.audio_samples_written = 0  # Cumulative audio samples written
-
-        # Dynamic resolution tracking
-        self.current_video_width = None
-        self.current_video_height = None
-        self.frame_count_since_last_resize = 0
-
-        # A/V sync logging counter
-        self.video_frames_logged = 0
-
-        # Video normalization
-        self.video_normalizer = VideoNormalizer(config)
+        self.output_path: Optional[Path] = None
         
-        # Lazy initialization flag
-        self._container_initialized = False
-        # Backoff control for container setup failures (epoch seconds)
-        self._next_container_setup_time = 0.0
+        # ParticipantRecorder instance (created when starting recording)
+        self.recorder: Optional[ParticipantRecorder] = None
+        self.participant_identity: Optional[str] = None
         
-        # Audio resampler for format conversion (s16 -> fltp for AAC)
-        self.audio_resampler = None
-        
-        # Video PTS tracking for proper packet generation
-        self.first_video_timestamp_us = None  # First video frame timestamp in microseconds
-        self.last_video_pts = -1  # Last PTS assigned to video frame
-        self.zero_packet_streak = 0  # Counter for consecutive frames that produced no packets
-        self.encoder_finalized = False  # Flag to track if encoder has been finalized
-        self.encoder_frame_counter = 0  # Count of frames sent to encoder
-        
-        # Frame queue with backpressure (bounded queue prevents memory explosion)
-        # Note: Current implementation uses LiveKit streams directly which provide natural backpressure
-        # This queue would be used if we switch to a producer-consumer pattern
-        self.max_queue_size = 30  # Maximum frames to buffer
-        self.frames_dropped = 0  # Count of dropped frames due to backpressure
-        
-        # Direct file writing (bypasses PyAV container buffering)
-        # This is the ONLY method - PyAV container buffering doesn't work
-        self.output_file = None  # Direct file handle for writing packets
-        self.last_disk_write = None  # Last disk write timestamp
-        self.temp_output_path = None  # Temporary file path for crash recovery
-        self.final_output_path = None  # Final output path after successful recording
-        self.bytes_since_last_flush = 0  # Track bytes written since last flush
-        self.flush_threshold = 4 * 1024 * 1024  # Flush every 4MB (not every packet!)
-        
-        # Frame processing concurrency control (prevent LiveKit buffer overflow)
-        self.processing_semaphore = asyncio.Semaphore(2)  # Max 2 frames processing at once
-        self.frames_dropped_backpressure = 0  # Frames dropped due to slow processing
-        
-        # Performance metrics
-        self.metrics = {
-            'frames_received': 0,
-            'packets_written': 0,
-            'bytes_written': 0,
-            'encoder_resets': 0,
-            'pts_corrections': 0,
-            'dropped_frames': 0,
-        }
-        
-    def _calculate_video_pts_dts(self, livekit_frame: rtc.VideoFrame, av_frame: av.VideoFrame) -> tuple[int, int]:
+        logger.info(f"[{self.mint_id}] ParticipantRecorderWrapper initialized")
+    
+    def _find_participant_identity(self) -> Optional[str]:
         """
-        Calculate PTS/DTS for video frame with robust fallback mechanisms.
+        Find participant_identity by looking up participant by participant_sid.
         
-        Args:
-            livekit_frame: Original LiveKit frame with timestamp
-            av_frame: PyAV frame being encoded
-            
         Returns:
-            Tuple of (pts, dts) in stream time_base units
+            participant_identity if found, None otherwise
         """
-        if not self.video_stream or not self.video_stream.time_base:
-            logger.warning(f"[{self.mint_id}] Video stream not initialized for PTS calculation")
-            return (0, 0)
+        participant_sid = self.stream_info.participant_sid
         
-        tb = self.video_stream.time_base
-        fps = self.config['fps']
-        gop_size = self.config.get('gop_size', fps * 2)
+        for participant in self.room.remote_participants.values():
+            if participant.sid == participant_sid:
+                participant_identity = participant.identity
+                logger.info(
+                    f"[{self.mint_id}] ✅ Found participant: sid={participant_sid}, "
+                    f"identity={participant_identity}"
+                )
+                return participant_identity
         
-        # Calculate PTS relative to first frame to avoid huge values
-        if hasattr(livekit_frame, 'timestamp_us') and livekit_frame.timestamp_us is not None:
-            if self.first_video_timestamp_us is None:
-                self.first_video_timestamp_us = livekit_frame.timestamp_us
-                self.encoder_frame_counter = 0
-                logger.info(f"[{self.mint_id}] First video timestamp: {livekit_frame.timestamp_us}us")
-                return (0, 0)  # First frame gets PTS=0, DTS=0
-            
-            # Compute delta from first frame
-            delta_us = max(0, livekit_frame.timestamp_us - self.first_video_timestamp_us)
-            # Convert delta microseconds to time_base units
-            pts = int((delta_us / 1_000_000) * tb.denominator)
-            
-            # Log detailed calculation for first few frames
-            if self.video_frames_received <= 5:
-                logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: timestamp={livekit_frame.timestamp_us}us, delta={delta_us}us, pts={pts}, tb={tb}")
-            if self.video_frames_received <= 10:
-                logger.info(f"[{self.mint_id}] delta_us = {delta_us}")
-        else:
-            # Fallback to frame counter if no timestamp available
-            pts = self.encoder_frame_counter * (tb.denominator // fps)
-            if self.video_frames_received <= 5:
-                logger.info(f"[{self.mint_id}] Frame {self.video_frames_received}: No timestamp, using counter pts={pts}")
-        
-        # Enforce monotonic PTS (critical for encoder)
-        if pts <= self.last_video_pts:
-            corrected_pts = self.last_video_pts + 1
-            self.metrics['pts_corrections'] += 1
-            if self.video_frames_received <= 10:
-                logger.warning(f"[{self.mint_id}] Non-increasing PTS detected: {pts} <= {self.last_video_pts}, correcting to {corrected_pts}")
-            pts = corrected_pts
-        
-        # Calculate DTS accounting for potential frame reordering
-        # For H.264 with B-frames, DTS typically lags behind PTS
-        # With zerolatency tune, there should be minimal reordering, but we account for it
-        dts_offset = min(4, gop_size // 2) * (tb.denominator // fps)
-        dts = max(0, pts - dts_offset)
-        
-        # Ensure DTS is monotonic and never exceeds PTS
-        if hasattr(self, 'last_video_dts'):
-            if dts <= self.last_video_dts:
-                dts = self.last_video_dts + 1
-        if dts > pts:
-            dts = pts
-        
-        self.last_video_dts = dts
-        self.encoder_frame_counter += 1
-        
-        return (pts, dts)
+        logger.error(
+            f"[{self.mint_id}] ❌ Participant with sid={participant_sid} not found in room"
+        )
+        return None
     
-    async def _handle_encoder_stall(self) -> None:
-        """
-        Handle encoder stall when no packets are produced for many consecutive frames.
-        
-        Implements recovery strategies:
-        1. Log diagnostic information
-        2. Request keyframe from client
-        3. Drop some frames to catch up (if needed)
-        """
-        logger.error(f"[{self.mint_id}] 🚨 Encoder stall detected - {self.zero_packet_streak} frames produced no packets")
-        logger.error(f"[{self.mint_id}] Diagnostic info:")
-        logger.error(f"[{self.mint_id}]   - Last PTS: {self.last_video_pts}")
-        logger.error(f"[{self.mint_id}]   - Encoder frame counter: {self.encoder_frame_counter}")
-        logger.error(f"[{self.mint_id}]   - Frames received: {self.video_frames_received}")
-        logger.error(f"[{self.mint_id}]   - Frames written: {self.video_frames_written}")
-        logger.error(f"[{self.mint_id}]   - Time base: {self.video_stream.time_base if self.video_stream else 'N/A'}")
-        logger.error(f"[{self.mint_id}]   - Encoder finalized: {self.encoder_finalized}")
-        
-        # Strategy 1: Request keyframe (helps encoder reset its internal state)
-        self._request_keyframe()
-        
-        # Strategy 2: Log memory usage to detect memory pressure
-        self._log_memory_usage(f"{self.mint_id}_encoder_stall")
-        
-        # Strategy 3: If stall persists beyond threshold, stop recording to prevent memory overflow
-        if self.zero_packet_streak > 100:
-            logger.error(f"[{self.mint_id}] ❌ CRITICAL: Encoder stall exceeds threshold (100 frames)")
-            logger.error(f"[{self.mint_id}] ❌ Stopping recording to prevent memory overflow")
-            self._shutdown_event.set()
-    
-    def _request_keyframe(self) -> None:
-        """Request a keyframe from the video track."""
+    async def start(self) -> Dict[str, Any]:
+        """Start recording using ParticipantRecorder."""
         try:
-            # Note: LiveKit SDK may not support explicit keyframe requests
-            # This is a placeholder for future implementation
-            logger.info(f"[{self.mint_id}] Requesting keyframe from video track")
-            # TODO: Implement keyframe request when LiveKit SDK supports it
-        except Exception as e:
-            logger.warning(f"[{self.mint_id}] Could not request keyframe: {e}")
-    
-    def _write_packet_direct(self, packet: av.Packet) -> None:
-        """
-        Write packet directly to disk with buffered flushing.
-        
-        IMPORTANT: We flush every 4MB, not every packet, to avoid I/O bottleneck.
-        Per-packet flushing would kill throughput by 100-1000x.
-        """
-        if not self.output_file:
-            logger.error(f"[{self.mint_id}] Direct write failed: file not open")
-            raise RuntimeError("Output file not open for direct write")
-        
-        # Get packet bytes
-        packet_bytes = bytes(packet)
-        packet_size = len(packet_bytes)
-        
-        # Write directly to file (buffered by OS)
-        bytes_written = self.output_file.write(packet_bytes)
-        
-        # Update metrics
-        self.metrics['bytes_written'] += bytes_written
-        self.bytes_since_last_flush += bytes_written
-        
-        # SMART FLUSHING: Only flush when buffer reaches threshold (4MB)
-        # This balances memory usage with I/O performance
-        if self.bytes_since_last_flush >= self.flush_threshold:
-            self.output_file.flush()
-            self.last_disk_write = time.time()
-            self.bytes_since_last_flush = 0
+            logger.info(f"[{self.mint_id}] Starting ParticipantRecorder-based recording")
             
-            if self.metrics['packets_written'] % 100 == 0:
-                logger.debug(f"[{self.mint_id}] Flushed buffer: {self.metrics['bytes_written']} bytes total")
+            # State: DISCONNECTED → CONNECTING
+            self.state = RecordingState.CONNECTING
+            
+            # Find participant_identity from participant_sid
+            participant_identity = self._find_participant_identity()
+            if not participant_identity:
+                return {
+                    "success": False,
+                    "error": f"Participant with sid {self.stream_info.participant_sid} not found in room"
+                }
+            
+            self.participant_identity = participant_identity
+            
+            # Map quality presets to ParticipantRecorder options - Maximum quality
+            video_codec = self.config.get("video_codec", "vp9")
+            # Always use VP9 for maximum quality (better compression than VP8)
+            if video_codec in ["vp9", "libvpx-vp9"]:
+                video_codec = "vp9"
+            else:
+                video_codec = "vp9"  # Default to VP9 for maximum quality
+            
+            video_quality_str = self.config.get("video_quality", "best")
+            # Map to ParticipantRecorder quality levels - favor highest quality
+            quality_map = {
+                "low": "high",      # Even low maps to high quality
+                "medium": "high",   # Medium maps to high quality
+                "high": "best",     # High maps to best quality
+                "best": "best"      # Best is maximum
+            }
+            video_quality = quality_map.get(video_quality_str, "best")
+            
+            # Parse bitrates - use high defaults for maximum quality
+            video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "8M"))
+            audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "256k"))
+            video_fps = self.config.get("fps", 30)
+            
+            # Create ParticipantRecorder with configuration
+            self.recorder = ParticipantRecorder(
+                self.room,
+                video_codec=video_codec,
+                video_quality=video_quality,
+                auto_bitrate=self.config.get("auto_bitrate", True),
+                video_bitrate=video_bitrate,
+                audio_bitrate=audio_bitrate,
+                video_fps=video_fps
+            )
+            
+            logger.info(
+                f"[{self.mint_id}] ParticipantRecorder created: "
+                f"codec={video_codec}, quality={video_quality}, "
+                f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps}"
+            )
+            
+            # State: CONNECTING → RECORDING
+            self.state = RecordingState.RECORDING
+            self.start_time = datetime.now(timezone.utc)
+            
+            # Start recording
+            await self.recorder.start_recording(participant_identity)
+            
+            logger.info(f"[{self.mint_id}] ✅ Recording started with ParticipantRecorder")
+            
+            # Generate output path (will be finalized on stop)
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+            self.output_path = self.output_dir / f"{self.mint_id}_{timestamp}.webm"
+            
+            return {
+                "success": True,
+                "output_path": str(self.output_path),
+                "start_time": self.start_time.isoformat(),
+                "tracks": 2,  # ParticipantRecorder handles video + audio automatically
+                "stats": {
+                    "video_frames": 0,
+                    "audio_frames": 0,
+                    "dropped_frames": 0,
+                    "pli_requests": 0,
+                    "track_subscriptions": 2,
+                    "connection_time": 0.0,
+                    "subscription_time": 0.0
+                }
+            }
+            
+        except ParticipantNotFoundError as e:
+            logger.error(f"[{self.mint_id}] Participant not found: {e}")
+            self.state = RecordingState.STOPPED
+            return {"success": False, "error": f"Participant not found: {str(e)}"}
+            
+        except WebMEncoderNotAvailableError as e:
+            logger.error(f"[{self.mint_id}] WebM encoder not available: {e}")
+            self.state = RecordingState.STOPPED
+            return {"success": False, "error": f"WebM encoder not available: {str(e)}"}
+            
+        except RecordingError as e:
+            logger.error(f"[{self.mint_id}] Recording error: {e}")
+            self.state = RecordingState.STOPPED
+            return {"success": False, "error": f"Recording error: {str(e)}"}
+            
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Unexpected error starting recording: {e}")
+            import traceback
+            logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
+            self.state = RecordingState.STOPPED
+            return {"success": False, "error": str(e)}
+    
+    async def stop(self) -> Dict[str, Any]:
+        """Stop recording and save to file."""
+        try:
+            logger.info(f"[{self.mint_id}] Stopping ParticipantRecorder recording")
+            
+            if self.state != RecordingState.RECORDING:
+                return {
+                    "success": False,
+                    "error": f"No active recording to stop (state: {self.state.value})"
+                }
+            
+            # State: RECORDING → STOPPING
+            self.state = RecordingState.STOPPING
+            
+            if not self.recorder:
+                return {"success": False, "error": "No recorder instance available"}
+            
+            # Stop recording and save to file
+            if self.output_path:
+                final_path = await self.recorder.stop_recording(str(self.output_path))
+                self.output_path = Path(final_path) if final_path else self.output_path
+            else:
+                # Generate path if not set
+                timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                self.output_path = self.output_dir / f"{self.mint_id}_{timestamp}.webm"
+                final_path = await self.recorder.stop_recording(str(self.output_path))
+                self.output_path = Path(final_path) if final_path else self.output_path
+            
+            # Get final stats
+            stats = self.recorder.get_stats()
+            
+            # State: STOPPING → STOPPED
+            self.state = RecordingState.STOPPED
+            
+            # Calculate file size
+            file_size = 0
+            if self.output_path and self.output_path.exists():
+                file_size = self.output_path.stat().st_size
+            
+            duration_seconds = 0
+            if self.start_time:
+                duration_seconds = (datetime.now(timezone.utc) - self.start_time).total_seconds()
+            
+            logger.info(f"[{self.mint_id}] ✅ Recording stopped")
+            
+            return {
+                "success": True,
+                "output_path": str(self.output_path),
+                "file_size_bytes": file_size,
+                "duration_seconds": duration_seconds,
+                "stats": {
+                    "video_frames": stats.video_frames_recorded,
+                    "audio_frames": stats.audio_frames_recorded,
+                    "dropped_frames": 0,
+                    "pli_requests": 0,
+                    "track_subscriptions": 2,
+                    "connection_time": 0.0,
+                    "subscription_time": 0.0
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"[{self.mint_id}] Error stopping recording: {e}")
+            self.state = RecordingState.STOPPED
+            return {"success": False, "error": str(e)}
+    
+    async def get_status(self) -> Dict[str, Any]:
+        """Get current recording status."""
+        file_size = 0
+        is_recording = self.state == RecordingState.RECORDING and self.recorder is not None
         
-        # Log periodically for verification
-        if self.metrics['packets_written'] % 500 == 0:
-            logger.debug(f"[{self.mint_id}] Direct write: {packet_size} bytes (total: {self.metrics['bytes_written']})")
+        # Get stats if recording is active
+        stats = None
+        if self.recorder:
+            try:
+                stats = self.recorder.get_stats()
+            except Exception as e:
+                logger.warning(f"[{self.mint_id}] Could not get recorder stats: {e}")
         
-    def _log_memory_usage(self, context: str = ""):
-        """Log current memory usage for debugging."""
+        if self.output_path and self.output_path.exists():
+            file_size = self.output_path.stat().st_size
+        
+        # Calculate memory usage
+        memory_mb = 0.0
         try:
             process = psutil.Process()
-            memory_info = process.memory_info()
-            memory_mb = memory_info.rss / (1024 * 1024)
-            logger.info(f"[{context}] Memory usage: {memory_mb:.1f} MB")
-        except Exception as e:
-            logger.warning(f"[{context}] Could not get memory usage: {e}")
-
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+        except Exception:
+            pass
+        
+        return {
+            "mint_id": self.mint_id,
+            "state": self.state.value,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "output_path": str(self.output_path) if self.output_path else None,
+            "file_size_mb": round(file_size / (1024 * 1024), 2),
+            "recording_mode": "participantrecorder",
+            "is_recording": is_recording,
+            "tracks": 2,  # ParticipantRecorder handles video + audio
+            "timestamp_info": {
+                "first_video_timestamp": None,
+                "first_audio_timestamp": None,
+                "audio_samples_written": 0,
+                "recording_start_time": self.start_time.timestamp() if self.start_time else None
+            },
+            "flexibility": {
+                "rgb_order": None,
+                "resolution_strategy": None,
+                "colorspace": None,
+                "range": None,
+                "coerce_unknown_to_rgb": False,
+                "current_resolution": None
+            },
+            "stats": {
+                "video_frames_received": stats.video_frames_recorded if stats else 0,
+                "audio_frames_received": stats.audio_frames_recorded if stats else 0,
+                "video_frames_written": stats.video_frames_recorded if stats else 0,
+                "audio_frames_written": stats.audio_frames_recorded if stats else 0,
+                "dropped_frames": 0,
+                "pli_requests": 0,
+                "track_subscriptions": 2,
+                "connection_time": 0.0,
+                "subscription_time": 0.0,
+                "zero_packet_streak": 0,
+                "memory_usage_mb": memory_mb,
+            },
+            "metrics": {
+                "frames_received": stats.video_frames_recorded + stats.audio_frames_recorded if stats else 0,
+                "packets_written": 0,
+                "bytes_written": file_size,
+                "encoder_resets": 0,
+                "pts_corrections": 0,
+                "dropped_frames": 0,
+            },
+            "config": self.config
+        }
+    
     def _parse_bitrate(self, bitrate_str: str) -> int:
         """Parse bitrate string (e.g., '2M', '128k') to integer."""
         if isinstance(bitrate_str, int):
             return bitrate_str
-
+        
         bitrate_str = str(bitrate_str).upper()
         if bitrate_str.endswith('K'):
             return int(bitrate_str[:-1]) * 1000
@@ -633,1289 +415,10 @@ class AiortcFileRecorder:
             return int(bitrate_str[:-1]) * 1000000
         else:
             return int(bitrate_str)
-    
-    async def _continuous_track_detection(self):
-        """Continuously try to find tracks and start frame processing."""
-        logger.info(f"[{self.mint_id}] 🔍 Starting continuous track detection...")
-        
-        for attempt in range(10):  # Try for 10 seconds
-            if self._shutdown_event.is_set():
-                logger.info(f"[{self.mint_id}] 🛑 Shutdown requested, stopping track detection")
-                return
-                
-            participant = self._find_participant()
-            if participant:
-                await self._setup_existing_track_handlers(participant)
-                if self.video_track or self.audio_track:
-                    logger.info(f"[{self.mint_id}] ✅ Found tracks after {attempt + 1} attempts, starting frame processing")
-                    await self._start_frame_processing()
-                    return
-            
-            logger.info(f"[{self.mint_id}] 🔍 Track detection attempt {attempt + 1}/10 - no tracks found")
-            await asyncio.sleep(1.0)
-        
-        logger.warning(f"[{self.mint_id}] ⚠️  Could not find tracks after 10 attempts")
-
-    async def start(self) -> Dict[str, Any]:
-        """Start recording using aiortc/PyAV."""
-        try:
-            logger.info(f"[{self.mint_id}] Starting aiortc-based recording")
-
-            # State: DISCONNECTED → CONNECTING
-            self.state = RecordingState.CONNECTING
-
-            # Find target participant
-            participant = self._find_participant()
-            if not participant:
-                return {"success": False, "error": "Target participant not found"}
-
-            # Subscribe to tracks
-            await self._subscribe_to_tracks(participant)
-
-            # State: CONNECTING → SUBSCRIBING
-            self.state = RecordingState.SUBSCRIBING
-
-            # Set up room event handler for track subscriptions
-            self.room.on('track_subscribed', self._on_track_subscribed)
-            logger.info(f"[{self.mint_id}] ✅ Room event handler set up for track_subscribed")
-
-            # Wait for LiveKit to publish tracks
-            logger.info(f"[{self.mint_id}] Waiting for tracks to be published...")
-            await asyncio.sleep(3.0)  # Give LiveKit time to publish tracks
-
-            # Also set up frame handlers on existing tracks (in case they're already subscribed)
-            await self._setup_existing_track_handlers(participant)
-
-            # Retry loop to wait for tracks before proceeding
-            logger.info(f"[{self.mint_id}] ⏳ Waiting for tracks to be available...")
-            for attempt in range(5):  # Try for 15 seconds
-                if self.video_track or self.audio_track:
-                    break
-                await asyncio.sleep(3.0)
-                participant = self._find_participant()
-                if participant:
-                    await self._setup_existing_track_handlers(participant)
-            if not (self.video_track or self.audio_track):
-                logger.warning(f"[{self.mint_id}] ⚠️  No tracks found after retries")
-                # Schedule continuous detection as fallback
-                asyncio.create_task(self._continuous_track_detection())
-
-            # Frame processing will handle container initialization when first frame arrives
-            logger.info(f"[{self.mint_id}] ⏳ Frame processing will initialize container on first frame")
-
-            # Check LiveKit room connection status
-            if not self.room.isconnected():
-                logger.error(f"[{self.mint_id}] LiveKit room disconnected - stopping recording")
-                await self._cleanup()
-                return {"success": False, "error": "LiveKit room disconnected"}
-
-            # State: SUBSCRIBING → SUBSCRIBED
-            self.state = RecordingState.SUBSCRIBED
-
-            # Start frame processing (if we have tracks)
-            if self.video_track or self.audio_track:
-                await self._start_frame_processing()
-            else:
-                logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for frame processing")
-                # Try to find tracks again after a short delay
-                await asyncio.sleep(1.0)
-                participant = self._find_participant()
-                if participant:
-                    await self._setup_existing_track_handlers(participant)
-                    if self.video_track or self.audio_track:
-                        logger.info(f"[{self.mint_id}] ✅ Found tracks on retry, starting frame processing")
-                        await self._start_frame_processing()
-                    else:
-                        logger.warning(f"[{self.mint_id}] ⚠️  Still no tracks found after retry")
-                        # Start a background task to continuously look for tracks
-                        asyncio.create_task(self._continuous_track_detection())
-
-            # State: SUBSCRIBED → RECORDING
-            self.state = RecordingState.RECORDING
-            self.start_time = datetime.now(timezone.utc)
-            self.recording_start_time = time.time()  # Wall clock for timestamp baseline
-
-            logger.info(f"[{self.mint_id}] ✅ Recording started with aiortc/PyAV")
-
-            return {
-                "success": True,
-                "output_path": str(self.output_path),
-                "start_time": self.start_time.isoformat(),
-                "tracks": len(self.tracks),
-                "stats": {
-                    "video_frames": 0,
-                    "audio_frames": 0,
-                    "dropped_frames": 0,
-                    "pli_requests": 0,
-                    "track_subscriptions": len(self.tracks),
-                    "connection_time": 0.0,
-                    "subscription_time": 0.0
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Recording start failed: {e}")
-            await self._cleanup()
-            return {"success": False, "error": str(e)}
-
-    async def stop(self) -> Dict[str, Any]:
-        """Stop recording."""
-        try:
-            logger.info(f"[{self.mint_id}] Stopping aiortc recording")
-
-            if self.state != RecordingState.RECORDING:
-                return {"success": False, "error": f"No active recording to stop (state: {self.state.value})"}
-
-            # State: RECORDING → STOPPING
-            self.state = RecordingState.STOPPING
-            self._shutdown_event.set()
-
-            # Close PyAV container
-            await self._close_container()
-
-            # State: STOPPING → STOPPED
-            self.state = RecordingState.STOPPED
-
-            # Get final stats
-            file_size = 0
-            if self.output_path and self.output_path.exists():
-                file_size = self.output_path.stat().st_size
-
-            logger.info(f"[{self.mint_id}] ✅ Recording stopped")
-
-            return {
-                "success": True,
-                "output_path": str(self.output_path),
-                "file_size_bytes": file_size,
-                "duration_seconds": (datetime.now(timezone.utc) - self.start_time).total_seconds() if self.start_time else 0,
-                "stats": {
-                    "video_frames": self.video_frames_written,
-                    "audio_frames": self.audio_frames_written,
-                    "dropped_frames": 0,
-                    "pli_requests": 0,
-                    "track_subscriptions": len(self.tracks),
-                    "connection_time": 0.0,
-                    "subscription_time": 0.0
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Recording stop failed: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def get_status(self) -> Dict[str, Any]:
-        """Get current recording status with comprehensive metrics."""
-        file_size = 0
-        recording_mode = "unknown"
-
-        # Debug logging
-        logger.info(f"[{self.mint_id}] Status check: state={self.state.value}, frames_received={self.video_frames_received}, frames_written={self.video_frames_written}")
-        logger.info(f"[{self.mint_id}] PyAV container: {self.container is not None}")
-        
-        # Calculate additional metrics
-        memory_mb = 0.0
-        try:
-            import psutil
-            process = psutil.Process()
-            memory_mb = process.memory_info().rss / (1024 * 1024)
-        except (ImportError, Exception):
-            pass
-
-        # Determine recording mode and calculate file size
-        recording_mode = "aiortc"
-        file_size = 0
-
-        if self.container:
-            logger.info(f"[{self.mint_id}] PyAV container active")
-
-            # Check if recording file exists and its size (temp path during recording, final path after)
-            check_path = self.temp_output_path if (self.temp_output_path and self.state == RecordingState.RECORDING) else self.output_path
-            if check_path and check_path.exists():
-                file_size = check_path.stat().st_size
-                logger.info(f"[{self.mint_id}] Recording file size: {file_size} bytes ({check_path.name})")
-            else:
-                logger.warning(f"[{self.mint_id}] Recording file does not exist: {check_path}")
-        else:
-            logger.warning(f"[{self.mint_id}] No recording mode active - no PyAV container")
-
-        # Determine if we're actually recording based on state and frame activity
-        is_recording = (self.state == RecordingState.RECORDING and
-                       (self.video_frames_received > 0 or self.audio_frames_received > 0))
-
-        # Also check if we have an active recording process (PyAV container)
-        has_active_process = self.container is not None
-
-        # Final recording status
-        is_recording = is_recording and has_active_process
-
-        logger.info(f"[{self.mint_id}] Recording status: mode={recording_mode}, is_recording={is_recording}")
-
-        return {
-            "mint_id": self.mint_id,
-            "state": self.state.value,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "output_path": str(self.output_path) if self.output_path else None,
-            "file_size_mb": round(file_size / (1024 * 1024), 2),
-            "recording_mode": recording_mode,
-            "is_recording": is_recording,
-            "tracks": len(self.tracks),
-            "timestamp_info": {
-                "first_video_timestamp": self.first_video_timestamp,
-                "first_audio_timestamp": self.first_audio_timestamp,
-                "audio_samples_written": self.audio_samples_written,
-                "recording_start_time": self.recording_start_time
-            },
-            "flexibility": {
-                "rgb_order": self.config.get("rgb_order", "RGB"),
-                "resolution_strategy": self.config.get("resolution_strategy", "scale_to_config"),
-                "colorspace": self.config.get("colorspace", "bt709"),
-                "range": self.config.get("range", "limited"),
-                "coerce_unknown_to_rgb": self.config.get("coerce_unknown_to_rgb", False),
-                "current_resolution": f"{self.current_video_width}x{self.current_video_height}" if self.current_video_width else None
-            },
-            "stats": {
-                "video_frames_received": self.video_frames_received,
-                "audio_frames_received": self.audio_frames_received,
-                "video_frames_written": self.video_frames_written,
-                "audio_frames_written": self.audio_frames_written,
-                "dropped_frames": self.frames_dropped,
-                "pli_requests": 0,
-                "track_subscriptions": len(self.tracks),
-                "connection_time": 0.0,
-                "subscription_time": 0.0,
-                "zero_packet_streak": self.zero_packet_streak,
-                "memory_usage_mb": memory_mb,
-            },
-            "metrics": self.metrics,
-            "config": self.config
-        }
-
-    def _find_participant(self) -> Optional[rtc.RemoteParticipant]:
-        """Find the target participant."""
-        for participant in self.room.remote_participants.values():
-            if participant.sid == self.stream_info.participant_sid:
-                logger.info(f"[{self.mint_id}] ✅ Found target participant: {participant.sid}")
-                return participant
-        
-        logger.error(f"[{self.mint_id}] ❌ Target participant {self.stream_info.participant_sid} not found")
-        return None
-
-    async def _subscribe_to_tracks(self, participant: rtc.RemoteParticipant):
-        """Subscribe to participant's tracks with LIMITED buffering (prevent 9GB memory growth)."""
-        logger.info(f"[{self.mint_id}] Subscribing to tracks from {participant.sid}")
-        logger.info(f"[{self.mint_id}] CRITICAL: Using manual subscribe to limit LiveKit internal buffering")
-        
-        for track_pub in participant.track_publications.values():
-            # Skip if track not available yet
-            if not track_pub.subscribed:
-                logger.info(f"[{self.mint_id}] Track {track_pub.sid} not yet subscribed, will retry")
-                # Explicitly request subscription (since auto_subscribe=False)
-                # Note: LiveKit Python SDK handles this automatically when iterating over VideoStream/AudioStream
-                # We just need to store the track reference
-                continue
-                
-            if track_pub.track is None:
-                logger.warning(f"[{self.mint_id}] Track publication {track_pub.sid} has no track object")
-                continue
-                
-            track = track_pub.track
-            track_id = f"{participant.sid}_{track.sid}"
-            
-            # Create track context
-            track_context = TrackContext(
-                track_id=track_id,
-                track=track,
-                kind=track.kind,
-                participant_sid=participant.sid
-            )
-            
-            self.tracks[track_id] = track_context
-            
-            logger.info(f"[{self.mint_id}] ✅ Track {track.kind} {track.sid} registered for recording")
-        
-        logger.info(f"[{self.mint_id}] Total tracks registered: {len(self.tracks)}")
-
-    async def _setup_existing_track_handlers(self, participant: rtc.RemoteParticipant):
-        """Set up direct track access for recording (no frame handlers needed)."""
-        logger.info(f"[{self.mint_id}] Setting up direct track access for recording from {participant.sid}")
-        
-        # Store track references for direct access
-        logger.info(f"[{self.mint_id}] 🔍 Found {len(participant.track_publications)} track publications")
-        logger.info(f"[{self.mint_id}] 🔍 Target participant: {self.stream_info.participant_sid}")
-        logger.info(f"[{self.mint_id}] 🔍 Current participant: {participant.sid}")
-        
-        # Retry loop for track detection
-        for attempt in range(3):
-            logger.info(f"[{self.mint_id}] Track detection attempt {attempt + 1}/3")
-            
-            for track_pub in participant.track_publications.values():
-                logger.info(f"[{self.mint_id}] Track pub: {track_pub.sid}, kind={track_pub.kind}, track={track_pub.track}")
-                if track_pub.track is None:
-                    logger.info(f"[{self.mint_id}] Track {track_pub.sid} not yet available")
-                    continue
-                    
-                track = track_pub.track
-                logger.info(f"[{self.mint_id}] Track object: {type(track)}, kind={track.kind}, sid={track.sid}")
-                logger.info(f"[{self.mint_id}] Track methods: {[m for m in dir(track) if not m.startswith('_')]}")
-                
-                if track.kind == rtc.TrackKind.KIND_VIDEO:
-                    self.video_track = track
-                    logger.info(f"[{self.mint_id}] ✅ Video track found")
-                    logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
-                elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                    self.audio_track = track
-                    logger.info(f"[{self.mint_id}] ✅ Audio track found")
-                    logger.info(f"[{self.mint_id}] Audio track: {self.audio_track}")
-                else:
-                    logger.warning(f"[{self.mint_id}] ⚠️  Unknown track kind: {track.kind}")
-            
-            # Break if we found tracks
-            if self.video_track or self.audio_track:
-                break
-            
-            # Wait before retry
-            if attempt < 2:
-                logger.info(f"[{self.mint_id}] No tracks found, waiting 0.5s before retry...")
-                await asyncio.sleep(5)
-
-        # Check if we have audio but no video - wait for video track
-        if self.audio_track and not self.video_track:
-            logger.warning(f"[{self.mint_id}] ⚠️  Found audio but no video - waiting for video track...")
-            # Wait up to 10 seconds for video track
-            for wait_attempt in range(20):  # 20 * 1s = 20s
-                await asyncio.sleep(1)
-                logger.debug(f"[{self.mint_id}] Waiting for video track... attempt {wait_attempt + 1}/20")
-
-                # Re-check for video track
-                for track_pub in participant.track_publications.values():
-                    if track_pub.track and track_pub.kind == rtc.TrackKind.KIND_VIDEO:
-                        self.video_track = track_pub.track
-                        logger.info(f"[{self.mint_id}] ✅ Video track found after waiting {wait_attempt + 1} attempts")
-                        break
-                if self.video_track:
-                    break
-
-            if not self.video_track:
-                logger.error(f"[{self.mint_id}] ❌ Timeout waiting for video track - cannot record audio-only livestream")
-                return  # Fail the recording
-
-        # Log track detection results
-        video_available = self.video_track is not None
-        audio_available = self.audio_track is not None
-
-        if video_available and audio_available:
-            logger.info(f"[{self.mint_id}] ✅ Found both video and audio tracks")
-        elif video_available and not audio_available:
-            logger.info(f"[{self.mint_id}] 📹 Video-only recording: Found video track, no audio (stream may be muted)")
-        elif not video_available and audio_available:
-            logger.warning(f"[{self.mint_id}] ⚠️  Audio-only recording: Found audio track, no video")
-        else:
-            logger.warning(f"[{self.mint_id}] ❌ No tracks found")
-        
-        # Start polling for frames since direct handlers aren't available
-        logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
-        logger.info(f"[{self.mint_id}] 🔍 Tracks available: video={self.video_track is not None}, audio={self.audio_track is not None}")
-        if self.video_track:
-            logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
-        if self.audio_track:
-            logger.info(f"[{self.mint_id}] Audio track: {self.audio_track}")
-        
-        polling_task = asyncio.create_task(self._poll_frames())
-        logger.info(f"[{self.mint_id}] 📋 Polling task created: {polling_task}")
-        logger.info(f"[{self.mint_id}] 📋 Polling task done: {polling_task.done()}")
-        logger.info(f"[{self.mint_id}] 📋 Polling task cancelled: {polling_task.cancelled()}")
-
-    def _on_track_subscribed(self, track, publication, participant):
-        """Handle track subscribed event."""
-        logger.info(f"[{self.mint_id}] Track subscribed event: {track.kind} from {participant.sid} (target: {self.stream_info.participant_sid})")
-        
-        if participant.sid != self.stream_info.participant_sid:
-            logger.info(f"[{self.mint_id}] Skipping non-target participant: {participant.sid}")
-            return  # Only process tracks from our target participant
-            
-        logger.info(f"[{self.mint_id}] ✅ Setting up frame handlers for target participant")
-        
-        # Store track reference for direct access (no frame handlers needed)
-        logger.info(f"[{self.mint_id}] Track subscribed - track: {type(track)}, kind={track.kind}, sid={track.sid}")
-        logger.info(f"[{self.mint_id}] Track methods: {[m for m in dir(track) if not m.startswith('_')]}")
-        
-        if track.kind == rtc.TrackKind.KIND_VIDEO:
-            self.video_track = track
-            logger.info(f"[{self.mint_id}] ✅ Video track reference stored for direct access")
-        elif track.kind == rtc.TrackKind.KIND_AUDIO:
-            self.audio_track = track
-            logger.info(f"[{self.mint_id}] ✅ Audio track reference stored for direct access")
-        
-        # Start polling for frames if not already started
-        if not self._polling_started:
-            logger.info(f"[{self.mint_id}] 🔄 Starting frame polling for direct track access...")
-            logger.info(f"[{self.mint_id}] 🔍 Tracks available: video={self.video_track is not None}, audio={self.audio_track is not None}")
-            asyncio.create_task(self._poll_frames())
-            self._polling_started = True
-        else:
-            logger.info(f"[{self.mint_id}] 🔄 Frame polling already started, skipping...")
-
-    async def _poll_frames(self):
-        """Process frames using LiveKit's VideoStream and AudioStream (proven approach)."""
-        logger.info(f"[{self.mint_id}] 🚀 _poll_frames() method called!")
-        logger.info(f"[{self.mint_id}] 🔄 Starting frame processing with VideoStream/AudioStream...")
-        
-        try:
-            # Create tasks for video and audio processing (like the working implementation)
-            tasks = []
-            
-            logger.info(f"[{self.mint_id}] 🔍 Available tracks: video={self.video_track is not None}, audio={self.audio_track is not None}")
-            logger.info(f"[{self.mint_id}] 🔍 Video track object: {self.video_track}")
-            logger.info(f"[{self.mint_id}] 🔍 Audio track object: {self.audio_track}")
-            
-            if self.video_track:
-                logger.info(f"[{self.mint_id}] ✅ Starting video stream processing")
-                logger.info(f"[{self.mint_id}] Video track details: {self.video_track}")
-                logger.info(f"[{self.mint_id}] Video track type: {type(self.video_track)}")
-                logger.info(f"[{self.mint_id}] Video track kind: {getattr(self.video_track, 'kind', 'unknown')}")
-                video_task = asyncio.create_task(self._process_video_stream())
-                tasks.append(video_task)
-                logger.info(f"[{self.mint_id}] Video task created: {video_task}")
-            else:
-                logger.warning(f"[{self.mint_id}] ⚠️  No video track available!")
-            
-            if self.audio_track:
-                logger.info(f"[{self.mint_id}] ✅ Starting audio stream processing")
-                logger.info(f"[{self.mint_id}] Audio track details: {self.audio_track}")
-                audio_task = asyncio.create_task(self._process_audio_stream())
-                tasks.append(audio_task)
-                logger.info(f"[{self.mint_id}] Audio task created: {audio_task}")
-            else:
-                logger.info(f"[{self.mint_id}] 📹 Video-only recording: No audio track available (stream may be muted)")
-            
-            if not tasks:
-                logger.warning(f"[{self.mint_id}] ⚠️  No tracks available for processing")
-                logger.warning(f"[{self.mint_id}] ⚠️  Video track: {self.video_track}")
-                logger.warning(f"[{self.mint_id}] ⚠️  Audio track: {self.audio_track}")
-                return
-            
-            logger.info(f"[{self.mint_id}] 🚀 Starting {len(tasks)} processing tasks...")
-            # Wait for all tasks to complete
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info(f"[{self.mint_id}] 📊 Task results: {results}")
-            
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Frame processing error: {e}")
-        finally:
-            logger.info(f"[{self.mint_id}] 🛑 Frame processing stopped")
-
-    async def _process_video_stream(self):
-        """Process video frames using rtc.VideoStream (proven approach)."""
-        try:
-            logger.info(f"[{self.mint_id}] 🎥 Starting video stream processing")
-            logger.info(f"[{self.mint_id}] Video track: {self.video_track}")
-            logger.info(f"[{self.mint_id}] Video track type: {type(self.video_track)}")
-            frame_count = 0
-            last_frame_time = time.time()
-            
-            logger.debug(f"[{self.mint_id}] Entering VideoStream async loop for {self.video_track.sid}")
-            # Process frames as fast as possible - the semaphore provides backpressure
-            async for event in rtc.VideoStream(self.video_track):
-                current_time = time.time()
-                time_since_last = current_time - last_frame_time
-                logger.info(f"[{self.mint_id}] 📹 VideoStream event received! (time since last: {time_since_last:.2f}s)")
-                
-                # Check for frame timeout (if no frames for 10 seconds, something is wrong)
-                if time_since_last > 10.0 and frame_count > 0:
-                    logger.warning(f"[{self.mint_id}] ⚠️  Long gap between frames: {time_since_last:.2f}s")
-                    self._log_memory_usage(f"[{self.mint_id}] frame_gap_warning")
-                    
-                    # If gap is too long, stop recording to prevent memory issues
-                    if time_since_last > 60.0:  # 1 minute gap
-                        logger.error(f"[{self.mint_id}] ⚠️  Frame gap too long ({time_since_last:.2f}s) - stopping recording")
-                        logger.error(f"[{self.mint_id}] This indicates LiveKit connection issues or stream problems")
-                        self._shutdown_event.set()
-                        return
-                
-                last_frame_time = current_time
-                
-                if self._shutdown_event.is_set():
-                    logger.info(f"[{self.mint_id}] Stop signal received, ending video processing")
-                    break
-                
-                frame = event.frame
-                logger.info(f"[{self.mint_id}] 📹 Frame extracted from event: {type(frame)}")
-                logger.info(f"[{self.mint_id}] 📹 Frame dimensions: {frame.width}x{frame.height}")
-                logger.info(f"[{self.mint_id}] 📹 Frame data size: {len(frame.data) if hasattr(frame, 'data') else 'No data attr'}")
-                
-                # CRITICAL: Backpressure to prevent LiveKit buffer overflow
-                # If processing is full, drop frame instead of queuing in memory
-                if self.processing_semaphore.locked():
-                    self.frames_dropped_backpressure += 1
-                    if self.frames_dropped_backpressure % 10 == 0:
-                        logger.warning(f"[{self.mint_id}] ⚠️  Dropping frames due to slow encoding ({self.frames_dropped_backpressure} total dropped)")
-                    continue  # Skip this frame
-                
-                try:
-                    # Acquire semaphore for processing (limits concurrent frames)
-                    async with self.processing_semaphore:
-                        logger.info(f"[{self.mint_id}] 📹 Calling _on_video_frame...")
-                        await self._on_video_frame(frame)
-                        frame_count += 1
-                        logger.info(f"[{self.mint_id}] 📹 Frame processed successfully, count: {frame_count}")
-                    
-                    # Log progress and memory usage
-                    if frame_count % 50 == 0:  # Log every 50 frames instead of 100
-                        self._log_memory_usage(f"{self.mint_id} video_frame_{frame_count}")
-                        logger.info(f"[{self.mint_id}] Processed {frame_count} video frames")
-                        
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error processing video frame {frame_count}: {e}")
-                    import traceback
-                    logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
-                    continue
-                    
-        except asyncio.CancelledError:
-            logger.info(f"[{self.mint_id}] Video stream processing cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Video stream processing error: {e}")
-            import traceback
-            logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
-            
-            # Check if this is a LiveKit connection issue
-            if "connection" in str(e).lower() or "timeout" in str(e).lower():
-                logger.error(f"[{self.mint_id}] LiveKit connection issue detected - stopping recording")
-                self._shutdown_event.set()
-        finally:
-            logger.info(f"[{self.mint_id}] Video stream processing ended. Total frames: {frame_count}")
-
-    async def _process_audio_stream(self):
-        """Process audio frames using rtc.AudioStream (proven approach)."""
-        try:
-            logger.info(f"[{self.mint_id}] 🎵 Starting audio stream processing")
-            frame_count = 0
-            
-            logger.debug(f"[{self.mint_id}] Entering AudioStream async loop for {self.audio_track.sid}")
-            # Process frames as fast as possible - the semaphore provides backpressure
-            async for event in rtc.AudioStream(self.audio_track):
-                if self._shutdown_event.is_set():
-                    logger.info(f"[{self.mint_id}] Stop signal received, ending audio processing")
-                    break
-                
-                frame = event.frame
-                
-                # CRITICAL: Backpressure for audio too
-                if self.processing_semaphore.locked():
-                    continue  # Drop audio frame if video processing is backed up
-                
-                try:
-                    # Acquire semaphore for processing
-                    async with self.processing_semaphore:
-                        await self._on_audio_frame(frame)
-                        frame_count += 1
-                    
-                    # Log progress
-                    if frame_count % 1000 == 0:
-                        logger.info(f"[{self.mint_id}] Processed {frame_count} audio frames")
-                        
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error processing audio frame {frame_count}: {e}")
-                    continue
-                    
-        except asyncio.CancelledError:
-            logger.info(f"[{self.mint_id}] Audio stream processing cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Audio stream processing error: {e}")
-        finally:
-            logger.info(f"[{self.mint_id}] Audio stream processing ended. Total frames: {frame_count}")
-
-    async def _setup_container(self):
-        """Setup PyAV container for recording with lazy initialization."""
-        # Idempotency check - if already initialized, return early
-        if self._container_initialized:
-            logger.info(f"[{self.mint_id}] Container already initialized, skipping setup")
-            return
-            
-        # Generate output path
-        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-        output_format = self.config.get('format', 'mpegts')
-
-        if output_format == 'mpegts':
-            output_filename = f"{self.mint_id}_{timestamp}.ts"
-        elif output_format == 'mp4':
-            output_filename = f"{self.mint_id}_{timestamp}.mp4"
-        elif output_format == 'webm':
-            output_filename = f"{self.mint_id}_{timestamp}.webm"
-        else:
-            output_filename = f"{self.mint_id}_{timestamp}.ts"  # Default to mpegts
-
-        self.output_path = self.output_dir / output_filename
-
-        # Ensure output directory exists
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        logger.info(f"[{self.mint_id}] Setting up PyAV container: {self.output_path} (format: {output_format})")
-        logger.info(f"[{self.mint_id}] Available tracks: video={self.video_track is not None}, audio={self.audio_track is not None}")
-
-        try:
-            # DIRECT FILE WRITING: Only method that works (PyAV container buffers in memory)
-            logger.info(f"[{self.mint_id}] 🚀 Using DIRECT FILE WRITING with buffered flushing (4MB threshold)")
-            
-            # Use temporary file for crash recovery
-            # If process crashes, temp file can be recovered/validated
-            self.final_output_path = self.output_path
-            self.temp_output_path = self.output_path.with_suffix('.recording' + self.output_path.suffix)
-            
-            # Open temp file directly for writing
-            self.output_file = open(str(self.temp_output_path), 'wb')
-            self.last_disk_write = time.time()
-            self.bytes_since_last_flush = 0
-            
-            # CRITICAL FIX: Use a SEPARATE dummy container just for encoder setup
-            # DO NOT open container to the file we're writing to - PyAV will buffer!
-            # Use an in-memory "pipe" container that we'll never actually use
-            import io
-            self.dummy_buffer = io.BytesIO()
-            self.container = av.open(self.dummy_buffer, mode='w', format=output_format)
-            
-            logger.info(f"[{self.mint_id}] ✅ Direct file writer initialized: {self.temp_output_path}")
-            logger.info(f"[{self.mint_id}] ✅ Dummy container for encoder setup (will NOT be used for muxing)")
-
-            # Add video stream
-            if self.video_track:
-                # CRITICAL: Configure encoder for low-latency real-time recording
-                encoder_options = {
-                    'preset': 'ultrafast',      # Fast encoding, minimal buffering
-                    'tune': 'zerolatency',       # MOST IMPORTANT: No frame buffering
-                    'g': str(self.config.get('gop_size', self.config['fps'] * 2)),  # GOP size (2-4 seconds)
-                    'profile:v': 'main',         # MP4 compatibility
-                }
-                
-                self.video_stream = self.container.add_stream(
-                    self.config['video_codec'],
-                    rate=self.config['fps'],
-                    options=encoder_options
-                )
-                self.video_stream.width = self.config['width']
-                self.video_stream.height = self.config['height']
-                self.video_stream.pix_fmt = 'yuv420p'
-                
-                # Set explicit time_base for video stream
-                self.video_stream.time_base = Fraction(1, self.config['fps'])
-                self.video_stream.codec_context.time_base = Fraction(1, self.config['fps'])
-                self.video_stream.codec_context.framerate = Fraction(self.config['fps'], 1)
-                logger.info(f"[{self.mint_id}] Video stream time_base set to 1/{self.config['fps']}")
-
-                # Set video bitrate
-                if 'video_bitrate' in self.config:
-                    self.video_stream.bit_rate = self._parse_bitrate(self.config['video_bitrate'])
-
-                logger.info(f"[{self.mint_id}] ✅ Video stream added: {self.config['video_codec']} at {self.config['width']}x{self.config['height']}")
-                logger.info(f"[{self.mint_id}] ✅ Encoder options: {encoder_options}")
-            else:
-                logger.warning(f"[{self.mint_id}] ⚠️  No video track available for container setup")
-
-            # Add audio stream
-            if self.audio_track:
-                # Create audio stream specifying rate only; configure details via codec_context
-                self.audio_stream = self.container.add_stream(
-                    self.config['audio_codec'],
-                    rate=48000  # Standard sample rate
-                )
-
-                # Configure encoder context for compatibility (avoid read-only channels attr)
-                try:
-                    ctx = self.audio_stream.codec_context
-                    # Ensure sample rate and layout are set
-                    ctx.sample_rate = 48000
-                    
-                    # Set layout properly
-                    try:
-                        from av.audio.layout import AudioLayout
-                        ctx.layout = AudioLayout('stereo')
-                        logger.info(f"[{self.mint_id}] Audio layout set to: {ctx.layout}")
-                    except Exception as e:
-                        logger.warning(f"[{self.mint_id}] Could not set AudioLayout: {e}")
-                        ctx.layout = 'stereo'
-                    
-                    # DON'T set format - let AAC use its native fltp format
-                    # This prevents "s16 is not supported by aac encoder" error
-                    logger.info(f"[{self.mint_id}] Audio codec will use native format (fltp for AAC)")
-                except Exception as ctx_err:
-                    logger.warning(f"[{self.mint_id}] ⚠️  Could not configure audio codec context fully: {ctx_err}")
-
-                # Set audio bitrate if provided
-                if 'audio_bitrate' in self.config:
-                    self.audio_stream.bit_rate = self._parse_bitrate(self.config['audio_bitrate'])
-
-                # Set explicit time_base for audio stream
-                self.audio_stream.time_base = Fraction(1, 48000)
-                logger.info(f"[{self.mint_id}] Audio stream time_base set to: {self.audio_stream.time_base}")
-                logger.info(f"[{self.mint_id}] Audio stream sample_rate: {self.audio_stream.sample_rate}")
-
-                logger.info(f"[{self.mint_id}] ✅ Audio stream added: {self.config['audio_codec']} at 48kHz stereo (via codec_context)")
-            else:
-                logger.info(f"[{self.mint_id}] 📹 Video-only recording: No audio track available (stream may be muted)")
-
-            # Mark as initialized
-            self._container_initialized = True
-            
-            # Log setup completion with track info
-            video_available = self.video_stream is not None
-            audio_available = self.audio_stream is not None
-            
-            if video_available and audio_available:
-                logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete (video + audio)")
-            elif video_available and not audio_available:
-                logger.info(f"[{self.mint_id}] ✅ PyAV container setup complete (video-only recording)")
-            else:
-                logger.warning(f"[{self.mint_id}] ⚠️  PyAV container setup complete (no video stream)")
-
-        except Exception as e:
-            error_msg = str(e)
-            if "does not support" in error_msg and "codec" in error_msg:
-                logger.error(f"[{self.mint_id}] ❌ Codec/format mismatch: {error_msg}")
-                logger.error(f"[{self.mint_id}] Format: {output_format}, Video: {self.config.get('video_codec')}, Audio: {self.config.get('audio_codec')}")
-                logger.error(f"[{self.mint_id}] Hint: Use 'mp4' for H.264/AAC, 'webm' for VP9/Opus, 'mpegts' for MPEG-TS")
-            else:
-                logger.error(f"[{self.mint_id}] ❌ Failed to setup PyAV container: {e}")
-            
-            if self.container:
-                self.container.close()
-                self.container = None
-            self._container_initialized = False
-            # Backoff 1s before next attempt to avoid log spam
-            self._next_container_setup_time = time.time() + 1.0
-            raise  # Re-raise to fail the recording start immediately
-
-    async def _close_container(self):
-        """Close PyAV container/file and finalize recording - ONLY call encode(None) here."""
-        try:
-            logger.info(f"[{self.mint_id}] Finalizing recording and flushing encoders")
-
-            # Flush video encoder if available - ONLY TIME encode(None) should be called
-            if self.video_stream and not self.encoder_finalized:
-                logger.info(f"[{self.mint_id}] Flushing video encoder (finalizing)")
-                try:
-                    for packet in self.video_stream.encode(None):
-                        self._write_packet_direct(packet)
-                    logger.info(f"[{self.mint_id}] ✅ Video encoder flushed successfully")
-                except EOFError as e:
-                    logger.warning(f"[{self.mint_id}] Video encoder already finalized: {e}")
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error flushing video encoder: {e}")
-
-            # Flush audio encoder if available
-            if self.audio_stream:
-                logger.info(f"[{self.mint_id}] Flushing audio encoder (finalizing)")
-                try:
-                    for packet in self.audio_stream.encode(None):
-                        self._write_packet_direct(packet)
-                    logger.info(f"[{self.mint_id}] ✅ Audio encoder flushed successfully")
-                except EOFError as e:
-                    logger.warning(f"[{self.mint_id}] Audio encoder already finalized: {e}")
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error flushing audio encoder: {e}")
-
-            # Mark encoder as finalized
-            self.encoder_finalized = True
-
-            # Close direct file writer and finalize recording
-            if self.output_file:
-                try:
-                    # Final flush of any remaining buffered data
-                    self.output_file.flush()
-                    self.output_file.close()
-                    logger.info(f"[{self.mint_id}] ✅ Direct file writer closed ({self.metrics['bytes_written']} bytes written)")
-                    
-                    # Move temp file to final location (crash recovery)
-                    if self.temp_output_path and self.temp_output_path.exists():
-                        if self.final_output_path:
-                            self.temp_output_path.rename(self.final_output_path)
-                            logger.info(f"[{self.mint_id}] ✅ Recording finalized: {self.final_output_path}")
-                        else:
-                            logger.warning(f"[{self.mint_id}] No final output path set, temp file remains: {self.temp_output_path}")
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error closing direct file writer: {e}")
-                finally:
-                    self.output_file = None
-
-            # Close PyAV dummy container (only used for encoder setup, not for muxing)
-            if self.container:
-                try:
-                    self.container.close()
-                    logger.debug(f"[{self.mint_id}] PyAV dummy container closed (was only used for encoder setup)")
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error closing container: {e}")
-                finally:
-                    self.container = None
-                    
-            # Clean up dummy buffer
-            if hasattr(self, 'dummy_buffer') and self.dummy_buffer:
-                try:
-                    self.dummy_buffer.close()
-                    self.dummy_buffer = None
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error closing dummy buffer: {e}")
-
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Error during finalization: {e}")
-        finally:
-            self.encoder_finalized = True
-            self.container = None
-            self.output_file = None
-
-    async def _start_frame_processing(self):
-        """Start frame processing tasks."""
-        logger.info(f"[{self.mint_id}] Starting frame processing")
-
-        if self.video_track:
-            logger.info(f"[{self.mint_id}] Video track available: {self.video_track.sid}")
-        if self.audio_track:
-            logger.info(f"[{self.mint_id}] Audio track available: {self.audio_track.sid}")
-
-        # Start the frame processing tasks
-        logger.info(f"[{self.mint_id}] 🚀 Starting frame processing tasks...")
-        await self._poll_frames()
-
-    async def _on_video_frame(self, frame: rtc.VideoFrame):
-        """Handle video frame from LiveKit."""
-        # CRITICAL: Time everything to find the 13-31 second delay
-        frame_start_time = time.time()
-        
-        if self._shutdown_event.is_set():
-            return
-
-        # Lazy initialization with backoff - setup container on first frame
-        t_init_start = time.time()
-        if not self._container_initialized:
-            # Backoff guard to avoid retry spam
-            if time.time() < self._next_container_setup_time:
-                return
-            try:
-                logger.info(f"[{self.mint_id}] 🎬 First video frame received, initializing container...")
-                t_setup_start = time.time()
-                await self._setup_container()
-                t_setup_end = time.time()
-                setup_duration = (t_setup_end - t_setup_start) * 1000
-                logger.info(f"[{self.mint_id}] ✅ Container initialized in {setup_duration:.1f}ms")
-                if setup_duration > 1000:
-                    logger.warning(f"[{self.mint_id}] ⚠️ SLOW CONTAINER SETUP: {setup_duration:.1f}ms")
-            except Exception as e:
-                logger.error(f"[{self.mint_id}] Failed to initialize container: {e}")
-                # Backoff 1s before trying again
-                self._next_container_setup_time = time.time() + 1.0
-                return
-
-        t_init_end = time.time()
-        init_duration = (t_init_end - t_init_start) * 1000
-        if init_duration > 100:
-            logger.warning(f"[{self.mint_id}] ⚠️ SLOW INIT CHECK: {init_duration:.1f}ms")
-        
-        # Guard: Skip if video stream not available after initialization
-        if not self.video_stream or not self.video_stream.time_base:
-            logger.warning(f"[{self.mint_id}] Video stream not properly initialized")
-            logger.warning(f"[{self.mint_id}]   - video_track: {self.video_track is not None}")
-            logger.warning(f"[{self.mint_id}]   - video_stream: {self.video_stream is not None}")
-            logger.warning(f"[{self.mint_id}]   - time_base: {self.video_stream.time_base if self.video_stream else 'N/A'}")
-            logger.warning(f"[{self.mint_id}]   - container_initialized: {self._container_initialized}")
-            return
-
-        try:
-            # Increment received counter
-            self.video_frames_received += 1
-            self.metrics['frames_received'] += 1
-            logger.debug(f"[{self.mint_id}] 📹 Processing video frame #{self.video_frames_received}")
-            logger.debug(f"[{self.mint_id}] 📹 Frame details: {frame.width}x{frame.height}, data_len={len(frame.data) if hasattr(frame, 'data') else 'No data'}")
-
-            if self.video_frames_received == 1:
-                logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME RECEIVED!")
-                logger.info(f"[{self.mint_id}] Frame type: {type(frame)}")
-                logger.info(f"[{self.mint_id}] Frame attributes: {[attr for attr in dir(frame) if not attr.startswith('_')]}")
-                self._log_memory_usage(f"{self.mint_id} first_frame")
-
-            # Use VideoNormalizer for flexible frame handling
-            t_normalize_start = time.time()
-            target_width = self.config.get('width', 1920)
-            target_height = self.config.get('height', 1080)
-
-            # Update current resolution if needed
-            if self.current_video_width != frame.width or self.current_video_height != frame.height:
-                self.current_video_width = frame.width
-                self.current_video_height = frame.height
-                self.frame_count_since_last_resize = 0
-                logger.info(f"[{self.mint_id}] Resolution changed to {frame.width}x{frame.height}")
-
-            normalized_frame = self.video_normalizer.normalize_frame(frame, target_width, target_height)
-            t_normalize_end = time.time()
-            normalize_duration = (t_normalize_end - t_normalize_start) * 1000
-            if normalize_duration > 50:
-                logger.warning(f"[{self.mint_id}] ⚠️ SLOW NORMALIZE: {normalize_duration:.1f}ms")
-
-            if normalized_frame is None:
-                logger.warning(f"[{self.mint_id}] Failed to normalize frame, skipping")
-                return
-
-            # Use the normalized frame for encoding
-            # normalized_frame is already a properly formatted PyAV frame
-            av_frame = normalized_frame
-
-            logger.debug(f"[{self.mint_id}] ✅ Frame normalized: {av_frame.width}x{av_frame.height} {av_frame.format.name}")
-            
-            # TELEMETRY: Detailed frame analysis for first 60 frames
-            if self.video_frames_received <= 60:
-                logger.info(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received}:")
-                logger.info(f"[{self.mint_id}]   - Source: {frame.width}x{frame.height}, data_len={len(frame.data) if hasattr(frame, 'data') else 'N/A'}")
-                logger.info(f"[{self.mint_id}]   - Normalized: {av_frame.width}x{av_frame.height}, format={av_frame.format.name}")
-                logger.info(f"[{self.mint_id}]   - Planes: {len(av_frame.planes)} planes")
-                for i, plane in enumerate(av_frame.planes):
-                    logger.info(f"[{self.mint_id}]     Plane {i}: {plane.width}x{plane.height}, line_size={plane.line_size}, buffer_size={plane.buffer_size}")
-                logger.info(f"[{self.mint_id}]   - to_ndarray available: {hasattr(frame, 'to_ndarray')}")
-                if hasattr(frame, 'timestamp_us'):
-                    logger.info(f"[{self.mint_id}]   - timestamp_us: {frame.timestamp_us}")
-
-            # Handle dynamic resolution - update config with actual dimensions
-            actual_height, actual_width = av_frame.height, av_frame.width
-            expected_height, expected_width = self.config['height'], self.config['width']
-
-            # If dimensions don't match, update the config for dynamic resolution
-            if actual_height != expected_height or actual_width != expected_width:
-                logger.info(f"[{self.mint_id}] Dynamic resolution detected: {actual_width}x{actual_height} (was {expected_width}x{expected_height})")
-                self.config['width'] = actual_width
-                self.config['height'] = actual_height
-
-            # Calculate PTS/DTS with robust fallback mechanisms
-            t_pts_start = time.time()
-            pts, dts = self._calculate_video_pts_dts(frame, av_frame)
-            t_pts_end = time.time()
-            pts_duration = (t_pts_end - t_pts_start) * 1000
-            if pts_duration > 10:
-                logger.warning(f"[{self.mint_id}] ⚠️ SLOW PTS CALC: {pts_duration:.1f}ms")
-            
-            av_frame.pts = pts
-            av_frame.dts = dts
-            av_frame.time_base = self.video_stream.time_base
-            self.last_video_pts = pts
-            
-            # Log PTS/DTS for first 5 frames
-            if self.video_frames_written < 5:
-                logger.info(f"[{self.mint_id}] Frame {self.video_frames_written} final PTS={pts}, DTS={dts}, tb={self.video_stream.time_base}")
-            
-            # TELEMETRY: Log encoder context on first frame
-            if self.video_frames_received == 1 and self.video_stream:
-                logger.info(f"[{self.mint_id}] [TELEMETRY] Encoder Configuration:")
-                logger.info(f"[{self.mint_id}]   - Codec: {self.config.get('video_codec')}")
-                logger.info(f"[{self.mint_id}]   - Container format: {self.config.get('format')}")
-                logger.info(f"[{self.mint_id}]   - Resolution: {self.video_stream.width}x{self.video_stream.height}")
-                logger.info(f"[{self.mint_id}]   - Pixel format: {self.video_stream.pix_fmt}")
-                logger.info(f"[{self.mint_id}]   - Bitrate: {self.video_stream.bit_rate}")
-                logger.info(f"[{self.mint_id}]   - FPS/time_base: {self.config.get('fps')}/{self.video_stream.time_base}")
-                if hasattr(self.video_stream, 'options') and self.video_stream.options:
-                    logger.info(f"[{self.mint_id}]   - Options: {self.video_stream.options}")
-
-            # A/V sync drift logging (every 60 frames)
-            self.video_frames_logged += 1
-            if self.video_frames_logged % 60 == 0 and self.audio_samples_written > 0:
-                video_seconds = float(av_frame.pts * self.video_stream.time_base)
-                audio_seconds = self.audio_samples_written / self.audio_stream.sample_rate
-                drift = abs(video_seconds - audio_seconds)
-                if drift > 1.0:
-                    logger.warning(f"[{self.mint_id}] A/V sync drift: {drift:.2f}s (video: {video_seconds:.2f}s, audio: {audio_seconds:.2f}s)")
-
-            # Encode and write frame
-            if self.video_stream:
-                try:
-                    # Encode frame
-                    t_encode_start = time.time()
-                    packets = self.video_stream.encode(av_frame)
-                    t_encode_end = time.time()
-                    encode_duration = (t_encode_end - t_encode_start) * 1000
-                    
-                    packet_count = 0
-                    total_bytes = 0
-                    
-                    t_write_start = time.time()
-                    for packet in packets:
-                        # Write packet bytes directly to disk
-                        self._write_packet_direct(packet)
-                        packet_count += 1
-                        total_bytes += packet.size
-                        self.metrics['packets_written'] += 1
-                        
-                        logger.debug(f"[{self.mint_id}] Wrote video packet: size={packet.size} bytes, pts={packet.pts}, dts={packet.dts}")
-                    t_write_end = time.time()
-                    write_duration = (t_write_end - t_write_start) * 1000
-                    
-                    # Log timing for slow operations
-                    if encode_duration > 50:
-                        logger.warning(f"[{self.mint_id}] ⚠️ SLOW ENCODE: {encode_duration:.1f}ms")
-                    if write_duration > 50:
-                        logger.warning(f"[{self.mint_id}] ⚠️ SLOW WRITE: {write_duration:.1f}ms")
-                    
-                    # TELEMETRY: Log packet details and timing for first 60 frames
-                    frame_total_time = (time.time() - frame_start_time) * 1000
-                    if self.video_frames_received <= 60:
-                        if packet_count > 0:
-                            logger.info(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received}: "
-                                      f"{packet_count} packet(s), {total_bytes} bytes, "
-                                      f"timing: normalize={normalize_duration:.1f}ms, "
-                                      f"encode={encode_duration:.1f}ms, write={write_duration:.1f}ms, "
-                                      f"TOTAL={frame_total_time:.1f}ms")
-                        else:
-                            logger.warning(f"[{self.mint_id}] [TELEMETRY] Frame {self.video_frames_received} → NO PACKETS (PTS={pts}, last_pts={self.last_video_pts})")
-
-                    # Track zero-packet streak and handle encoder stalls
-                    if packet_count == 0:
-                        self.zero_packet_streak += 1
-                        logger.warning(f"[{self.mint_id}] No packets generated from frame {self.video_frames_written} (streak: {self.zero_packet_streak})")
-                        
-                        # Invoke stall handler at specific thresholds
-                        if self.zero_packet_streak in (10, 30, 60):
-                            await self._handle_encoder_stall()
-                    else:
-                        # Reset streak on successful packet generation
-                        if self.zero_packet_streak > 0:
-                            logger.info(f"[{self.mint_id}] ✅ Packets generated after {self.zero_packet_streak} frame streak")
-                        self.zero_packet_streak = 0
-
-                    self.video_frames_written += 1
-
-                    if self.video_frames_written == 1:
-                        logger.info(f"[{self.mint_id}] 🎬 FIRST VIDEO FRAME ENCODED TO PYAV!")
-
-                    # Periodically verify file is growing and log performance
-                    if self.video_frames_written % 30 == 0:
-                        check_path = self.temp_output_path if self.temp_output_path else self.output_path
-                        if check_path and check_path.exists():
-                            file_size = check_path.stat().st_size
-                            logger.info(f"[{self.mint_id}] File size: {file_size / 1024 / 1024:.2f} MB after {self.video_frames_written} frames")
-                            if file_size == 0:
-                                logger.error(f"[{self.mint_id}] ❌ WARNING: File size is 0 after {self.video_frames_written} frames!")
-                        else:
-                            logger.warning(f"[{self.mint_id}] Recording file does not exist: {check_path}")
-                        
-                        # Log performance summary every 30 frames
-                        logger.info(f"[{self.mint_id}] 📊 PERFORMANCE: Last frame took {frame_total_time:.1f}ms total")
-                        if frame_total_time > 100:
-                            logger.error(f"[{self.mint_id}] ❌ CRITICAL: Frame processing >100ms will cause buffering!")
-
-                except Exception as e:
-                    frame_error_time = (time.time() - frame_start_time) * 1000
-                    logger.error(f"[{self.mint_id}] Error encoding video frame after {frame_error_time:.1f}ms: {e}")
-                    logger.error(f"[{self.mint_id}] Frame details: {av_frame.width}x{av_frame.height}, format={av_frame.format.name}")
-                    logger.error(f"[{self.mint_id}] Container state: {self.container is not None}, Stream: {self.video_stream is not None}")
-                    import traceback
-                    logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
-                    # Continue processing other frames
-            else:
-                logger.warning(f"[{self.mint_id}] PyAV container or video stream not available")
-                logger.warning(f"[{self.mint_id}] Container: {self.container is not None}")
-                logger.warning(f"[{self.mint_id}] Video stream: {self.video_stream is not None}")
-                logger.warning(f"[{self.mint_id}] This indicates a setup issue - recording may not work properly")
-            
-            # CRITICAL: Free video frames immediately after processing to reduce memory usage
-            if 'av_frame' in locals():
-                del av_frame
-            if 'normalized_frame' in locals():
-                # Only delete normalized_frame if it's different from av_frame (if av_frame exists)
-                if 'av_frame' not in locals() or normalized_frame is not av_frame:
-                    del normalized_frame
-
-            # Check memory usage and stop if too high
-            try:
-                import psutil
-                process = psutil.Process()
-                memory_mb = process.memory_info().rss / 1024 / 1024
-                if memory_mb > 1000:  # Stop if using more than 1GB
-                    logger.error(f"[{self.mint_id}] ❌ Memory usage too high: {memory_mb:.1f}MB - stopping recording")
-                    self._shutdown_event.set()
-                    return
-            except ImportError:
-                pass  # psutil not available, continue
-
-            # Log memory usage and force garbage collection every 60 frames
-            if self.video_frames_received % 60 == 0:
-                self._log_memory_usage(f"{self.mint_id} frame_{self.video_frames_received}")
-                # Force garbage collection to free memory
-                gc.collect()
-
-            # Every 100 frames, log receive/write ratio
-            if self.video_frames_received % 100 == 0:
-                write_ratio = (self.video_frames_written / self.video_frames_received * 100) if self.video_frames_received > 0 else 0
-                logger.info(f"[{self.mint_id}] Frame stats: received={self.video_frames_received}, written={self.video_frames_written} ({write_ratio:.1f}%)")
-                if write_ratio < 50:
-                    logger.error(f"[{self.mint_id}] ❌ WARNING: Low write ratio - frames not being encoded properly!")
-                            
-        except MemoryError as e:
-            logger.error(f"[{self.mint_id}] Memory allocation failed: {e}")
-            self._log_memory_usage(f"{self.mint_id} memory_error")
-            # Force garbage collection and continue
-            gc.collect()
-            return
-        except Exception as e:
-            frame_error_time = (time.time() - frame_start_time) * 1000
-            logger.error(f"[{self.mint_id}] Video frame processing error after {frame_error_time:.1f}ms: {e}")
-            if frame_error_time > 1000:
-                logger.error(f"[{self.mint_id}] ❌ CRITICAL: Frame error took {frame_error_time:.1f}ms!")
-            import traceback
-            logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
-            # Log memory usage on error
-            self._log_memory_usage(f"{self.mint_id} frame_error")
-        
-        # Final timing check - log every frame's total duration
-        frame_end_time = time.time()
-        frame_total_duration = (frame_end_time - frame_start_time) * 1000
-        if frame_total_duration > 100:
-            logger.error(f"[{self.mint_id}] ❌ CRITICAL PERFORMANCE: Frame took {frame_total_duration:.1f}ms (should be <33ms for 30fps)")
-        elif frame_total_duration > 50:
-            logger.warning(f"[{self.mint_id}] ⚠️ SLOW FRAME: {frame_total_duration:.1f}ms")
-
-    async def _on_audio_frame(self, frame: rtc.AudioFrame):
-        """Handle audio frame from LiveKit."""
-        if self._shutdown_event.is_set():
-            return
-
-        # Lazy initialization with backoff - setup container on first frame (if not already done by video)
-        if not self._container_initialized:
-            # Backoff guard to avoid retry spam
-            if time.time() < self._next_container_setup_time:
-                return
-            try:
-                logger.info(f"[{self.mint_id}] 🎵 First audio frame received, initializing container...")
-                await self._setup_container()
-                logger.info(f"[{self.mint_id}] ✅ Container initialized on first audio frame")
-            except Exception as e:
-                logger.error(f"[{self.mint_id}] Failed to initialize container: {e}")
-                # Backoff 1s before trying again
-                self._next_container_setup_time = time.time() + 1.0
-                return
-
-        # Guard: Skip if audio stream not available after initialization
-        if not self.audio_stream:
-            # This is normal for video-only streams (muted audio)
-            logger.debug(f"[{self.mint_id}] Audio stream not available (video-only recording), skipping audio frame")
-            return
-
-        try:
-            self.audio_frames_received += 1
-
-            # Convert LiveKit audio frame to bytes
-            audio_data = frame.data
-            if hasattr(audio_data, 'tobytes'):
-                audio_bytes = audio_data.tobytes()
-            else:
-                audio_bytes = bytes(audio_data)
-
-            # PyAV mode: encode and mux audio frame to container
-            if self.container and self.audio_stream:
-                try:
-                    # Calculate samples in this frame based on actual channel count
-                    # Determine channel count from audio track or assume stereo
-                    channel_count = 1 if (hasattr(self.audio_track, 'channels') and self.audio_track.channels == 1) else 2
-                    samples_per_frame = len(audio_bytes) // (2 * channel_count)  # int16 * channel_count
-
-                    # Create PyAV AudioFrame from audio data
-                    # Detect audio channel count and handle both mono and stereo
-                    audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-                    
-                    # Determine if this is mono or stereo based on the audio track configuration
-                    # Check if we have a stereo audio track (2 channels) or mono (1 channel)
-                    if hasattr(self.audio_track, 'channels') and self.audio_track.channels == 1:
-                        # Mono audio - keep as 1D array for packed format (1, samples)
-                        audio_layout = 'mono'
-                        # For mono, PyAV expects (1, samples) shape for packed format
-                        audio_array = audio_array.reshape(1, -1)  # Shape: (1, samples)
-                        logger.debug(f"[{self.mint_id}] Processing mono audio: {audio_array.shape}")
-                    else:
-                        # Stereo audio - keep as 1D array for packed format (1, samples*channels)
-                        audio_layout = 'stereo'
-                        # For stereo, PyAV expects (1, samples*channels) shape for packed format
-                        # Keep the interleaved format that LiveKit provides
-                        audio_array = audio_array.reshape(1, -1)  # Shape: (1, samples*channels)
-                        logger.debug(f"[{self.mint_id}] Processing stereo audio: {audio_array.shape}")
-                    
-                    av_audio_frame = AudioFrame.from_ndarray(
-                        audio_array,
-                        format='s16',
-                        layout=audio_layout
-                    )
-                    # Set PTS based on cumulative samples
-                    av_audio_frame.pts = self.audio_samples_written
-                    
-                    # Robust time_base fallback - use stream time_base or fallback to 1/48000
-                    frame_time_base = self.audio_stream.time_base if self.audio_stream.time_base else Fraction(1, 48000)
-                    av_audio_frame.time_base = frame_time_base
-                    av_audio_frame.sample_rate = 48000
-
-                    # Create resampler on first frame to convert s16 -> fltp for AAC
-                    if self.audio_resampler is None:
-                        try:
-                            from av.audio.resampler import AudioResampler
-                            self.audio_resampler = AudioResampler(
-                                format='fltp',  # AAC's required format
-                                layout=self.audio_stream.codec_context.layout,
-                                rate=48000
-                            )
-                            logger.info(f"[{self.mint_id}] Audio resampler created: s16 -> fltp")
-                        except Exception as resampler_err:
-                            logger.error(f"[{self.mint_id}] Failed to create audio resampler: {resampler_err}")
-                            # Fallback: try direct encoding (may fail with AAC)
-                            packets = self.audio_stream.encode(av_audio_frame)
-                            for packet in packets:
-                                self._write_packet_direct(packet)
-                            return
-
-                    # Resample frame to AAC-compatible format
-                    try:
-                        resampled_frames = self.audio_resampler.resample(av_audio_frame)
-                        for resampled_frame in resampled_frames:
-                            # Ensure resampled frames have correct time_base and sample_rate
-                            resampled_frame.time_base = frame_time_base
-                            resampled_frame.sample_rate = 48000
-                            packets = self.audio_stream.encode(resampled_frame)
-                            for packet in packets:
-                                self._write_packet_direct(packet)
-                    except Exception as encode_err:
-                        logger.error(f"[{self.mint_id}] Audio resampling/encoding failed: {encode_err}")
-                        # Continue processing other frames
-
-                    # Track samples for next frame's PTS
-                    self.audio_samples_written += samples_per_frame
-                    self.audio_frames_written += 1
-
-                    # A/V sync drift logging (every 1000 frames)
-                    if self.audio_frames_written % 1000 == 0 and self.first_video_timestamp is not None:
-                        video_seconds = (self.audio_samples_written / self.audio_stream.sample_rate)  # Estimate from audio
-                        # Note: This is approximate; full sync would need video PTS at this point
-                        logger.debug(f"[{self.mint_id}] Audio at {self.audio_samples_written} samples (~{video_seconds:.2f}s)")
-
-                    if self.audio_frames_written % 1000 == 0:  # Log every 1000 frames
-                        logger.debug(f"[{self.mint_id}] Encoded {self.audio_frames_written} audio frames ({self.audio_samples_written} samples) to PyAV")
-
-                except Exception as e:
-                    logger.error(f"[{self.mint_id}] Error encoding audio frame: {e}")
-                    # Continue processing other frames
-            else:
-                logger.debug(f"[{self.mint_id}] PyAV container or audio stream not available for audio")
-
-            # CRITICAL: Free memory immediately after processing
-            del audio_bytes
-            del audio_data
-
-            # Force garbage collection to free memory
-            import gc
-            gc.collect()
-
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Audio frame processing error: {e}")
-
-    async def _cleanup(self):
-        """Clean up resources."""
-        try:
-            await self._close_container()
-        except Exception as e:
-            logger.error(f"[{self.mint_id}] Cleanup error: {e}")
 
 
 class WebRTCRecordingService:
-    """WebRTC recording service using aiortc/PyAV."""
+    """WebRTC recording service using ParticipantRecorder."""
 
     _instance_count = 0
 
@@ -1926,27 +429,19 @@ class WebRTCRecordingService:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Active recordings
-        self.active_recordings: Dict[str, AiortcFileRecorder] = {}
+        # Active recordings - use ParticipantRecorderWrapper
+        self.active_recordings: Dict[str, ParticipantRecorderWrapper] = {}
 
-        # Default recording configuration
+        # Default recording configuration for ParticipantRecorder - Maximum quality
         self.default_config = {
-            "video_codec": "libx264",
-            "audio_codec": "aac",
-            "video_bitrate": "2M",
-            "audio_bitrate": "128k",
-            "format": "mpegts",  # CRITICAL: Use MPEG-TS for real-time streaming (not MP4)
+            "video_codec": "vp9",  # VP9 for best quality (better compression than VP8)
+            "audio_codec": "opus",  # Always Opus for WebM
+            "video_bitrate": "8M",  # High bitrate for maximum quality
+            "audio_bitrate": "256k",  # High audio bitrate for maximum quality
+            "format": "webm",  # ParticipantRecorder only supports WebM
             "fps": 30,
-            "gop_size": 60,  # GOP size in frames (2 seconds at 30fps)
-            "width": 1920,
-            "height": 1080,
-            # Video flexibility options
-            "rgb_order": "RGB",  # RGB or BGR
-            "row_stride_bytes": None,  # Optional: force row stride (bytes per row)
-            "resolution_strategy": "scale_to_config",  # scale_to_config, match_source, recreate_on_change
-            "colorspace": "bt709",  # bt709 or bt601
-            "range": "limited",  # limited or full
-            "coerce_unknown_to_rgb": False,  # Fallback for unknown formats
+            "video_quality": "best",  # Maximum quality setting for ParticipantRecorder
+            "auto_bitrate": True,  # Auto-adjust bitrate based on resolution
         }
 
         # Get StreamManager instance
@@ -1968,12 +463,19 @@ class WebRTCRecordingService:
     async def start_recording(
         self, 
         mint_id: str, 
-        output_format: str = "mpegts", 
-        video_quality: str = "medium"
+        output_format: str = "webm", 
+        video_quality: str = "high"
     ) -> Dict[str, Any]:
-        """Start recording using FFmpeg subprocess."""
+        """Start recording using ParticipantRecorder."""
         try:
-            logger.info(f"📹 Starting FFmpeg recording for mint_id: {mint_id}")
+            logger.info(f"📹 Starting ParticipantRecorder recording for mint_id: {mint_id}")
+            
+            # Warn if non-WebM format requested (but continue with WebM)
+            if output_format != "webm":
+                logger.warning(
+                    f"⚠️  Format '{output_format}' requested but ParticipantRecorder only supports WebM. "
+                    f"Using WebM instead."
+                )
             
             if mint_id in self.active_recordings:
                 logger.warning(f"⚠️  Recording already active for {mint_id}")
@@ -1991,17 +493,24 @@ class WebRTCRecordingService:
                 logger.error(f"❌ No active LiveKit room found for mint_id: {mint_id}")
                 return {"success": False, "error": f"No active LiveKit room found for mint_id: {mint_id}"}
             
-            # Create recording configuration
-            config = self._get_recording_config(output_format, video_quality)
+            # Create recording configuration (always WebM, map quality presets)
+            config = self._get_recording_config("webm", video_quality)
             
-            # Create aiortc recorder
-            recorder = AiortcFileRecorder(
-                mint_id=mint_id,
-                stream_info=stream_info,
-                output_dir=self.output_dir,
-                config=config,
-                room=room
-            )
+            # Create ParticipantRecorder wrapper
+            try:
+                recorder = ParticipantRecorderWrapper(
+                    mint_id=mint_id,
+                    stream_info=stream_info,
+                    output_dir=self.output_dir,
+                    config=config,
+                    room=room
+                )
+            except ImportError as e:
+                logger.error(f"❌ ParticipantRecorder not available: {e}")
+                return {"success": False, "error": f"ParticipantRecorder not available: {str(e)}"}
+            except WebMEncoderNotAvailableError as e:
+                logger.error(f"❌ WebM encoder not available: {e}")
+                return {"success": False, "error": f"WebM encoder not available: {str(e)}"}
             
             # Start recording
             result = await recorder.start()
@@ -2016,6 +525,8 @@ class WebRTCRecordingService:
             
         except Exception as e:
             logger.error(f"❌ Recording service error: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
     async def stop_recording(self, mint_id: str) -> Dict[str, Any]:
@@ -2067,43 +578,34 @@ class WebRTCRecordingService:
         return await recorder.get_status()
 
     def _get_recording_config(self, output_format: str, video_quality: str) -> Dict[str, Any]:
-        """Get recording configuration with format validation."""
+        """Get recording configuration for ParticipantRecorder (WebM only) - Maximum quality."""
         config = self.default_config.copy()
         
-        # Validate and correct format
-        if output_format not in VALID_FORMATS:
-            # Check if it's a codec name that was mistakenly passed as format
-            if output_format in CODEC_TO_FORMAT:
-                logger.warning(f"⚠️  '{output_format}' is a codec, not a format. Using '{CODEC_TO_FORMAT[output_format]}' as container format.")
-                output_format = CODEC_TO_FORMAT[output_format]
-            else:
-                logger.warning(f"⚠️  Invalid format '{output_format}', defaulting to 'mpegts'")
-                output_format = "mpegts"  # Default to MPEG-TS for real-time recording
+        # ParticipantRecorder only supports WebM, so always use webm
+        config["format"] = "webm"
         
-        config["format"] = output_format
-        
-        # Adjust quality settings
+        # Map video quality presets to bitrates and codec selection - Maximum quality settings
         if video_quality == "low":
-            config["video_bitrate"] = "1M"
-            config["audio_bitrate"] = "96k"
+            # Even low quality uses VP9 for best compression
+            config["video_bitrate"] = "4M"  # Higher than before
+            config["audio_bitrate"] = "192k"  # Higher than before
+            config["video_codec"] = "vp9"  # VP9 for better quality
+            config["video_quality"] = "high"  # Map low to high for better quality
         elif video_quality == "high":
-            config["video_bitrate"] = "4M"
-            config["audio_bitrate"] = "192k"
+            # Maximum quality settings
+            config["video_bitrate"] = "8M"  # High bitrate for maximum quality
+            config["audio_bitrate"] = "256k"  # High audio bitrate
+            config["video_codec"] = "vp9"  # VP9 for best quality
+            config["video_quality"] = "best"  # Use best quality setting
+        else:  # medium or default
+            # Medium now uses high quality settings
+            config["video_bitrate"] = "6M"  # Increased from 2M
+            config["audio_bitrate"] = "192k"  # Increased from 128k
+            config["video_codec"] = "vp9"  # Use VP9 instead of VP8
+            config["video_quality"] = "high"  # Use high quality setting
         
-        # Ensure codec compatibility with format
-        video_codec = config["video_codec"]
-        audio_codec = config["audio_codec"]
-        
-        if output_format in VALID_FORMATS:
-            valid_video_codecs = VALID_FORMATS[output_format]["video_codecs"]
-            valid_audio_codecs = VALID_FORMATS[output_format]["audio_codecs"]
-            
-            if video_codec not in valid_video_codecs:
-                logger.warning(f"⚠️  Video codec '{video_codec}' not compatible with '{output_format}', using '{valid_video_codecs[0]}'")
-                config["video_codec"] = valid_video_codecs[0]
-            
-            if audio_codec not in valid_audio_codecs:
-                logger.warning(f"⚠️  Audio codec '{audio_codec}' not compatible with '{output_format}', using '{valid_audio_codecs[0]}'")
-                config["audio_codec"] = valid_audio_codecs[0]
+        # ParticipantRecorder uses Opus for audio (always)
+        config["audio_codec"] = "opus"
         
         return config
+

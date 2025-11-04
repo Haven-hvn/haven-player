@@ -3,7 +3,7 @@ import os
 import json
 import uuid
 import aiofiles
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.models.database import get_db
@@ -42,6 +42,11 @@ class VideoResponse(BaseModel):
     position: int
     created_at: datetime
     phash: Optional[str] = None
+    filecoin_root_cid: Optional[str] = None
+    filecoin_piece_cid: Optional[str] = None
+    filecoin_piece_id: Optional[int] = None
+    filecoin_data_set_id: Optional[str] = None
+    filecoin_uploaded_at: Optional[datetime] = None
 
 class TimestampResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -224,6 +229,36 @@ def move_to_front(video_path: str, db: Session = Depends(get_db)) -> dict:
     video.position = (max_position.position + 1) if max_position else 0
     db.commit()
     return {"message": "Video moved to front successfully"}
+
+class FilecoinMetadataUpdate(BaseModel):
+    root_cid: str
+    piece_cid: str
+    piece_id: Optional[int] = None
+    data_set_id: str
+    transaction_hash: Optional[str] = None
+
+@router.put("/{video_path:path}/filecoin-metadata", response_model=VideoResponse)
+def update_filecoin_metadata(
+    video_path: str,
+    metadata: FilecoinMetadataUpdate,
+    db: Session = Depends(get_db)
+) -> Video:
+    """
+    Update Filecoin storage metadata for a video after successful upload.
+    """
+    video = db.query(Video).filter(Video.path == video_path).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    video.filecoin_root_cid = metadata.root_cid
+    video.filecoin_piece_cid = metadata.piece_cid
+    video.filecoin_piece_id = metadata.piece_id
+    video.filecoin_data_set_id = metadata.data_set_id
+    video.filecoin_uploaded_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    db.refresh(video)
+    return video
 
 @router.post("/upload")
 async def upload_livekit_recording(

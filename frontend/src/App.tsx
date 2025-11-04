@@ -12,8 +12,11 @@ import Header from "@/components/Header";
 import VideoAnalysisList from "@/components/VideoAnalysisList";
 import VideoPlayer from "@/components/VideoPlayer";
 import ConfigurationModal from "@/components/ConfigurationModal";
+import FilecoinConfigModal from "@/components/FilecoinConfigModal";
 import { useVideos } from "@/hooks/useVideos";
+import { useFilecoinUpload } from "@/hooks/useFilecoinUpload";
 import { Video, Timestamp } from "@/types/video";
+import type { FilecoinConfig } from "@/types/filecoin";
 import {
   videoService,
   startAnalysisJob,
@@ -185,6 +188,11 @@ const MainApp: React.FC = () => {
   );
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
   const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [filecoinConfigModalOpen, setFilecoinConfigModalOpen] = useState(false);
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+
+  // Filecoin upload hook
+  const { uploadStatus, uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
 
   // Add search and view mode state
   const [searchQuery, setSearchQuery] = useState("");
@@ -472,6 +480,47 @@ const MainApp: React.FC = () => {
     }
   }, []);
 
+  // Load Filecoin config on mount
+  useEffect(() => {
+    const loadFilecoinConfig = async () => {
+      try {
+        const { ipcRenderer } = require("electron");
+        const config = await ipcRenderer.invoke("get-filecoin-config");
+        if (config) {
+          setFilecoinConfig(config);
+        }
+      } catch (error) {
+        console.error("Failed to load Filecoin config:", error);
+      }
+    };
+    loadFilecoinConfig();
+  }, []);
+
+  // Handle Filecoin upload
+  const handleUploadToFilecoin = useCallback(
+    async (video: Video) => {
+      if (!filecoinConfig) {
+        setFilecoinConfigModalOpen(true);
+        return;
+      }
+
+      try {
+        await uploadVideoToFilecoin(video.path, filecoinConfig);
+        console.log(`✅ Uploaded ${video.title} to Filecoin`);
+      } catch (error) {
+        console.error(`❌ Failed to upload ${video.title} to Filecoin:`, error);
+        // Error is already handled by the upload hook
+      }
+    },
+    [filecoinConfig, uploadVideoToFilecoin]
+  );
+
+  // Handle Filecoin config save
+  const handleFilecoinConfigSave = useCallback(async (config: FilecoinConfig) => {
+    setFilecoinConfig(config);
+    console.log("✅ Filecoin configuration saved");
+  }, []);
+
   // Initialize analysis statuses for videos with AI data
   useEffect(() => {
     const newStatuses: Record<
@@ -557,6 +606,8 @@ const MainApp: React.FC = () => {
             onPlay={handlePlayVideo}
             onAnalyze={handleAnalyzeVideo}
             onRemove={handleRemoveVideo}
+            onUpload={handleUploadToFilecoin}
+            uploadStatuses={uploadStatus}
           />
         </Box>
       </Box>
@@ -566,6 +617,13 @@ const MainApp: React.FC = () => {
         open={configModalOpen}
         onClose={() => setConfigModalOpen(false)}
         onSave={handleConfigSave}
+      />
+
+      {/* Filecoin Configuration Modal */}
+      <FilecoinConfigModal
+        open={filecoinConfigModalOpen}
+        onClose={() => setFilecoinConfigModalOpen(false)}
+        onSave={handleFilecoinConfigSave}
       />
     </Box>
   );

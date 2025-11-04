@@ -58,6 +58,23 @@ export const videoService = {
     );
     return response.data;
   },
+
+  updateFilecoinMetadata: async (
+    videoPath: string,
+    metadata: {
+      root_cid: string;
+      piece_cid: string;
+      piece_id?: number;
+      data_set_id: string;
+      transaction_hash?: string;
+    }
+  ): Promise<Video> => {
+    const response = await api.put<Video>(
+      `/videos/${encodeURIComponent(videoPath)}/filecoin-metadata`,
+      metadata
+    );
+    return response.data;
+  },
 };
 
 // Job-related API functions

@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import livekit.rtc as rtc
-from livekit import api
-
 from app.services.pumpfun_service import PumpFunService
 from app.models.config import AppConfig
 from app.models.database import get_db

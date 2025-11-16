@@ -37,7 +37,7 @@ export class LiveKitClient {
         if (publication.track) {
           // Track is already available
           console.log(`Track already available: ${publication.kind} from ${participant.sid}`);
-        } else if (publication.subscribe !== undefined) {
+        } else if (!publication.isSubscribed) {
           // Subscribe to the track
           publication.setSubscribed(true);
           console.log(`Subscribing to track: ${publication.kind} from ${participant.sid}`);
@@ -158,7 +158,7 @@ export class LiveKitClient {
           if (publication.track) {
             // Track is already available
             console.log(`Track already available: ${publication.kind} from ${participant.sid}`);
-          } else if (publication.subscribe !== undefined) {
+          } else if (!publication.isSubscribed) {
             // Subscribe to the track
             publication.setSubscribed(true);
             console.log(`Subscribing to existing track: ${publication.kind} from ${participant.sid}`);

@@ -87,7 +87,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     const connectToLiveKit = async () => {
       try {
         // Get complete connection details from backend using StreamManager
-        const response = await fetch(`http://localhost:8000/api/pumpfun-streams/connection/${item.mint_id}`);
+        const response = await fetch(`http://localhost:8000/api/live/connection/${item.mint_id}`);
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.detail || 'Failed to get connection details');
@@ -123,7 +123,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     return () => {
       if (isConnected) {
         // Disconnect from backend StreamManager
-        fetch(`http://localhost:8000/api/pumpfun-streams/disconnect/${item.mint_id}`, {
+        fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
           method: 'POST'
         }).catch(console.error);
         

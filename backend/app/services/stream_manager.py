@@ -144,7 +144,7 @@ class StreamManager:
             if not participant_sid:
                 logger.warning("No participant with tracks found, waiting 2 more seconds...")
                 await asyncio.sleep(2.0)
-                for participant in self.room.remote_participants.values():
+                for participant in room.remote_participants.values():
                     if len(participant.track_publications) > 0:
                         participant_sid = participant.sid
                         logger.info(f"Found streamer participant (after wait): {participant_sid} with {len(participant.track_publications)} tracks")

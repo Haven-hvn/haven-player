@@ -1149,6 +1149,70 @@ class WebRTCRecordingService:
             # Remove from active recordings
             del self.active_recordings[mint_id]
             
+            # Disconnect the stream connection since recording is stopped
+            # This prevents continued network activity after recording stops
+            # The underlying LiveKit room connection (from the SDK) is what causes network activity
+            try:
+                # Check if the room connection is still active
+                room = self.stream_manager.get_room(mint_id)
+                room_is_connected = False
+                if room:
+                    try:
+                        # Check room connection state - the underlying SDK connection
+                        connection_state_str = str(room.connection_state).lower()
+                        room_is_connected = "connected" in connection_state_str or "connecting" in connection_state_str
+                        logger.info(
+                            f"[{mint_id}] Room connection state: {room.connection_state} "
+                            f"(connected: {room_is_connected})"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[{mint_id}] Could not check room connection state: {e}")
+                        # Assume connected if we can't check
+                        room_is_connected = True
+                
+                # Check if there are active websockets using this stream (separate from room connection)
+                has_active_websockets = (
+                    hasattr(self.stream_manager, 'active_websockets') and
+                    mint_id in self.stream_manager.active_websockets and
+                    len(self.stream_manager.active_websockets.get(mint_id, set())) > 0
+                )
+                
+                # Check if there are other active recordings (shouldn't happen, but safety check)
+                has_other_recordings = (
+                    hasattr(self, 'active_recordings') and
+                    mint_id in self.active_recordings
+                )
+                
+                # Disconnect if:
+                # 1. Room is connected (the underlying SDK connection is active)
+                # 2. No active websockets (not being used for streaming)
+                # 3. No other recordings (safety check)
+                if room_is_connected and not has_active_websockets and not has_other_recordings:
+                    # Disconnect the underlying LiveKit room connection to stop network activity
+                    logger.info(
+                        f"[{mint_id}] 🔌 Disconnecting LiveKit room connection after recording stopped "
+                        f"(room connected: {room_is_connected}, websockets: {has_active_websockets})"
+                    )
+                    stream_stop_result = await self.stream_manager.stop_stream(mint_id, force=False)
+                    if stream_stop_result.get("success"):
+                        logger.info(f"[{mint_id}] ✅ LiveKit room connection disconnected successfully")
+                    else:
+                        logger.warning(
+                            f"[{mint_id}] ⚠️ Could not disconnect room connection: {stream_stop_result.get('error')}. "
+                            f"This may be expected if connection is in use elsewhere."
+                        )
+                elif room_is_connected and (has_active_websockets or has_other_recordings):
+                    logger.info(
+                        f"[{mint_id}] 📡 Keeping room connection active "
+                        f"(websockets: {has_active_websockets}, other recordings: {has_other_recordings})"
+                    )
+                elif not room_is_connected:
+                    logger.info(f"[{mint_id}] ✅ Room connection already disconnected")
+            except Exception as e:
+                logger.warning(f"[{mint_id}] ⚠️ Error checking/disconnecting room connection: {e}. Continuing...")
+                import traceback
+                logger.warning(f"[{mint_id}] Traceback: {traceback.format_exc()}")
+            
             # Create Video entry in database so it shows up in videos tab
             if result.get("success") and result.get("output_path"):
                 try:

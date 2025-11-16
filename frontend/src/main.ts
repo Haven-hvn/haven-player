@@ -27,8 +27,8 @@ function createWindow() {
   } else {
     console.log('Loading from local file:', indexPath);
     mainWindow.loadFile(indexPath);
-    // Always open DevTools in production for debugging (can be removed later)
-    mainWindow.webContents.openDevTools();
+    // DevTools not opened by default - use Cmd+Shift+I / Ctrl+Shift+I to toggle
+    // Or use the bug icon in the UI to view console logs via LogViewer
   }
   
   // Add keyboard shortcut to toggle DevTools (Cmd+Option+I or Ctrl+Shift+I)

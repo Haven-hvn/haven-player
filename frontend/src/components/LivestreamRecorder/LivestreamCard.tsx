@@ -82,17 +82,18 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     handleClose();
   };
 
-  // Cleanup on unmount - only disconnect if we're actually connected
+  // Cleanup on unmount - only disconnect frontend viewing connection
+  // DO NOT disconnect backend - backend needs to keep connection for recording
   useEffect(() => {
     return () => {
+      // Only disconnect the frontend viewing connection if it exists
+      // Backend recording continues independently and should NOT be disconnected
       if (isConnected) {
-        // Disconnect from backend StreamManager
-        fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
-          method: 'POST'
-        }).catch(console.error);
-        
         disconnectFromRoom();
       }
+      // Note: We intentionally do NOT call /api/live/disconnect here
+      // because that would stop the backend recording. The backend connection
+      // should remain active for recording even when the frontend component unmounts.
     };
   }, [item.mint_id, disconnectFromRoom, isConnected]);
 
@@ -142,13 +143,8 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
       // Don't disconnect frontend connection - user might want to keep viewing
       // Only disconnect if explicitly requested
     } else {
-      // Start recording - backend handles everything, no need for frontend connection
-      // But we can still connect for viewing if not already connected
-      if (!status.isConnected && !isConnected) {
-        // Optionally connect for viewing, but recording works independently
-        await handleConnect();
-      }
-      
+      // Start recording - backend handles everything, no frontend connection needed
+      // Backend uses its own LiveKit connection for recording, saving network bandwidth
       try {
         // Backend recording doesn't need participant SID from frontend
         // It uses the StreamManager's connection and finds the participant itself
@@ -162,6 +158,9 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
   };
 
   const handleStopRecording = async () => {
+    // Close menu immediately before async operations
+    handleClose();
+    
     await stopRecording();
     // Disconnect when recording stops to free up resources
     if (isConnected) {
@@ -172,7 +171,6 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
       setIsConnected(false);
       setParticipantSid(null);
     }
-    handleClose();
   };
 
   return (
@@ -308,9 +306,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
           aria-label={
             status.isRecording 
               ? "Stop recording" 
-              : status.isConnected 
-                ? "Start recording" 
-                : "Connect and record"
+              : "Start recording"
           }
           onClick={handleToggleRecord}
           sx={{
@@ -403,17 +399,18 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
                   Connecting to LiveKit...
                 </Typography>
               </>
-            ) : !status.isConnected ? (
+            ) : status.isRecording ? (
               <>
-                <Typography variant="caption" sx={{ color: "#9E9E9E" }}>
-                  Click to Connect
+                <FiberManualRecordIcon sx={{ color: "#FF4D4D", fontSize: 12 }} />
+                <Typography variant="caption" sx={{ color: "#FF4D4D" }}>
+                  Recording... {status.duration}s
                 </Typography>
               </>
             ) : (
               <>
-                <FiberManualRecordIcon sx={{ color: status.isRecording ? "#FF4D4D" : "#9E9E9E", fontSize: 12 }} />
-                <Typography variant="caption" sx={{ color: status.isRecording ? "#FF4D4D" : "#9E9E9E" }}>
-                  {status.isRecording ? `Recording... ${status.duration}s` : "Ready to Record"}
+                <FiberManualRecordIcon sx={{ color: "#9E9E9E", fontSize: 12 }} />
+                <Typography variant="caption" sx={{ color: "#9E9E9E" }}>
+                  Ready to Record
                 </Typography>
               </>
             )}

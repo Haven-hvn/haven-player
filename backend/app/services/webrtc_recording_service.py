@@ -15,6 +15,10 @@ from enum import Enum
 
 import livekit.rtc as rtc
 from app.services.stream_manager import StreamManager
+from app.models.video import Video
+from app.models.live_session import LiveSession
+from app.models.database import get_db
+from app.lib.phash_generator.phash_calculator import get_video_duration
 
 try:
     import av
@@ -602,6 +606,45 @@ class WebRTCRecordingService:
             if result["success"]:
                 self.active_recordings[mint_id] = recorder
                 logger.info(f"✅ Recording started for {mint_id}")
+                
+                # Persist recording session to database
+                try:
+                    db = next(get_db())
+                    try:
+                        # Check if session already exists
+                        existing_session = db.query(LiveSession).filter(
+                            LiveSession.mint_id == mint_id,
+                            LiveSession.status == "active"
+                        ).first()
+                        
+                        if existing_session:
+                            # Update existing session with recording info
+                            existing_session.record_session = True
+                            existing_session.recording_path = result.get("output_path")
+                            existing_session.updated_at = datetime.now(timezone.utc)
+                        else:
+                            # Get stream info for session data
+                            stream_info = await self.stream_manager.get_stream_info(mint_id)
+                            if stream_info:
+                                # Create new session with recording info
+                                live_session = LiveSession(
+                                    mint_id=mint_id,
+                                    room_name=stream_info.room_name,
+                                    participant_sid=stream_info.participant_sid,
+                                    status="active",
+                                    record_session=True,
+                                    recording_path=result.get("output_path"),
+                                    start_time=datetime.now(timezone.utc)
+                                )
+                                db.add(live_session)
+                        
+                        db.commit()
+                        logger.info(f"✅ Recording session persisted to database for {mint_id}")
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to persist recording session to database: {e}")
+                    # Don't fail the recording if DB persistence fails
             else:
                 logger.error(f"❌ Recording failed for {mint_id}: {result.get('error')}")
             
@@ -622,8 +665,81 @@ class WebRTCRecordingService:
             recorder = self.active_recordings[mint_id]
             result = await recorder.stop()
             
+            # Update database - mark recording as completed
+            try:
+                db = next(get_db())
+                try:
+                    session = db.query(LiveSession).filter(
+                        LiveSession.mint_id == mint_id,
+                        LiveSession.status == "active",
+                        LiveSession.record_session == True
+                    ).first()
+                    
+                    if session:
+                        session.record_session = False
+                        session.recording_path = result.get("output_path") or session.recording_path
+                        session.end_time = datetime.now(timezone.utc)
+                        session.updated_at = datetime.now(timezone.utc)
+                        db.commit()
+                        logger.info(f"✅ Recording session updated in database for {mint_id}")
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to update recording session in database: {e}")
+                # Don't fail if DB update fails
+            
             # Remove from active recordings
             del self.active_recordings[mint_id]
+            
+            # Create Video entry in database so it shows up in videos tab
+            if result.get("success") and result.get("output_path"):
+                try:
+                    output_path = result.get("output_path")
+                    db = next(get_db())
+                    try:
+                        # Check if video already exists (avoid duplicates)
+                        existing_video = db.query(Video).filter(Video.path == output_path).first()
+                        if existing_video:
+                            logger.info(f"✅ Video entry already exists for {output_path}")
+                        else:
+                            # Get video duration
+                            duration = 0
+                            try:
+                                duration = int(get_video_duration(output_path))
+                            except Exception as e:
+                                logger.warning(f"Could not get video duration: {e}")
+                            
+                            # Get max position
+                            max_position = db.query(Video).order_by(Video.position.desc()).first()
+                            position = (max_position.position + 1) if max_position else 0
+                            
+                            # Get stream info for better title
+                            stream_info = await self.stream_manager.get_stream_info(mint_id)
+                            title = f"Recording - {mint_id}"
+                            if stream_info and hasattr(stream_info, 'stream_data'):
+                                coin_name = stream_info.stream_data.get('name') or stream_info.stream_data.get('symbol')
+                                if coin_name:
+                                    title = f"Recording - {coin_name} ({mint_id[:8]}...)"
+                            
+                            # Create video entry (phash skipped for now)
+                            db_video = Video(
+                                path=output_path,
+                                title=title,
+                                duration=duration,
+                                has_ai_data=False,  # Will be set to True after analysis
+                                thumbnail_path=None,
+                                position=position,
+                                phash=None  # Skipped for now
+                            )
+                            db.add(db_video)
+                            db.commit()
+                            db.refresh(db_video)
+                            logger.info(f"✅ Recording added to videos database: {db_video.id} - {title}")
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to add recording to videos database: {e}")
+                    # Don't fail the stop operation if DB add fails
             
             logger.info(f"✅ Recording stopped for {mint_id}")
             return result
@@ -654,12 +770,48 @@ class WebRTCRecordingService:
         }
 
     async def get_recording_status(self, mint_id: str) -> Dict[str, Any]:
-        """Get recording status."""
-        if mint_id not in self.active_recordings:
-            return {"success": False, "error": f"No active recording for {mint_id}"}
+        """Get recording status - checks both in-memory and database."""
+        # First check in-memory (active recordings)
+        if mint_id in self.active_recordings:
+            recorder = self.active_recordings[mint_id]
+            status = await recorder.get_status()
+            status["success"] = True
+            return status
         
-        recorder = self.active_recordings[mint_id]
-        return await recorder.get_status()
+        # If not in memory, check database for persisted recording session
+        try:
+            db = next(get_db())
+            try:
+                session = db.query(LiveSession).filter(
+                    LiveSession.mint_id == mint_id,
+                    LiveSession.status == "active",
+                    LiveSession.record_session == True
+                ).first()
+                
+                if session:
+                    # Recording exists in DB but not in memory (server restart scenario)
+                    # Return status from database
+                    return {
+                        "success": True,
+                        "mint_id": mint_id,
+                        "state": "recording",  # Assume still recording if in DB
+                        "start_time": session.start_time.isoformat() if session.start_time else None,
+                        "output_path": session.recording_path,
+                        "recording_mode": "participantrecorder",
+                        "is_recording": True,
+                        "note": "Recording status restored from database - may need to verify with StreamManager"
+                    }
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to check database for recording status: {e}")
+        
+        # No recording found
+        return {
+            "success": False, 
+            "error": f"No active recording for {mint_id}",
+            "state": "stopped"
+        }
 
     def _get_recording_config(self, output_format: str, video_quality: str) -> Dict[str, Any]:
         """Get recording configuration for ParticipantRecorder (WebM only) - Maximum quality."""

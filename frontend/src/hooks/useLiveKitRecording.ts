@@ -38,6 +38,53 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
   const startTimeRef = useRef<number | null>(null);
   const statusCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Check for active recording when component mounts (e.g., user navigates back)
+  useEffect(() => {
+    const checkActiveRecording = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/recording/status/${mintId}`);
+        if (response.ok) {
+          const statusData = await response.json();
+          if (statusData.success && statusData.state === 'recording') {
+            // Restore recording status
+            if (statusData.start_time) {
+              const startTime = new Date(statusData.start_time).getTime();
+              startTimeRef.current = startTime;
+              const duration = Math.floor((Date.now() - startTime) / 1000);
+              const progress = calculateProgress(duration);
+              
+              setStatus(prev => ({
+                ...prev,
+                isRecording: true,
+                duration,
+                progress
+              }));
+              
+              // Start duration tracking
+              if (durationIntervalRef.current) {
+                clearInterval(durationIntervalRef.current);
+              }
+              durationIntervalRef.current = setInterval(updateDuration, 1000);
+              
+              // Start status checking
+              if (statusCheckIntervalRef.current) {
+                clearInterval(statusCheckIntervalRef.current);
+              }
+              statusCheckIntervalRef.current = setInterval(checkRecordingStatus, 2000);
+              
+              console.log(`✅ Restored active recording status for ${mintId}: ${duration}s`);
+            }
+          }
+        }
+      } catch (error) {
+        // Silently fail - recording might not exist, which is fine
+        console.debug(`No active recording found for ${mintId}`);
+      }
+    };
+    
+    checkActiveRecording();
+  }, [mintId, calculateProgress, updateDuration, checkRecordingStatus]);
+
   // Calculate progress based on duration (assuming 5 minutes max for 100%)
   const calculateProgress = useCallback((duration: number): number => {
     return Math.min(100, (duration / 300) * 100); // 5 minutes = 300 seconds
@@ -45,38 +92,94 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
 
   // Update duration and progress
   const updateDuration = useCallback(() => {
-    if (startTimeRef.current && status.isRecording) {
+    if (startTimeRef.current) {
       const duration = Math.floor((Date.now() - startTimeRef.current) / 1000);
       const progress = calculateProgress(duration);
       
-      setStatus(prev => ({
-        ...prev,
-        duration,
-        progress
-      }));
+      setStatus(prev => {
+        // Only update if we're still recording
+        if (prev.isRecording) {
+          return {
+            ...prev,
+            duration,
+            progress
+          };
+        }
+        return prev;
+      });
     }
-  }, [status.isRecording, calculateProgress]);
+  }, [calculateProgress]);
 
   // Check recording status from backend
   const checkRecordingStatus = useCallback(async (): Promise<void> => {
     try {
       const response = await fetch(`${API_BASE_URL}/recording/status/${mintId}`);
       if (!response.ok) {
-        throw new Error(`Failed to get recording status: ${response.status}`);
-      }
-      
-      const status = await response.json();
-      if (status.success && status.state === 'recording') {
-        // Update duration if available
-        if (status.start_time) {
-          const startTime = new Date(status.start_time).getTime();
-          const duration = Math.floor((Date.now() - startTime) / 1000);
-          const progress = calculateProgress(duration);
+        // If recording doesn't exist, stop the recording state
+        if (response.status === 404) {
           setStatus(prev => ({
             ...prev,
+            isRecording: false,
+            duration: 0,
+            progress: 0
+          }));
+          if (durationIntervalRef.current) {
+            clearInterval(durationIntervalRef.current);
+            durationIntervalRef.current = null;
+          }
+          if (statusCheckIntervalRef.current) {
+            clearInterval(statusCheckIntervalRef.current);
+            statusCheckIntervalRef.current = null;
+          }
+        }
+        return;
+      }
+      
+      const statusData = await response.json();
+      if (statusData.success && statusData.state === 'recording') {
+        // Update duration from backend start_time
+        if (statusData.start_time) {
+          const startTime = new Date(statusData.start_time).getTime();
+          const duration = Math.floor((Date.now() - startTime) / 1000);
+          const progress = calculateProgress(duration);
+          
+          // Update startTimeRef if it's not set or different
+          if (!startTimeRef.current || Math.abs(startTimeRef.current - startTime) > 1000) {
+            startTimeRef.current = startTime;
+          }
+          
+          setStatus(prev => ({
+            ...prev,
+            isRecording: true,
             duration,
             progress
           }));
+        } else if (startTimeRef.current) {
+          // Fallback to client-side calculation if backend doesn't provide start_time
+          const duration = Math.floor((Date.now() - startTimeRef.current) / 1000);
+          const progress = calculateProgress(duration);
+          setStatus(prev => ({
+            ...prev,
+            isRecording: true,
+            duration,
+            progress
+          }));
+        }
+      } else if (statusData.state !== 'recording') {
+        // Recording stopped on backend
+        setStatus(prev => ({
+          ...prev,
+          isRecording: false,
+          duration: 0,
+          progress: 0
+        }));
+        if (durationIntervalRef.current) {
+          clearInterval(durationIntervalRef.current);
+          durationIntervalRef.current = null;
+        }
+        if (statusCheckIntervalRef.current) {
+          clearInterval(statusCheckIntervalRef.current);
+          statusCheckIntervalRef.current = null;
         }
       }
     } catch (error) {
@@ -163,22 +266,37 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
 
       console.log(`✅ Backend recording started:`, result);
       
-      // Store start time
-      startTimeRef.current = Date.now();
+      // Store start time from backend response if available, otherwise use current time
+      if (result.start_time) {
+        startTimeRef.current = new Date(result.start_time).getTime();
+      } else {
+        startTimeRef.current = Date.now();
+      }
       
-      // Start duration tracking
+      // Start duration tracking (updates every second)
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+      }
       durationIntervalRef.current = setInterval(updateDuration, 1000);
       
-      // Start status checking (every 2 seconds)
+      // Start status checking (every 2 seconds) to sync with backend
+      if (statusCheckIntervalRef.current) {
+        clearInterval(statusCheckIntervalRef.current);
+      }
       statusCheckIntervalRef.current = setInterval(checkRecordingStatus, 2000);
       
+      // Initial status update
+      const initialDuration = 0;
       setStatus(prev => ({
         ...prev,
         isRecording: true,
         participantId: result.participant_sid || participantId, // Use backend's participant SID if available
-        duration: 0,
-        progress: 0
+        duration: initialDuration,
+        progress: calculateProgress(initialDuration)
       }));
+      
+      // Immediately update duration once to show 0s
+      updateDuration();
 
       console.log(`✅ Recording started on backend for mint_id: ${mintId}`);
     } catch (error) {

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { LivestreamCard } from '@/components/LivestreamRecorder/LivestreamCard';
+import LivestreamCard from '@/components/LivestreamRecorder/LivestreamCard';
 import { useLiveKitRecording } from '@/hooks/useLiveKitRecording';
 import { StreamInfo } from '@/types/video';
 
@@ -14,9 +14,12 @@ describe('LivestreamCard', () => {
   const mockStreamInfo: StreamInfo = {
     mint_id: 'test-mint-123',
     name: 'Test Stream',
+    symbol: 'TEST',
     num_participants: 42,
     usd_market_cap: 1234567,
     thumbnail: 'https://example.com/thumbnail.jpg',
+    is_currently_live: true,
+    nsfw: false,
   };
 
   const mockOnHide = jest.fn();

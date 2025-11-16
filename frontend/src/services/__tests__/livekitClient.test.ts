@@ -1,4 +1,3 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LiveKitClient } from '@/services/livekitClient';
 import { Room, RoomEvent, RemoteParticipant, RemoteTrack, Track, RemoteTrackPublication } from 'livekit-client';
 
@@ -50,7 +49,11 @@ describe('LiveKitClient', () => {
     };
 
     mockRoom.connect.mockResolvedValue(undefined);
-    mockRoom.state = 'connected';
+    Object.defineProperty(mockRoom, 'state', {
+      value: 'connected' as unknown as typeof mockRoom.state,
+      writable: true,
+      configurable: true,
+    });
 
     await liveKitClient.connect(config);
 
@@ -81,7 +84,11 @@ describe('LiveKitClient', () => {
 
     mockRoom.connect.mockResolvedValue(undefined);
     mockRoom.disconnect.mockResolvedValue(undefined);
-    mockRoom.state = 'connected';
+    Object.defineProperty(mockRoom, 'state', {
+      value: 'connected' as unknown as typeof mockRoom.state,
+      writable: true,
+      configurable: true,
+    });
 
     await liveKitClient.connect(config);
     await liveKitClient.disconnect();
@@ -110,7 +117,11 @@ describe('LiveKitClient', () => {
     expect(trackSubscribedHandler).toBeDefined();
 
     if (trackSubscribedHandler) {
-      trackSubscribedHandler(mockTrack, mockPublication, mockParticipant);
+      (trackSubscribedHandler as (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => void)(
+        mockTrack,
+        mockPublication,
+        mockParticipant
+      );
       
       const mediaStream = liveKitClient.getMediaStream('participant-1');
       expect(mediaStream).toBeInstanceOf(MediaStream);
@@ -135,7 +146,11 @@ describe('LiveKitClient', () => {
     )?.[1];
 
     if (trackSubscribedHandler) {
-      trackSubscribedHandler(mockTrack, mockPublication, mockParticipant);
+      (trackSubscribedHandler as (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => void)(
+        mockTrack,
+        mockPublication,
+        mockParticipant
+      );
       expect(liveKitClient.getParticipantIds()).toContain('participant-1');
 
       // Then unsubscribe
@@ -144,7 +159,11 @@ describe('LiveKitClient', () => {
       )?.[1];
 
       if (trackUnsubscribedHandler) {
-        trackUnsubscribedHandler(mockTrack, mockPublication, mockParticipant);
+        (trackUnsubscribedHandler as (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => void)(
+          mockTrack,
+          mockPublication,
+          mockParticipant
+        );
         expect(liveKitClient.getParticipantIds()).not.toContain('participant-1');
       }
     }
@@ -166,7 +185,11 @@ describe('LiveKitClient', () => {
     )?.[1];
 
     if (trackSubscribedHandler) {
-      trackSubscribedHandler(mockTrack, {} as RemoteTrackPublication, mockParticipant);
+      (trackSubscribedHandler as (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => void)(
+        mockTrack,
+        {} as RemoteTrackPublication,
+        mockParticipant
+      );
       expect(liveKitClient.getParticipantIds()).toContain('participant-1');
 
       // Then disconnect participant
@@ -175,7 +198,7 @@ describe('LiveKitClient', () => {
       )?.[1];
 
       if (participantDisconnectedHandler) {
-        participantDisconnectedHandler(mockParticipant);
+        (participantDisconnectedHandler as (participant: RemoteParticipant) => void)(mockParticipant);
         expect(liveKitClient.getParticipantIds()).not.toContain('participant-1');
       }
     }
@@ -198,7 +221,11 @@ describe('LiveKitClient', () => {
     )?.[1];
 
     if (trackSubscribedHandler) {
-      trackSubscribedHandler(mockTrack, {} as RemoteTrackPublication, mockParticipant);
+      (trackSubscribedHandler as (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => void)(
+        mockTrack,
+        {} as RemoteTrackPublication,
+        mockParticipant
+      );
       
       expect(eventSpy).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -235,8 +262,9 @@ describe('LiveKitClient', () => {
     )?.[1];
 
     if (trackSubscribedHandler) {
-      trackSubscribedHandler(mockTrack1, {} as RemoteTrackPublication, { identity: 'participant-1' } as RemoteParticipant);
-      trackSubscribedHandler(mockTrack2, {} as RemoteTrackPublication, { identity: 'participant-2' } as RemoteParticipant);
+      const handler = trackSubscribedHandler as (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => void;
+      handler(mockTrack1, {} as RemoteTrackPublication, { identity: 'participant-1' } as RemoteParticipant);
+      handler(mockTrack2, {} as RemoteTrackPublication, { identity: 'participant-2' } as RemoteParticipant);
 
       const allStreams = liveKitClient.getAllMediaStreams();
       expect(allStreams).toHaveLength(2);

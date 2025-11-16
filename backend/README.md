@@ -17,7 +17,12 @@ pip install -r requirements.txt
 
 3. Run the development server:
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --log-level info
+```
+
+For more verbose logging (debug mode):
+```bash
+uvicorn app.main:app --reload --log-level debug
 ```
 
 The API will be available at http://localhost:8000

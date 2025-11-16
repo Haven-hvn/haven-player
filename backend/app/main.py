@@ -9,6 +9,15 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ''
 os.environ['NVIDIA_VISIBLE_DEVICES'] = ''
 os.environ['DISABLE_HWACCEL'] = '1'
 
+import logging
+
+# Configure logging - set to INFO level to see all recording logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

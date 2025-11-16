@@ -214,8 +214,16 @@ class ParticipantRecorderWrapper:
                 # Check recorder status if available
                 if self.recorder:
                     try:
+                        # Wrap get_stats in try-catch to prevent crashes
                         stats = self.recorder.get_stats()
-                        current_frame_count = stats.video_frames_recorded + stats.audio_frames_recorded
+                        if stats is None:
+                            logger.warning(f"[{self.mint_id}] ⚠️ Recorder stats returned None")
+                            continue
+                        
+                        # Safely access stats attributes
+                        video_frames = getattr(stats, 'video_frames_recorded', 0) or 0
+                        audio_frames = getattr(stats, 'audio_frames_recorded', 0) or 0
+                        current_frame_count = video_frames + audio_frames
                         duration = int((datetime.now(timezone.utc) - self.start_time).total_seconds())
                         
                         # Check if frames are still being recorded
@@ -234,13 +242,16 @@ class ParticipantRecorderWrapper:
                         logger.info(
                             f"[{self.mint_id}] 📊 Recording health check - "
                             f"Duration: {duration}s, "
-                            f"Frames: {current_frame_count} (video: {stats.video_frames_recorded}, audio: {stats.audio_frames_recorded}), "
-                            f"Room state: {self.room.connection_state}"
+                            f"Frames: {current_frame_count} (video: {video_frames}, audio: {audio_frames}), "
+                            f"Room state: {str(self.room.connection_state)}"
                         )
+                    except AttributeError as e:
+                        logger.warning(f"[{self.mint_id}] ⚠️ Stats attribute error: {e}")
                     except Exception as e:
                         logger.warning(f"[{self.mint_id}] ⚠️ Could not get recorder stats: {e}")
                         import traceback
                         logger.warning(f"[{self.mint_id}] Stats error traceback: {traceback.format_exc()}")
+                        # Don't break the health check loop - continue monitoring
                 
             except asyncio.CancelledError:
                 logger.info(f"[{self.mint_id}] Health check task cancelled")
@@ -389,16 +400,39 @@ class ParticipantRecorderWrapper:
             audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "256k"))
             video_fps = self.config.get("fps", 30)
             
-            # Create ParticipantRecorder with configuration
-            self.recorder = ParticipantRecorder(
-                self.room,
-                video_codec=video_codec,
-                video_quality=video_quality,
-                auto_bitrate=self.config.get("auto_bitrate", True),
-                video_bitrate=video_bitrate,
-                audio_bitrate=audio_bitrate,
-                video_fps=video_fps
+            # Validate parameters to prevent PyAV crashes
+            if video_bitrate <= 0:
+                logger.warning(f"[{self.mint_id}] ⚠️ Invalid video_bitrate: {video_bitrate}, using default 8000000")
+                video_bitrate = 8000000
+            if audio_bitrate <= 0:
+                logger.warning(f"[{self.mint_id}] ⚠️ Invalid audio_bitrate: {audio_bitrate}, using default 256000")
+                audio_bitrate = 256000
+            if video_fps <= 0 or video_fps > 120:
+                logger.warning(f"[{self.mint_id}] ⚠️ Invalid video_fps: {video_fps}, using default 30")
+                video_fps = 30
+            
+            logger.info(
+                f"[{self.mint_id}] Validated recording parameters: "
+                f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps}"
             )
+            
+            # Create ParticipantRecorder with configuration
+            # Wrap in try-catch to handle PyAV initialization errors
+            try:
+                self.recorder = ParticipantRecorder(
+                    self.room,
+                    video_codec=video_codec,
+                    video_quality=video_quality,
+                    auto_bitrate=self.config.get("auto_bitrate", True),
+                    video_bitrate=video_bitrate,
+                    audio_bitrate=audio_bitrate,
+                    video_fps=video_fps
+                )
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] ❌ Failed to create ParticipantRecorder: {e}")
+                import traceback
+                logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
+                raise RecordingError(f"Failed to create ParticipantRecorder: {str(e)}")
             
             logger.info(
                 f"[{self.mint_id}] ParticipantRecorder created: "
@@ -420,6 +454,14 @@ class ParticipantRecorderWrapper:
             except asyncio.TimeoutError:
                 error_msg = "Timeout starting recording - participant may have disconnected"
                 logger.error(f"[{self.mint_id}] ❌ {error_msg}")
+                self.state = RecordingState.STOPPED
+                raise RecordingError(error_msg)
+            except Exception as e:
+                # Catch any PyAV or encoding errors during start
+                error_msg = f"Error starting recording: {str(e)}"
+                logger.error(f"[{self.mint_id}] ❌ {error_msg}")
+                import traceback
+                logger.error(f"[{self.mint_id}] Start recording traceback: {traceback.format_exc()}")
                 self.state = RecordingState.STOPPED
                 raise RecordingError(error_msg)
             
@@ -654,15 +696,34 @@ class ParticipantRecorderWrapper:
     def _parse_bitrate(self, bitrate_str: str) -> int:
         """Parse bitrate string (e.g., '2M', '128k') to integer."""
         if isinstance(bitrate_str, int):
+            # Validate integer bitrate
+            if bitrate_str <= 0:
+                logger.warning(f"Invalid bitrate value: {bitrate_str}, using default")
+                return 8000000 if "video" in str(bitrate_str) else 256000
             return bitrate_str
         
-        bitrate_str = str(bitrate_str).upper()
-        if bitrate_str.endswith('K'):
-            return int(bitrate_str[:-1]) * 1000
-        elif bitrate_str.endswith('M'):
-            return int(bitrate_str[:-1]) * 1000000
-        else:
-            return int(bitrate_str)
+        bitrate_str = str(bitrate_str).upper().strip()
+        if not bitrate_str:
+            logger.warning("Empty bitrate string, using default")
+            return 8000000
+        
+        try:
+            if bitrate_str.endswith('K'):
+                value = int(bitrate_str[:-1]) * 1000
+            elif bitrate_str.endswith('M'):
+                value = int(bitrate_str[:-1]) * 1000000
+            else:
+                value = int(bitrate_str)
+            
+            # Validate parsed value
+            if value <= 0:
+                logger.warning(f"Parsed bitrate is <= 0: {value}, using default")
+                return 8000000 if "video" in bitrate_str else 256000
+            
+            return value
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Failed to parse bitrate '{bitrate_str}': {e}, using default")
+            return 8000000 if "video" in bitrate_str else 256000
 
 
 class WebRTCRecordingService:

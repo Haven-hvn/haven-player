@@ -26,6 +26,7 @@ import {
   Schedule as ScheduleIcon,
   SmartDisplay as VideoIcon,
   Timeline as TimelineIcon,
+  CloudUpload as UploadIcon,
 } from "@mui/icons-material";
 import { Video, Timestamp } from "@/types/video";
 
@@ -42,9 +43,15 @@ interface VideoAnalysisItemProps {
   timestamps: Timestamp[];
   analysisStatus: "pending" | "analyzing" | "completed" | "error";
   jobProgress?: number;
+  uploadStatus?: {
+    status: "pending" | "uploading" | "completed" | "error";
+    progress: number;
+    error?: string;
+  };
   onPlay: (video: Video) => void;
   onAnalyze: (video: Video) => void;
   onRemove: (video: Video) => void;
+  onUpload?: (video: Video) => void;
 }
 
 const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
@@ -53,9 +60,11 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
   timestamps,
   analysisStatus,
   jobProgress = 0,
+  uploadStatus,
   onPlay,
   onAnalyze,
   onRemove,
+  onUpload,
 }) => {
   const [contextMenu, setContextMenu] = useState<{
     mouseX: number;
@@ -463,6 +472,68 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
             </Box>
           </Box>
 
+          {/* Filecoin Upload Progress Bar */}
+          {uploadStatus && uploadStatus.status !== 'pending' && (
+            <Box sx={{ mb: 1.5 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  mb: 0.5,
+                }}
+              >
+                <Typography
+                  sx={{
+                    fontSize: "10px",
+                    color: "#6B6B6B",
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontWeight: 500,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                  }}
+                >
+                  Filecoin Upload
+                </Typography>
+                <Typography
+                  sx={{
+                    fontSize: "10px",
+                    color: uploadStatus.status === 'error' ? "#FF4D4D" : uploadStatus.status === 'completed' ? "#4CAF50" : "#000000",
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontWeight: 500,
+                  }}
+                >
+                  {uploadStatus.status === 'completed' ? 'Complete' : uploadStatus.status === 'error' ? 'Error' : `${uploadStatus.progress}%`}
+                </Typography>
+              </Box>
+              <Box
+                sx={{
+                  height: 4,
+                  backgroundColor: "#F0F0F0",
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                  position: "relative",
+                }}
+              >
+                <Box
+                  sx={{
+                    position: "absolute",
+                    left: 0,
+                    width: `${uploadStatus.progress}%`,
+                    height: "100%",
+                    backgroundColor:
+                      uploadStatus.status === 'error'
+                        ? "#FF4D4D"
+                        : uploadStatus.status === 'completed'
+                        ? "#4CAF50"
+                        : "#2196F3",
+                    transition: "width 0.3s ease-in-out",
+                  }}
+                />
+              </Box>
+            </Box>
+          )}
+
           {/* Action Buttons */}
           <Box
             sx={{
@@ -539,6 +610,36 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
           },
         }}
       >
+        {onUpload && (
+          <MenuItem
+            onClick={() => {
+              onUpload(video);
+              handleClose();
+            }}
+            sx={{
+              fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+              fontSize: "14px",
+              color: "#000000",
+              "&:hover": {
+                backgroundColor: "#F5F5F5",
+              },
+            }}
+          >
+            <ListItemIcon>
+              <UploadIcon sx={{ color: "#2196F3", fontSize: 18 }} />
+            </ListItemIcon>
+            <ListItemText
+              primary="Upload to Filecoin"
+              sx={{
+                "& .MuiTypography-root": {
+                  fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                  fontSize: "14px",
+                  fontWeight: 400,
+                },
+              }}
+            />
+          </MenuItem>
+        )}
         <MenuItem
           onClick={handleRemoveClick}
           sx={{
@@ -581,6 +682,12 @@ interface VideoAnalysisListProps {
   onPlay: (video: Video) => void;
   onAnalyze: (video: Video) => void;
   onRemove: (video: Video) => void;
+  onUpload?: (video: Video) => void;
+  uploadStatuses?: Record<string, {
+    status: "pending" | "uploading" | "completed" | "error";
+    progress: number;
+    error?: string;
+  }>;
 }
 
 const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
@@ -592,6 +699,8 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   onPlay,
   onAnalyze,
   onRemove,
+  onUpload,
+  uploadStatuses = {},
 }) => {
   // Create list item component for list view
   const VideoListItem: React.FC<{
@@ -1082,9 +1191,11 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
                 timestamps={videoTimestamps[video.path] || []}
                 analysisStatus={analysisStatuses[video.path] || "pending"}
                 jobProgress={jobProgresses[video.path] || 0}
+                uploadStatus={uploadStatuses[video.path]}
                 onPlay={onPlay}
                 onAnalyze={onAnalyze}
                 onRemove={onRemove}
+                onUpload={onUpload}
               />
             ) : (
               <VideoListItem

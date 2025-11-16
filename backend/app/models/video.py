@@ -19,6 +19,13 @@ class Video(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     phash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    
+    # Filecoin storage metadata
+    filecoin_root_cid: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    filecoin_piece_cid: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    filecoin_piece_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    filecoin_data_set_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    filecoin_uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     timestamps: Mapped[List['Timestamp']] = relationship('Timestamp', back_populates='video', cascade='all, delete-orphan')
     analysis_jobs: Mapped[List['AnalysisJob']] = relationship('AnalysisJob', back_populates='video', cascade='all, delete-orphan')
@@ -33,7 +40,12 @@ class Video(Base):
             'thumbnail_path': self.thumbnail_path,
             'position': self.position,
             'phash': self.phash,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'filecoin_root_cid': self.filecoin_root_cid,
+            'filecoin_piece_cid': self.filecoin_piece_cid,
+            'filecoin_piece_id': self.filecoin_piece_id,
+            'filecoin_data_set_id': self.filecoin_data_set_id,
+            'filecoin_uploaded_at': self.filecoin_uploaded_at.isoformat() if self.filecoin_uploaded_at else None
         }
 
 class Timestamp(Base):

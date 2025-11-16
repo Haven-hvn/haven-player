@@ -7,6 +7,11 @@ export interface Video {
   thumbnail_path: string | null;
   position: number;
   created_at: string;
+  filecoin_root_cid?: string | null;
+  filecoin_piece_cid?: string | null;
+  filecoin_piece_id?: number | null;
+  filecoin_data_set_id?: string | null;
+  filecoin_uploaded_at?: string | null;
 }
 
 export interface Timestamp {

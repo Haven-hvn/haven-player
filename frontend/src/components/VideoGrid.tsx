@@ -11,12 +11,18 @@ import {
   MenuItem,
   Box,
   CircularProgress,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material';
-import { MoreVert as MoreVertIcon } from '@mui/icons-material';
+import { MoreVert as MoreVertIcon, CloudUpload as UploadIcon } from '@mui/icons-material';
 import { useVideos } from '@/hooks/useVideos';
 import { Video } from '@/types/video';
 
-const VideoGrid: React.FC = () => {
+interface VideoGridProps {
+  onUpload?: (video: Video) => void;
+}
+
+const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
   const navigate = useNavigate();
   const { videos, loading, error, deleteVideo, moveToFront } = useVideos();
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
@@ -118,6 +124,21 @@ const VideoGrid: React.FC = () => {
         onClose={handleMenuClose}
       >
         <MenuItem onClick={handleMoveToFront}>Move to Front</MenuItem>
+        {onUpload && (
+          <MenuItem
+            onClick={() => {
+              if (selectedVideo) {
+                onUpload(selectedVideo);
+                handleMenuClose();
+              }
+            }}
+          >
+            <ListItemIcon>
+              <UploadIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Upload to Filecoin</ListItemText>
+          </MenuItem>
+        )}
         <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>
           Delete
         </MenuItem>

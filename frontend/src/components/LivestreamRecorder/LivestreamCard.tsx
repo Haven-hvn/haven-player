@@ -50,8 +50,6 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
   } | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [participantSid, setParticipantSid] = useState<string | null>(null);
-  
-  const progressWidth = `${Math.max(0, Math.min(100, status.progress))}%`;
 
   const marketCapLabel = useMemo(() => {
     try {
@@ -161,15 +159,24 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     // Close menu immediately before async operations
     handleClose();
     
-    await stopRecording();
-    // Disconnect when recording stops to free up resources
-    if (isConnected) {
-      fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
-        method: 'POST'
-      }).catch(console.error);
-      await disconnectFromRoom();
-      setIsConnected(false);
-      setParticipantSid(null);
+    try {
+      console.log(`🛑 handleStopRecording called for ${item.mint_id}`);
+      await stopRecording();
+      console.log(`✅ stopRecording completed for ${item.mint_id}`);
+      
+      // Disconnect when recording stops to free up resources
+      if (isConnected) {
+        console.log(`🔌 Disconnecting frontend connection for ${item.mint_id}`);
+        fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
+          method: 'POST'
+        }).catch(console.error);
+        await disconnectFromRoom();
+        setIsConnected(false);
+        setParticipantSid(null);
+      }
+    } catch (error) {
+      console.error(`❌ Error stopping recording for ${item.mint_id}:`, error);
+      // Error is already set in the hook's status, so user will see it
     }
   };
 
@@ -363,17 +370,18 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               position: "relative",
             }}
           >
-            <Box
-              sx={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                bottom: 0,
-                width: status.isRecording ? progressWidth : 0,
-                backgroundColor: "#FF4D4D",
-                transition: "width 0.2s linear",
-              }}
-            />
+            {status.isRecording && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  width: "30%",
+                  backgroundColor: "#FF4D4D",
+                  animation: "oscillate 2s ease-in-out infinite",
+                }}
+              />
+            )}
           </Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.75 }}>
             {status.error ? (
@@ -457,6 +465,11 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
           0% { transform: scale(1); }
           50% { transform: scale(1.15); }
           100% { transform: scale(1); }
+        }
+        @keyframes oscillate {
+          0% { left: 0%; }
+          50% { left: 70%; }
+          100% { left: 0%; }
         }
       `}</style>
     </Card>

@@ -66,6 +66,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
   // Check recording status from backend
   const checkRecordingStatus = useCallback(async (): Promise<void> => {
     try {
+      console.log(`🔄 Polling recording status for ${mintId}...`);
       const response = await fetch(`${API_BASE_URL}/recording/status/${mintId}`);
       if (!response.ok) {
         // If recording doesn't exist, stop the recording state
@@ -89,6 +90,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       }
       
       const statusData = await response.json();
+      console.log(`📊 Recording status for ${mintId}:`, statusData);
       if (statusData.success && statusData.state === 'recording') {
         // Update duration from backend start_time
         if (statusData.start_time) {
@@ -119,6 +121,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
           }));
         }
       } else if (statusData.state !== 'recording') {
+        console.log(`⏹️ Recording stopped on backend for ${mintId}`);
         // Recording stopped on backend
         setStatus(prev => ({
           ...prev,
@@ -136,7 +139,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
         }
       }
     } catch (error) {
-      console.error('Failed to check recording status:', error);
+      console.error(`❌ Failed to check recording status for ${mintId}:`, error);
     }
   }, [mintId, calculateProgress]);
 
@@ -316,35 +319,58 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
     try {
       console.log(`🛑 Stopping backend recording for mint_id: ${mintId}`);
       
-      // Stop status checking
+      // Stop status checking immediately to prevent race conditions
       if (statusCheckIntervalRef.current) {
         clearInterval(statusCheckIntervalRef.current);
         statusCheckIntervalRef.current = null;
+        console.log(`⏸️ Stopped status polling for ${mintId}`);
       }
       
-      // Call backend recording API to stop
-      const response = await fetch(`${API_BASE_URL}/recording/stop`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          mint_id: mintId
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Failed to stop recording: ${response.status}`);
+      // Stop duration tracking
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
       }
-
-      const result = await response.json();
       
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to stop recording');
-      }
+      // Call backend recording API to stop with timeout
+      console.log(`📡 Sending stop request to backend for ${mintId}...`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/recording/stop`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            mint_id: mintId
+          }),
+          signal: controller.signal
+        });
 
-      console.log(`✅ Backend recording stopped:`, result);
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Failed to stop recording: ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log(`📥 Backend stop response for ${mintId}:`, result);
+        
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to stop recording');
+        }
+
+        console.log(`✅ Backend recording stopped:`, result);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error('Stop recording request timed out after 30 seconds');
+        }
+        throw fetchError;
+      }
       
       // Cleanup
       startTimeRef.current = null;

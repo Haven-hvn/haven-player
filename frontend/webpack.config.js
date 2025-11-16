@@ -63,8 +63,11 @@ module.exports = [
         "process": require.resolve("process/browser"),
       },
       // Enable package exports resolution for packages like filecoin-pin
-      conditionNames: ['import', 'require', 'default'],
-      exportsFields: ['exports', 'main'],
+      // Use conditionNames to support package exports, but be lenient with invalid exports
+      conditionNames: ['import', 'require', 'default', 'browser', 'module', 'node'],
+      // Don't strictly enforce exportsFields - allow fallback to main field
+      // This prevents errors from packages with invalid exports (like prop-types)
+      mainFields: ['browser', 'module', 'main'],
     },
     output: {
       filename: 'renderer.js',

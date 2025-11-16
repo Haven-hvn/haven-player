@@ -215,7 +215,8 @@ export async function uploadVideoToFilecoin(
             break;
           }
           case 'ipniAdvertisement.retryUpdate': {
-            const attemptCount = event.data.retryCount === 0 ? 1 : event.data.retryCount + 1;
+            const retryCount = event.data?.retryCount ?? 0;
+            const attemptCount = retryCount === 0 ? 1 : retryCount + 1;
             onProgress?.({
               stage: 'validating',
               progress: 95,

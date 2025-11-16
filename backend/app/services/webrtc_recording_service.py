@@ -157,6 +157,58 @@ class ParticipantRecorderWrapper:
         )
         return None
     
+    async def _wait_for_tracks(
+        self,
+        participant: rtc.RemoteParticipant,
+        timeout: float = 20.0,
+    ) -> tuple[bool, bool]:
+        """Wait for participant to publish video and/or audio tracks.
+        
+        Args:
+            participant: The remote participant.
+            timeout: Maximum time to wait in seconds.
+        
+        Returns:
+            Tuple of (has_video, has_audio).
+        """
+        import time
+        start_time = time.time()
+        has_video = False
+        has_audio = False
+        
+        # Check existing tracks
+        for publication in participant.track_publications.values():
+            if publication.kind == rtc.TrackKind.KIND_VIDEO:
+                has_video = True
+            elif publication.kind == rtc.TrackKind.KIND_AUDIO:
+                has_audio = True
+        
+        if has_video or has_audio:
+            logger.info(
+                f"[{self.mint_id}] Tracks already available - Video: {has_video}, Audio: {has_audio}"
+            )
+            return (has_video, has_audio)
+        
+        # Wait for tracks to be published
+        logger.info(f"[{self.mint_id}] Waiting for tracks to be published (timeout: {timeout}s)...")
+        
+        while time.time() - start_time < timeout:
+            for publication in participant.track_publications.values():
+                if publication.kind == rtc.TrackKind.KIND_VIDEO:
+                    has_video = True
+                elif publication.kind == rtc.TrackKind.KIND_AUDIO:
+                    has_audio = True
+            
+            if has_video or has_audio:
+                break
+            
+            await asyncio.sleep(0.5)
+        
+        logger.info(
+            f"[{self.mint_id}] Tracks available after wait - Video: {has_video}, Audio: {has_audio}"
+        )
+        return (has_video, has_audio)
+    
     async def start(self) -> Dict[str, Any]:
         """Start recording using ParticipantRecorder."""
         try:
@@ -172,6 +224,28 @@ class ParticipantRecorderWrapper:
                     "success": False,
                     "error": f"Participant with sid {self.stream_info.participant_sid} not found in room"
                 }
+            
+            # Find the participant object to verify tracks
+            participant = None
+            for p in self.room.remote_participants.values():
+                if p.sid == self.stream_info.participant_sid:
+                    participant = p
+                    break
+            
+            if not participant:
+                return {
+                    "success": False,
+                    "error": f"Participant object not found for sid {self.stream_info.participant_sid}"
+                }
+            
+            # Wait for tracks to be published (matching integration test pattern)
+            has_video, has_audio = await self._wait_for_tracks(participant, timeout=20.0)
+            
+            if not has_video and not has_audio:
+                logger.warning(
+                    f"[{self.mint_id}] ⚠️ No video or audio tracks found for participant {participant_identity}"
+                )
+                # Don't fail - ParticipantRecorder might still work, but log warning
             
             self.participant_identity = participant_identity
             
@@ -219,8 +293,18 @@ class ParticipantRecorderWrapper:
             self.state = RecordingState.RECORDING
             self.start_time = datetime.now(timezone.utc)
             
-            # Start recording
-            await self.recorder.start_recording(participant_identity)
+            # Start recording with timeout (matching integration test pattern)
+            logger.info(f"[{self.mint_id}] Starting recording for participant: {participant_identity}")
+            try:
+                await asyncio.wait_for(
+                    self.recorder.start_recording(participant_identity),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                error_msg = "Timeout starting recording - participant may have disconnected"
+                logger.error(f"[{self.mint_id}] ❌ {error_msg}")
+                self.state = RecordingState.STOPPED
+                raise RecordingError(error_msg)
             
             logger.info(f"[{self.mint_id}] ✅ Recording started with ParticipantRecorder")
             

@@ -102,32 +102,33 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
   }, []);
 
   // Disconnect from LiveKit room
+  // Note: This only disconnects the frontend viewing connection.
+  // Backend recording continues independently.
   const disconnectFromRoom = useCallback(async (): Promise<void> => {
     setIsLoading(true);
     
     try {
-      // Stop recording if active
-      if (status.isRecording) {
-        await stopRecording();
-      }
+      // Don't stop recording when disconnecting - backend recording is independent
+      // Only disconnect the frontend viewing connection
       
       await liveKitClient.disconnect();
       setStatus(prev => ({ 
         ...prev, 
         isConnected: false, 
         participantId: null,
-        isRecording: false,
-        duration: 0,
-        progress: 0
+        // Don't reset isRecording - backend recording continues
+        // duration: 0,
+        // progress: 0
       }));
     } catch (error) {
       console.error('Failed to disconnect from LiveKit:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [status.isRecording]);
+  }, []);
 
   // Start recording using backend API
+  // Note: participantId parameter is ignored - backend finds the participant itself
   const startRecording = useCallback(async (participantId: string): Promise<void> => {
     setIsLoading(true);
     setStatus(prev => ({ ...prev, error: null }));
@@ -136,6 +137,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       console.log(`🎬 Starting backend recording for mint_id: ${mintId}`);
       
       // Call backend recording API
+      // Backend will use StreamManager to find the participant and start recording
       const response = await fetch(`${API_BASE_URL}/recording/start`, {
         method: 'POST',
         headers: {
@@ -173,7 +175,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       setStatus(prev => ({
         ...prev,
         isRecording: true,
-        participantId,
+        participantId: result.participant_sid || participantId, // Use backend's participant SID if available
         duration: 0,
         progress: 0
       }));

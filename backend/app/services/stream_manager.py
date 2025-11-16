@@ -144,34 +144,72 @@ class StreamManager:
                 auto_subscribe=False,  # DISABLED: Prevents unlimited internal buffering
             )
 
-            await room.connect(livekit_url, token, connect_options)
+            # Connect with timeout (matching integration test pattern)
+            try:
+                await asyncio.wait_for(
+                    room.connect(livekit_url, token, connect_options),
+                    timeout=30.0  # 30 second timeout for connection
+                )
+            except asyncio.TimeoutError:
+                error_msg = "Room connection timed out after 30 seconds"
+                logger.error(f"❌ {error_msg}")
+                if mint_id in self.rooms:
+                    del self.rooms[mint_id]
+                # Create ConnectError if not available
+                try:
+                    raise rtc.ConnectError(error_msg)
+                except AttributeError:
+                    # Fallback if ConnectError doesn't exist
+                    raise ConnectionError(error_msg)
+            
             logger.info(f"✅ Connected to room with auto_subscribe=False (manual subscribe for buffer control)")
             
             # Get participant SID - find the participant with published tracks (the streamer)
+            # Use proper wait pattern matching integration test
             participant_sid = None
+            participant_event = asyncio.Event()
+            found_participant = None
             
-            # Wait a moment for participants to fully publish their tracks
-            await asyncio.sleep(5)
+            def on_participant_connected(participant: rtc.RemoteParticipant) -> None:
+                nonlocal found_participant, participant_sid
+                # Find participant with tracks (the actual streamer, not viewers)
+                if len(participant.track_publications) > 0:
+                    found_participant = participant
+                    participant_sid = participant.sid
+                    if not participant_event.is_set():
+                        participant_event.set()
             
-            # Find participant with tracks (the actual streamer, not viewers)
+            room.on("participant_connected", on_participant_connected)
+            
+            # Check if participant already exists
             for participant in room.remote_participants.values():
                 if len(participant.track_publications) > 0:
+                    found_participant = participant
                     participant_sid = participant.sid
-                    logger.info(f"Found streamer participant: {participant_sid} with {len(participant.track_publications)} tracks")
+                    participant_event.set()
                     break
             
-            # Fallback: if no participant has tracks yet, wait and try again
-            if not participant_sid:
-                logger.warning("No participant with tracks found, waiting 2 more seconds...")
-                await asyncio.sleep(2.0)
-                for participant in room.remote_participants.values():
-                    if len(participant.track_publications) > 0:
-                        participant_sid = participant.sid
-                        logger.info(f"Found streamer participant (after wait): {participant_sid} with {len(participant.track_publications)} tracks")
-                        break
-
-            if not participant_sid:
+            # Wait for participant if not already found (matching integration test pattern)
+            if found_participant is None:
+                try:
+                    await asyncio.wait_for(participant_event.wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    logger.warning("No participant with tracks found within 30 seconds")
+                    # Continue to check one more time
+                    await asyncio.sleep(2.0)
+                    for participant in room.remote_participants.values():
+                        if len(participant.track_publications) > 0:
+                            found_participant = participant
+                            participant_sid = participant.sid
+                            break
+            
+            if not participant_sid or not found_participant:
                 return {"success": False, "error": "No participants with published tracks found in room"}
+            
+            logger.info(f"Found streamer participant: {participant_sid} (identity: {found_participant.identity}) with {len(found_participant.track_publications)} tracks")
+            
+            # Wait a bit for tracks to be fully published (matching integration test)
+            await asyncio.sleep(2.0)
 
             # Store stream info
             stream_info_obj = StreamInfo(
@@ -202,9 +240,32 @@ class StreamManager:
             print(f"Error starting stream for {mint_id}: {e}")
             return {"success": False, "error": str(e)}
 
-    async def stop_stream(self, mint_id: str) -> Dict[str, Any]:
-        """Stop a stream connection."""
+    async def stop_stream(self, mint_id: str, force: bool = False) -> Dict[str, Any]:
+        """
+        Stop a stream connection.
+        
+        Args:
+            mint_id: The mint ID to stop
+            force: If True, force disconnect even if recording is active. 
+                   If False, check for active recordings first.
+        """
         try:
+            # Check if there's an active recording (unless forcing)
+            if not force:
+                try:
+                    from app.services.webrtc_recording_service import WebRTCRecordingService
+                    recording_service = WebRTCRecordingService()
+                    # Check if recording is active for this mint_id
+                    if hasattr(recording_service, 'active_recordings') and mint_id in recording_service.active_recordings:
+                        logger.warning(f"Cannot disconnect stream for {mint_id}: active recording in progress")
+                        return {
+                            "success": False, 
+                            "error": f"Cannot disconnect: active recording in progress for {mint_id}. Stop recording first."
+                        }
+                except Exception as e:
+                    logger.warning(f"Could not check for active recordings: {e}")
+                    # Continue anyway if we can't check
+            
             if mint_id in self.active_streams:
                 del self.active_streams[mint_id]
 

@@ -107,8 +107,13 @@ class StreamManager:
             if mint_id in self.rooms:
                 # Disconnect existing room if it exists
                 existing_room = self.rooms[mint_id]
-                if existing_room and existing_room.connection_state != rtc.ConnectionState.DISCONNECTED:
-                    await existing_room.disconnect()
+                if existing_room:
+                    try:
+                        # Try to disconnect - handle gracefully if already disconnected
+                        await existing_room.disconnect()
+                    except Exception as e:
+                        # If disconnect fails, log but continue (room might already be disconnected)
+                        logger.warning(f"Error disconnecting existing room for {mint_id}: {e}")
                 del self.rooms[mint_id]
 
             # Create new room for this mint_id
@@ -194,8 +199,13 @@ class StreamManager:
             # Disconnect and remove the specific room for this mint_id
             if mint_id in self.rooms:
                 room = self.rooms[mint_id]
-                if room and room.connection_state != rtc.ConnectionState.DISCONNECTED:
-                    await room.disconnect()
+                if room:
+                    try:
+                        # Try to disconnect - handle gracefully if already disconnected
+                        await room.disconnect()
+                    except Exception as e:
+                        # If disconnect fails, log but continue (room might already be disconnected)
+                        logger.warning(f"Error disconnecting room for {mint_id}: {e}")
                 del self.rooms[mint_id]
 
             return {"success": True, "mint_id": mint_id}

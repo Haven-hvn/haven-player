@@ -137,12 +137,29 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
     setStatus(prev => ({ ...prev, error: null }));
 
     try {
-      // Get MediaStream from LiveKit client
-      const mediaStream = liveKitClient.getMediaStream(participantId);
+      // Get MediaStream from LiveKit client - wait for it if not immediately available
+      let mediaStream = liveKitClient.getMediaStream(participantId);
+      
+      // If not available, wait up to 5 seconds for tracks to subscribe
+      if (!mediaStream) {
+        console.log(`MediaStream not immediately available for ${participantId}, waiting for tracks to subscribe...`);
+        mediaStream = await liveKitClient.waitForMediaStream(participantId, 5000);
+      }
       
       if (!mediaStream) {
-        throw new Error(`No MediaStream found for participant: ${participantId}`);
+        const availableSids = liveKitClient.getParticipantIds();
+        throw new Error(
+          `No MediaStream found for participant SID: ${participantId}. ` +
+          `Available participant SIDs: ${availableSids.length > 0 ? availableSids.join(', ') : 'none'}`
+        );
       }
+      
+      // Verify the stream has tracks
+      if (mediaStream.getTracks().length === 0) {
+        throw new Error(`MediaStream for participant ${participantId} has no tracks`);
+      }
+      
+      console.log(`✅ Starting recording for participant ${participantId} with ${mediaStream.getTracks().length} tracks`);
 
       // Create RecordRTC instance
       const recorder = new RecordRTC(mediaStream, {

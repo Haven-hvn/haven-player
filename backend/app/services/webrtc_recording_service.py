@@ -136,7 +136,118 @@ class ParticipantRecorderWrapper:
         self.recorder: Optional[ParticipantRecorder] = None
         self.participant_identity: Optional[str] = None
         
+        # Health check task
+        self._health_check_task: Optional[asyncio.Task] = None
+        self._last_frame_count = 0
+        self._frame_count_stagnant_count = 0
+        
+        # Set up room event handlers to detect disconnections
+        self._setup_room_handlers()
+        
         logger.info(f"[{self.mint_id}] ParticipantRecorderWrapper initialized")
+    
+    def _setup_room_handlers(self) -> None:
+        """Set up room event handlers to detect disconnections."""
+        @self.room.on("participant_disconnected")
+        def on_participant_disconnected(participant: rtc.RemoteParticipant):
+            if self.participant_identity and participant.identity == self.participant_identity:
+                logger.error(
+                    f"[{self.mint_id}] ❌ CRITICAL: Participant {self.participant_identity} "
+                    f"(sid={participant.sid}) disconnected during recording!"
+                )
+                # Don't change state here - let health check detect it
+                # This is just for logging
+        
+        @self.room.on("disconnected")
+        def on_disconnected():
+            logger.error(f"[{self.mint_id}] ❌ CRITICAL: Room disconnected during recording!")
+            # Don't change state here - let health check detect it
+            # This is just for logging
+        
+        @self.room.on("track_unsubscribed")
+        def on_track_unsubscribed(track: rtc.RemoteTrack, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
+            if self.participant_identity and participant.identity == self.participant_identity:
+                logger.warning(
+                    f"[{self.mint_id}] ⚠️ Track unsubscribed: {track.kind} from participant {self.participant_identity}"
+                )
+    
+    async def _health_check(self) -> None:
+        """Periodic health check to verify recording is still active."""
+        while self.state == RecordingState.RECORDING:
+            try:
+                await asyncio.sleep(5)  # Check every 5 seconds
+                
+                if self.state != RecordingState.RECORDING:
+                    break
+                
+                # Check if room is still connected
+                if self.room.connection_state != rtc.ConnectionState.CONNECTED:
+                    logger.error(
+                        f"[{self.mint_id}] ❌ Room connection lost! State: {self.room.connection_state}"
+                    )
+                    self.state = RecordingState.STOPPED
+                    break
+                
+                # Check if participant is still in room
+                if self.participant_identity:
+                    participant_found = False
+                    for participant in self.room.remote_participants.values():
+                        if participant.identity == self.participant_identity:
+                            participant_found = True
+                            # Check if participant has tracks
+                            has_tracks = len(participant.track_publications) > 0
+                            if not has_tracks:
+                                logger.warning(
+                                    f"[{self.mint_id}] ⚠️ Participant {self.participant_identity} has no tracks"
+                                )
+                            break
+                    
+                    if not participant_found:
+                        logger.error(
+                            f"[{self.mint_id}] ❌ Participant {self.participant_identity} not found in room!"
+                        )
+                        self.state = RecordingState.STOPPED
+                        break
+                
+                # Check recorder status if available
+                if self.recorder:
+                    try:
+                        stats = self.recorder.get_stats()
+                        current_frame_count = stats.video_frames_recorded + stats.audio_frames_recorded
+                        duration = int((datetime.now(timezone.utc) - self.start_time).total_seconds())
+                        
+                        # Check if frames are still being recorded
+                        if current_frame_count == self._last_frame_count:
+                            self._frame_count_stagnant_count += 1
+                            if self._frame_count_stagnant_count >= 3:  # 15 seconds without new frames
+                                logger.error(
+                                    f"[{self.mint_id}] ❌ CRITICAL: No frames recorded for 15+ seconds! "
+                                    f"Frame count stuck at {current_frame_count}. Recording may have stopped."
+                                )
+                                # Don't auto-stop, but log the issue - let user stop manually
+                        else:
+                            self._frame_count_stagnant_count = 0
+                            self._last_frame_count = current_frame_count
+                        
+                        logger.info(
+                            f"[{self.mint_id}] 📊 Recording health check - "
+                            f"Duration: {duration}s, "
+                            f"Frames: {current_frame_count} (video: {stats.video_frames_recorded}, audio: {stats.audio_frames_recorded}), "
+                            f"Room state: {self.room.connection_state}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[{self.mint_id}] ⚠️ Could not get recorder stats: {e}")
+                        import traceback
+                        logger.warning(f"[{self.mint_id}] Stats error traceback: {traceback.format_exc()}")
+                
+            except asyncio.CancelledError:
+                logger.info(f"[{self.mint_id}] Health check task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[{self.mint_id}] ❌ Health check error: {e}")
+                import traceback
+                logger.error(f"[{self.mint_id}] Health check traceback: {traceback.format_exc()}")
+                # Continue health checks even if one fails
     
     def _find_participant_identity(self) -> Optional[str]:
         """
@@ -312,9 +423,33 @@ class ParticipantRecorderWrapper:
             
             logger.info(f"[{self.mint_id}] ✅ Recording started with ParticipantRecorder")
             
+            # Log initial recorder state
+            try:
+                initial_stats = self.recorder.get_stats()
+                logger.info(
+                    f"[{self.mint_id}] 📊 Initial recorder stats: "
+                    f"video_frames={initial_stats.video_frames_recorded}, "
+                    f"audio_frames={initial_stats.audio_frames_recorded}"
+                )
+                self._last_frame_count = initial_stats.video_frames_recorded + initial_stats.audio_frames_recorded
+            except Exception as e:
+                logger.warning(f"[{self.mint_id}] ⚠️ Could not get initial recorder stats: {e}")
+            
             # Generate output path (will be finalized on stop)
             timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
             self.output_path = self.output_dir / f"{self.mint_id}_{timestamp}.webm"
+            
+            # Log room and participant state
+            logger.info(
+                f"[{self.mint_id}] 📡 Room state after recording start: "
+                f"connection_state={self.room.connection_state}, "
+                f"remote_participants={len(self.room.remote_participants)}, "
+                f"participant_identity={self.participant_identity}"
+            )
+            
+            # Start health check task
+            self._health_check_task = asyncio.create_task(self._health_check())
+            logger.info(f"[{self.mint_id}] ✅ Health check task started")
             
             return {
                 "success": True,
@@ -364,6 +499,15 @@ class ParticipantRecorderWrapper:
                     "success": False,
                     "error": f"No active recording to stop (state: {self.state.value})"
                 }
+            
+            # Stop health check task
+            if self._health_check_task and not self._health_check_task.done():
+                self._health_check_task.cancel()
+                try:
+                    await self._health_check_task
+                except asyncio.CancelledError:
+                    pass
+                logger.info(f"[{self.mint_id}] Health check task stopped")
             
             # State: RECORDING → STOPPING
             self.state = RecordingState.STOPPING

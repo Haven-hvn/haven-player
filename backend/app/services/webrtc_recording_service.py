@@ -569,11 +569,23 @@ class WebRTCRecordingService:
                 logger.warning(f"⚠️  Recording already active for {mint_id}")
                 return {"success": False, "error": f"Recording already active for {mint_id}"}
             
-            # Get stream info from StreamManager
+            # Get stream info from StreamManager - if not found, start the stream automatically
             stream_info = await self.stream_manager.get_stream_info(mint_id)
             if not stream_info:
-                logger.error(f"❌ No active stream found for {mint_id}")
-                return {"success": False, "error": f"No active stream found for {mint_id}"}
+                logger.info(f"📡 No active stream found for {mint_id}, starting stream automatically...")
+                # Automatically start the stream connection
+                stream_result = await self.stream_manager.start_stream(mint_id)
+                if not stream_result.get("success"):
+                    error_msg = stream_result.get("error", "Failed to start stream")
+                    logger.error(f"❌ Failed to start stream for {mint_id}: {error_msg}")
+                    return {"success": False, "error": f"Failed to start stream: {error_msg}"}
+                
+                # Get stream info again after starting
+                stream_info = await self.stream_manager.get_stream_info(mint_id)
+                if not stream_info:
+                    logger.error(f"❌ Stream started but stream info not found for {mint_id}")
+                    return {"success": False, "error": f"Stream started but stream info not found for {mint_id}"}
+                logger.info(f"✅ Stream started successfully for {mint_id}")
             
             # Get the LiveKit room for this mint_id from StreamManager
             room = self.stream_manager.get_room(mint_id)

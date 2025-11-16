@@ -170,11 +170,31 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       }
       
       // Verify the stream has tracks
-      if (mediaStream.getTracks().length === 0) {
+      const allTracks = mediaStream.getTracks();
+      if (allTracks.length === 0) {
         throw new Error(`MediaStream for participant ${participantId} has no tracks`);
       }
       
-      console.log(`✅ Starting recording for participant ${participantId} with ${mediaStream.getTracks().length} tracks`);
+      // Verify tracks are active
+      const activeTracks = allTracks.filter(t => t.readyState === 'live');
+      const videoTracks = allTracks.filter(t => t.kind === 'video');
+      const audioTracks = allTracks.filter(t => t.kind === 'audio');
+      
+      console.log(`✅ MediaStream details for participant ${participantId}:`);
+      console.log(`   Total tracks: ${allTracks.length}`);
+      console.log(`   Active tracks: ${activeTracks.length}`);
+      console.log(`   Video tracks: ${videoTracks.length}`);
+      console.log(`   Audio tracks: ${audioTracks.length}`);
+      
+      if (activeTracks.length === 0) {
+        throw new Error(`No active tracks found for participant ${participantId}. All ${allTracks.length} tracks are in state: ${allTracks.map(t => t.readyState).join(', ')}`);
+      }
+      
+      if (videoTracks.length === 0 && audioTracks.length === 0) {
+        throw new Error(`No video or audio tracks found for participant ${participantId}`);
+      }
+      
+      console.log(`✅ Starting recording for participant ${participantId} with ${activeTracks.length} active tracks`);
 
       // Create RecordRTC instance
       const recorder = new RecordRTC(mediaStream, {

@@ -257,23 +257,44 @@ async def upload_livekit_recording(
             content = await video_file.read()
             await f.write(content)
         
-        print(f"✅ Uploaded LiveKit recording: {filename} ({len(content)} bytes)")
+        file_size = len(content)
+        print(f"✅ Uploaded LiveKit recording: {filename} ({file_size} bytes)")
+        
+        # Validate file size - reject empty or very small files
+        if file_size == 0:
+            # Clean up empty file
+            try:
+                os.remove(filepath)
+            except:
+                pass
+            raise HTTPException(
+                status_code=400,
+                detail="Recording file is empty (0 bytes). The recording may not have captured any data."
+            )
+        
+        if file_size < 100:  # Very small files are likely invalid
+            print(f"⚠️ Warning: Recording file is very small ({file_size} bytes), may be invalid")
         
         # Get video duration
+        duration = 0
         try:
             duration = int(get_video_duration(filepath))
+            if duration <= 0:
+                print(f"⚠️ Warning: Could not determine video duration, defaulting to 0")
         except Exception as e:
             print(f"Error getting video duration: {e}")
             duration = 0
         
-        # Calculate phash asynchronously
-        try:
-            phash = await asyncio.to_thread(calculate_phash, filepath)
-        except Exception as e:
-            print(f"Error calculating phash: {e}")
-            phash = None
+        # Calculate phash asynchronously (skip for empty/invalid files)
+        phash = None
+        if file_size > 100:  # Only calculate phash for files that seem valid
+            try:
+                phash = await asyncio.to_thread(calculate_phash, filepath)
+            except Exception as e:
+                print(f"Error calculating phash: {e}")
+                phash = None
         
-        # Check for duplicates using pHash
+        # Check for duplicates using pHash (only if we have a valid phash)
         if phash:
             existing_phashes = db.query(Video.id, Video.phash).filter(Video.phash.isnot(None)).all()
             for vid_id, existing in existing_phashes:

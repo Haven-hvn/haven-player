@@ -30,19 +30,30 @@ export class LiveKitClient {
 
     // Handle participant connections - subscribe to their tracks
     this.room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
-      console.log(`Participant connected: SID ${participant.sid}, identity: ${participant.identity}`);
+      console.log(`👤 Participant connected: SID=${participant.sid}, identity=${participant.identity}, trackPublications=${participant.trackPublications.size}`);
       
       // Subscribe to all tracks from this participant
+      let subscribedCount = 0;
       participant.trackPublications.forEach((publication) => {
+        console.log(`   📹 Track publication: kind=${publication.kind}, subscribed=${publication.isSubscribed}, track=${publication.track ? 'available' : 'not available'}`);
+        
         if (publication.track) {
           // Track is already available
-          console.log(`Track already available: ${publication.kind} from ${participant.sid}`);
+          console.log(`   ✅ Track already available: ${publication.kind} from ${participant.sid}`);
+          subscribedCount++;
         } else if (!publication.isSubscribed) {
           // Subscribe to the track
-          publication.setSubscribed(true);
-          console.log(`Subscribing to track: ${publication.kind} from ${participant.sid}`);
+          try {
+            publication.setSubscribed(true);
+            console.log(`   🔔 Subscribing to track: ${publication.kind} from ${participant.sid}`);
+            subscribedCount++;
+          } catch (error) {
+            console.error(`   ❌ Failed to subscribe to track ${publication.kind}:`, error);
+          }
         }
       });
+      
+      console.log(`   📊 Subscribed to ${subscribedCount} tracks for newly connected participant ${participant.sid}`);
     });
 
     // Handle track subscriptions - combine video and audio into single MediaStream per participant
@@ -154,28 +165,42 @@ export class LiveKitClient {
       console.log(`Room state: ${this.room.state}`);
       
       // Wait a moment for participants to be discovered
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
       // Subscribe to tracks from participants already in the room
       const participants = Array.from(this.room.remoteParticipants.values());
-      console.log(`Found ${participants.length} participants in room`);
-      
-      participants.forEach((participant) => {
-        console.log(`Found existing participant: SID ${participant.sid}, identity: ${participant.identity}, tracks: ${participant.trackPublications.size}`);
-        participant.trackPublications.forEach((publication) => {
-          if (publication.track) {
-            // Track is already available
-            console.log(`Track already available: ${publication.kind} from ${participant.sid}`);
-          } else if (!publication.isSubscribed) {
-            // Subscribe to the track
-            publication.setSubscribed(true);
-            console.log(`Subscribing to existing track: ${publication.kind} from ${participant.sid}`);
-          }
-        });
-      });
+      console.log(`📊 Found ${participants.length} participants in room`);
       
       if (participants.length === 0) {
         console.warn('⚠️ No participants found in room - tracks may not be available yet');
+      } else {
+        participants.forEach((participant) => {
+          console.log(`👤 Participant: SID=${participant.sid}, identity=${participant.identity}, trackPublications=${participant.trackPublications.size}`);
+          
+          let subscribedCount = 0;
+          participant.trackPublications.forEach((publication) => {
+            console.log(`   📹 Track: kind=${publication.kind}, subscribed=${publication.isSubscribed}, track=${publication.track ? 'available' : 'not available'}`);
+            
+            if (publication.track) {
+              // Track is already available
+              console.log(`   ✅ Track already available: ${publication.kind} from ${participant.sid}`);
+              subscribedCount++;
+            } else if (!publication.isSubscribed) {
+              // Subscribe to the track
+              try {
+                publication.setSubscribed(true);
+                console.log(`   🔔 Subscribing to track: ${publication.kind} from ${participant.sid}`);
+                subscribedCount++;
+              } catch (error) {
+                console.error(`   ❌ Failed to subscribe to track ${publication.kind}:`, error);
+              }
+            } else {
+              console.log(`   ⏳ Track ${publication.kind} already subscribed, waiting for track...`);
+            }
+          });
+          
+          console.log(`   📊 Subscribed to ${subscribedCount} tracks for participant ${participant.sid}`);
+        });
       }
     } catch (error) {
       console.error('❌ Failed to connect to LiveKit:', error);

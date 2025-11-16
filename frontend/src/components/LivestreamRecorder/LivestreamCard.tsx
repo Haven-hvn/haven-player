@@ -154,20 +154,60 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     } else {
       // Already connected - start recording
       try {
-        if (participantSid) {
-          await startRecording(participantSid);
-        } else {
+        // First, verify we have a valid participant SID and tracks are available
+        let recordingSid = participantSid;
+        
+        if (!recordingSid) {
           // Fallback: find the streamer participant
-          const actualStreamerSid = liveKitClient.findStreamerParticipantSid();
-          if (actualStreamerSid) {
-            setParticipantSid(actualStreamerSid);
-            await startRecording(actualStreamerSid);
-          } else {
-            throw new Error('No participant found to record');
+          console.log('No participant SID stored, finding streamer participant...');
+          recordingSid = liveKitClient.findStreamerParticipantSid();
+          if (recordingSid) {
+            setParticipantSid(recordingSid);
+            console.log(`Found streamer participant SID: ${recordingSid}`);
           }
         }
+        
+        if (!recordingSid) {
+          throw new Error('No participant SID available for recording');
+        }
+        
+        // Verify MediaStream exists and has tracks before recording
+        console.log(`Checking MediaStream for participant SID: ${recordingSid}`);
+        const mediaStream = liveKitClient.getMediaStream(recordingSid);
+        
+        if (!mediaStream) {
+          console.warn(`MediaStream not found for ${recordingSid}, waiting for tracks...`);
+          // Wait a bit longer for tracks to subscribe
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Try again
+          const streamerSid = liveKitClient.findStreamerParticipantSid();
+          if (streamerSid && streamerSid !== recordingSid) {
+            console.log(`Using different streamer SID: ${streamerSid}`);
+            recordingSid = streamerSid;
+            setParticipantSid(streamerSid);
+          }
+        } else {
+          const trackCount = mediaStream.getTracks().length;
+          console.log(`✅ MediaStream found with ${trackCount} tracks`);
+          
+          if (trackCount === 0) {
+            throw new Error(`MediaStream for participant ${recordingSid} has no active tracks`);
+          }
+          
+          // Verify tracks are active
+          const activeTracks = mediaStream.getTracks().filter(t => t.readyState === 'live');
+          console.log(`Active tracks: ${activeTracks.length} out of ${trackCount}`);
+          
+          if (activeTracks.length === 0) {
+            throw new Error(`No active tracks found for participant ${recordingSid}`);
+          }
+        }
+        
+        await startRecording(recordingSid);
       } catch (recordingError) {
         console.error('Failed to start recording:', recordingError);
+        // Error will be set by the hook's startRecording function
       }
     }
   };

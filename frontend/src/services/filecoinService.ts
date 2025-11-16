@@ -119,7 +119,7 @@ export async function uploadVideoToFilecoin(
       synapse,
       fileSize: carBytes.length,
       autoConfigureAllowances: true,
-      onProgress: (event) => {
+      onProgress: (event: { type: string }) => {
         if (event.type === 'checking-balances') {
           onProgress?.({
             stage: 'checking-payments',
@@ -188,7 +188,7 @@ export async function uploadVideoToFilecoin(
     const uploadResult = await executeUpload(synapseService, carBytes, rootCid, {
       logger,
       contextId: file.name,
-      onProgress: (event) => {
+      onProgress: (event: { type: string; data?: { retryCount?: number } }) => {
         switch (event.type) {
           case 'onUploadComplete': {
             onProgress?.({

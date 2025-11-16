@@ -43,6 +43,7 @@ describe('LivestreamGrid', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: false,
+        isFinalizing: false,
         duration: 0,
         progress: 0,
         error: null,

@@ -31,6 +31,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: false,
+        isFinalizing: false,
         duration: 0,
         progress: 0,
         error: null,
@@ -80,6 +81,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: false,
+        isFinalizing: false,
         duration: 0,
         progress: 0,
         error: null,
@@ -103,6 +105,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: true,
+        isFinalizing: false,
         duration: 45,
         progress: 15,
         error: null,
@@ -126,6 +129,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: false,
+        isFinalizing: false,
         duration: 0,
         progress: 0,
         error: 'Connection failed',
@@ -151,6 +155,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: false,
+        isFinalizing: false,
         duration: 0,
         progress: 0,
         error: null,
@@ -178,6 +183,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: true,
+        isFinalizing: false,
         duration: 30,
         progress: 10,
         error: null,
@@ -204,6 +210,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: false,
+        isFinalizing: false,
         duration: 0,
         progress: 0,
         error: null,
@@ -250,6 +257,7 @@ describe('LivestreamCard', () => {
     mockUseLiveKitRecording.mockReturnValue({
       status: {
         isRecording: true,
+        isFinalizing: false,
         duration: 30,
         progress: 10,
         error: null,

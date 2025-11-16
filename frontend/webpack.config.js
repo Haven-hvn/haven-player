@@ -62,6 +62,9 @@ module.exports = [
         "buffer": require.resolve("buffer"),
         "process": require.resolve("process/browser"),
       },
+      // Enable package exports resolution for packages like filecoin-pin
+      conditionNames: ['import', 'require', 'default'],
+      exportsFields: ['exports', 'main'],
     },
     output: {
       filename: 'renderer.js',

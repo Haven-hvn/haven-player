@@ -23,7 +23,7 @@ import {
 } from "@mui/icons-material";
 import { StreamInfo } from "@/types/video";
 import { useLiveKitRecording } from "@/hooks/useLiveKitRecording";
-import { LiveKitConnectionConfig } from "@/services/livekitClient";
+import { LiveKitConnectionConfig, liveKitClient } from "@/services/livekitClient";
 
 type LivestreamCardProps = {
   item: StreamInfo;
@@ -82,9 +82,34 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     handleClose();
   };
 
-  // Connect to LiveKit room when component mounts
+  // Cleanup on unmount - only disconnect if we're actually connected
   useEffect(() => {
-    const connectToLiveKit = async () => {
+    return () => {
+      if (isConnected) {
+        // Disconnect from backend StreamManager
+        fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
+          method: 'POST'
+        }).catch(console.error);
+        
+        disconnectFromRoom();
+      }
+    };
+  }, [item.mint_id, disconnectFromRoom, isConnected]);
+
+  const handleToggleRecord = async () => {
+    if (status.isRecording) {
+      await stopRecording();
+      // Disconnect when recording stops to free up resources
+      if (isConnected) {
+        fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
+          method: 'POST'
+        }).catch(console.error);
+        await disconnectFromRoom();
+        setIsConnected(false);
+        setParticipantSid(null);
+      }
+    } else {
+      // Connect and get participant SID just-in-time when user wants to record
       try {
         // Get complete connection details from backend using StreamManager
         const response = await fetch(`http://localhost:8000/api/live/connection/${item.mint_id}`);
@@ -99,6 +124,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
           throw new Error(connectionData.error || 'Connection failed');
         }
         
+        // Connect to LiveKit room
         const config: LiveKitConnectionConfig = {
           url: connectionData.livekit_url,
           token: connectionData.token,
@@ -107,46 +133,50 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         
         await connectToRoom(config);
         setIsConnected(true);
-        setParticipantSid(connectionData.participant_sid);
         
         console.log(`✅ Connected to LiveKit room: ${connectionData.room_name}`);
-        console.log(`📊 Stream data:`, connectionData.stream_data);
-        console.log(`👤 Participant SID: ${connectionData.participant_sid}`);
-      } catch (error) {
-        console.error('Failed to connect to LiveKit:', error);
-      }
-    };
-
-    connectToLiveKit();
-
-    // Cleanup on unmount
-    return () => {
-      if (isConnected) {
-        // Disconnect from backend StreamManager
-        fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
-          method: 'POST'
-        }).catch(console.error);
+        console.log(`👤 Backend provided Participant SID: ${connectionData.participant_sid}`);
         
-        disconnectFromRoom();
-      }
-    };
-  }, [item.mint_id, connectToRoom, disconnectFromRoom, isConnected]);
-
-  const handleToggleRecord = async () => {
-    if (status.isRecording) {
-      await stopRecording();
-    } else {
-      // Use the participant SID from the backend StreamManager
-      if (participantSid) {
-        await startRecording(participantSid);
-      } else {
-        console.error('No participant SID available for recording');
+        // Wait a moment for tracks to subscribe, then verify and start recording
+        // Use the participant SID from the backend StreamManager
+        if (connectionData.participant_sid) {
+          // Small delay to allow tracks to subscribe
+          setTimeout(async () => {
+            // Verify the participant SID is correct by checking if we can find the streamer
+            // The backend finds the streamer, but we should verify on frontend too
+            const actualStreamerSid = liveKitClient.findStreamerParticipantSid();
+            
+            if (actualStreamerSid && actualStreamerSid !== connectionData.participant_sid) {
+              console.warn(`⚠️ Backend SID (${connectionData.participant_sid}) doesn't match frontend streamer SID (${actualStreamerSid}), using frontend SID`);
+              setParticipantSid(actualStreamerSid);
+              await startRecording(actualStreamerSid);
+            } else {
+              // Use the backend-provided SID (should be correct)
+              setParticipantSid(connectionData.participant_sid);
+              await startRecording(connectionData.participant_sid);
+            }
+          }, 1000);
+        } else {
+          throw new Error('No participant SID available for recording');
+        }
+      } catch (error) {
+        console.error('Failed to connect and start recording:', error);
+        // Error will be set by the hook's startRecording function
       }
     }
   };
 
   const handleStopRecording = async () => {
     await stopRecording();
+    // Disconnect when recording stops to free up resources
+    if (isConnected) {
+      fetch(`http://localhost:8000/api/live/disconnect/${item.mint_id}`, {
+        method: 'POST'
+      }).catch(console.error);
+      await disconnectFromRoom();
+      setIsConnected(false);
+      setParticipantSid(null);
+    }
     handleClose();
   };
 

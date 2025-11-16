@@ -189,9 +189,39 @@ export class LiveKitClient {
     const stream = this.mediaStreams.get(participantSid);
     if (!stream) {
       console.warn(`No MediaStream found for participant SID: ${participantSid}`);
-      console.log(`Available participant SIDs: ${Array.from(this.mediaStreams.keys()).join(', ')}`);
+      console.log(`Available participant SIDs: ${Array.from(this.mediaStreams.keys()).join(', ') || 'none'}`);
+      
+      // Debug: List all participants in the room
+      if (this.room) {
+        const allParticipants = Array.from(this.room.remoteParticipants.values());
+        console.log(`Participants in room:`, allParticipants.map(p => ({
+          sid: p.sid,
+          identity: p.identity,
+          tracks: p.trackPublications.size
+        })));
+      }
     }
     return stream || null;
+  }
+  
+  /**
+   * Find participant SID by looking for the participant with published tracks (the streamer)
+   * This is a fallback if the backend-provided SID doesn't match
+   * @returns Participant SID of the streamer, or null if not found
+   */
+  findStreamerParticipantSid(): string | null {
+    if (!this.room) return null;
+    
+    // Find the participant with published tracks (the streamer)
+    for (const participant of this.room.remoteParticipants.values()) {
+      if (participant.trackPublications.size > 0) {
+        console.log(`Found streamer participant: SID ${participant.sid}, identity: ${participant.identity}, tracks: ${participant.trackPublications.size}`);
+        return participant.sid;
+      }
+    }
+    
+    console.warn('No participant with published tracks found in room');
+    return null;
   }
   
   /**

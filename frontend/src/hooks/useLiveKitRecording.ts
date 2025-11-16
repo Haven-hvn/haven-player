@@ -146,11 +146,26 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
         mediaStream = await liveKitClient.waitForMediaStream(participantId, 5000);
       }
       
+      // Fallback: If the backend-provided SID doesn't work, try to find the streamer participant
+      if (!mediaStream) {
+        console.warn(`MediaStream not found for backend-provided SID: ${participantId}, trying to find streamer participant...`);
+        const streamerSid = liveKitClient.findStreamerParticipantSid();
+        if (streamerSid && streamerSid !== participantId) {
+          console.log(`Found different streamer SID: ${streamerSid}, using that instead`);
+          mediaStream = liveKitClient.getMediaStream(streamerSid);
+          if (mediaStream) {
+            // Update participantId to the actual streamer SID
+            participantId = streamerSid;
+          }
+        }
+      }
+      
       if (!mediaStream) {
         const availableSids = liveKitClient.getParticipantIds();
         throw new Error(
           `No MediaStream found for participant SID: ${participantId}. ` +
-          `Available participant SIDs: ${availableSids.length > 0 ? availableSids.join(', ') : 'none'}`
+          `Available participant SIDs: ${availableSids.length > 0 ? availableSids.join(', ') : 'none'}. ` +
+          `Make sure the participant has published video/audio tracks.`
         );
       }
       

@@ -54,13 +54,14 @@ module.exports = [
       ],
     },
     resolve: {
-      extensions: ['.tsx', '.ts', '.js'],
+      extensions: ['.tsx', '.ts', '.js', '.mjs', '.cjs'],
       alias: {
         '@': path.resolve(__dirname, 'src'),
       },
       fallback: {
         "buffer": require.resolve("buffer"),
-        "process": require.resolve("process/browser"),
+        "process": require.resolve("process/browser.js"),
+        "process/browser": require.resolve("process/browser.js"),
       },
       // Enable package exports resolution for packages like filecoin-pin
       // Use conditionNames to support package exports, but be lenient with invalid exports
@@ -68,6 +69,8 @@ module.exports = [
       // Don't strictly enforce exportsFields - allow fallback to main field
       // This prevents errors from packages with invalid exports (like prop-types)
       mainFields: ['browser', 'module', 'main'],
+      // Allow fully specified imports for ESM modules
+      fullySpecified: false,
     },
     output: {
       filename: 'renderer.js',

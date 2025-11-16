@@ -27,7 +27,18 @@ function createWindow() {
   } else {
     console.log('Loading from local file:', indexPath);
     mainWindow.loadFile(indexPath);
+    // Always open DevTools in production for debugging (can be removed later)
+    mainWindow.webContents.openDevTools();
   }
+  
+  // Add keyboard shortcut to toggle DevTools (Cmd+Option+I or Ctrl+Shift+I)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') {
+      if (mainWindow) {
+        mainWindow.webContents.toggleDevTools();
+      }
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

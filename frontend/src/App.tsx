@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import LogViewer from "./components/LogViewer";
 import {
   HashRouter as Router,
   Routes,
@@ -628,6 +629,8 @@ const App: React.FC = () => {
             <Route path="/player/:videoPath" element={<VideoPlayer />} />
           </Routes>
         </Router>
+        {/* Log Viewer - always available */}
+        <LogViewer />
       </Box>
     </ThemeProvider>
   );

@@ -181,9 +181,11 @@ class ParticipantRecorderWrapper:
                     break
                 
                 # Check if room is still connected
-                if self.room.connection_state != rtc.ConnectionState.CONNECTED:
+                # ConnectionState enum values vary by version, so check string representation
+                connection_state_str = str(self.room.connection_state)
+                if "disconnected" in connection_state_str.lower() or "failed" in connection_state_str.lower():
                     logger.error(
-                        f"[{self.mint_id}] ❌ Room connection lost! State: {self.room.connection_state}"
+                        f"[{self.mint_id}] ❌ Room connection lost! State: {connection_state_str}"
                     )
                     self.state = RecordingState.STOPPED
                     break

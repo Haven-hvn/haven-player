@@ -290,50 +290,151 @@ class ParticipantRecorderWrapper:
         participant: rtc.RemoteParticipant,
         timeout: float = 20.0,
     ) -> tuple[bool, bool]:
-        """Wait for participant to publish video and/or audio tracks.
+        """Wait for participant to publish AND subscribe video and/or audio tracks.
+        
+        CRITICAL: We must wait for tracks to be SUBSCRIBED, not just published.
+        ParticipantRecorder needs subscribed tracks to record video frames.
         
         Args:
             participant: The remote participant.
             timeout: Maximum time to wait in seconds.
         
         Returns:
-            Tuple of (has_video, has_audio).
+            Tuple of (has_video, has_audio) - both tracks must be subscribed.
         """
         import time
         start_time = time.time()
         has_video = False
         has_audio = False
         
-        # Check existing tracks
-        for publication in participant.track_publications.values():
-            if publication.kind == rtc.TrackKind.KIND_VIDEO:
-                has_video = True
-            elif publication.kind == rtc.TrackKind.KIND_AUDIO:
-                has_audio = True
+        def check_tracks_subscribed() -> tuple[bool, bool]:
+            """Check if both video and audio tracks are published AND subscribed."""
+            video_pub = False
+            audio_pub = False
+            video_sub = False
+            audio_sub = False
+            
+            for publication in participant.track_publications.values():
+                if publication.kind == rtc.TrackKind.KIND_VIDEO:
+                    video_pub = True
+                    # Check if track is subscribed (has track property)
+                    if publication.track is not None:
+                        video_sub = True
+                elif publication.kind == rtc.TrackKind.KIND_AUDIO:
+                    audio_pub = True
+                    # Check if track is subscribed (has track property)
+                    if publication.track is not None:
+                        audio_sub = True
+            
+            return (video_pub and video_sub, audio_pub and audio_sub)
         
-        if has_video or has_audio:
+        # Check existing tracks - both published AND subscribed
+        has_video, has_audio = check_tracks_subscribed()
+        
+        if has_video and has_audio:
             logger.info(
-                f"[{self.mint_id}] Tracks already available - Video: {has_video}, Audio: {has_audio}"
+                f"[{self.mint_id}] Tracks already available and subscribed - Video: {has_video}, Audio: {has_audio}"
             )
             return (has_video, has_audio)
         
-        # Wait for tracks to be published
-        logger.info(f"[{self.mint_id}] Waiting for tracks to be published (timeout: {timeout}s)...")
+        # Wait for tracks to be published AND subscribed
+        logger.info(
+            f"[{self.mint_id}] Waiting for tracks to be published and subscribed (timeout: {timeout}s)..."
+        )
+        logger.info(
+            f"[{self.mint_id}] Current state - Video published: {any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())}, "
+            f"Audio published: {any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())}"
+        )
+        
+        # Ensure tracks are subscribed if they're published but not subscribed
+        # This is needed when auto_subscribe=False
+        for publication in participant.track_publications.values():
+            if publication.track is None and publication.subscribed:
+                # Track is published and marked for subscription but not yet subscribed
+                # Try to set subscribed to True to trigger subscription
+                try:
+                    publication.set_subscribed(True)
+                    logger.info(
+                        f"[{self.mint_id}] Manually triggered subscription for {publication.kind} track"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.mint_id}] Could not manually subscribe {publication.kind} track: {e}"
+                    )
+            elif not publication.subscribed:
+                # Track is published but not subscribed - subscribe to it
+                try:
+                    publication.set_subscribed(True)
+                    logger.info(
+                        f"[{self.mint_id}] Manually subscribed to {publication.kind} track"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.mint_id}] Could not subscribe to {publication.kind} track: {e}"
+                    )
         
         while time.time() - start_time < timeout:
-            for publication in participant.track_publications.values():
-                if publication.kind == rtc.TrackKind.KIND_VIDEO:
-                    has_video = True
-                elif publication.kind == rtc.TrackKind.KIND_AUDIO:
-                    has_audio = True
+            has_video, has_audio = check_tracks_subscribed()
             
-            if has_video or has_audio:
+            if has_video and has_audio:
+                logger.info(
+                    f"[{self.mint_id}] ✅ Both tracks subscribed - Video: {has_video}, Audio: {has_audio}"
+                )
                 break
             
-            await asyncio.sleep(0.5)
+            # If tracks are published but not subscribed, try subscribing again
+            if not has_video or not has_audio:
+                for publication in participant.track_publications.values():
+                    if publication.track is None:
+                        if publication.kind == rtc.TrackKind.KIND_VIDEO and not has_video:
+                            try:
+                                publication.set_subscribed(True)
+                            except Exception:
+                                pass
+                        elif publication.kind == rtc.TrackKind.KIND_AUDIO and not has_audio:
+                            try:
+                                publication.set_subscribed(True)
+                            except Exception:
+                                pass
+            
+            # Log progress every 2 seconds
+            elapsed = time.time() - start_time
+            if int(elapsed) % 2 == 0 and elapsed > 0:
+                video_pub = any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())
+                audio_pub = any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())
+                video_sub = any(
+                    p.kind == rtc.TrackKind.KIND_VIDEO and p.track is not None 
+                    for p in participant.track_publications.values()
+                )
+                audio_sub = any(
+                    p.kind == rtc.TrackKind.KIND_AUDIO and p.track is not None 
+                    for p in participant.track_publications.values()
+                )
+                logger.info(
+                    f"[{self.mint_id}] Waiting... Video: pub={video_pub}, sub={video_sub}; "
+                    f"Audio: pub={audio_pub}, sub={audio_sub}"
+                )
+            
+            await asyncio.sleep(0.2)  # Check more frequently
+        
+        # Final check
+        has_video, has_audio = check_tracks_subscribed()
+        
+        if not has_video and not has_audio:
+            logger.warning(
+                f"[{self.mint_id}] ⚠️ No tracks subscribed after {timeout}s timeout"
+            )
+        elif not has_video:
+            logger.warning(
+                f"[{self.mint_id}] ⚠️ Video track not subscribed (audio only recording)"
+            )
+        elif not has_audio:
+            logger.warning(
+                f"[{self.mint_id}] ⚠️ Audio track not subscribed (video only recording)"
+            )
         
         logger.info(
-            f"[{self.mint_id}] Tracks available after wait - Video: {has_video}, Audio: {has_audio}"
+            f"[{self.mint_id}] Final track status - Video: {has_video}, Audio: {has_audio}"
         )
         return (has_video, has_audio)
     
@@ -366,23 +467,51 @@ class ParticipantRecorderWrapper:
                     "error": f"Participant object not found for sid {self.stream_info.participant_sid}"
                 }
             
-            # Wait for tracks to be published (matching integration test pattern)
+            # CRITICAL: Wait for tracks to be published AND subscribed
+            # ParticipantRecorder requires subscribed tracks to record video frames
             has_video, has_audio = await self._wait_for_tracks(participant, timeout=20.0)
             
             if not has_video and not has_audio:
                 logger.warning(
-                    f"[{self.mint_id}] ⚠️ No video or audio tracks found for participant {participant_identity}"
+                    f"[{self.mint_id}] ⚠️ No video or audio tracks subscribed for participant {participant_identity}"
                 )
                 # Don't fail - ParticipantRecorder might still work, but log warning
+            elif not has_video:
+                logger.warning(
+                    f"[{self.mint_id}] ⚠️ Video track not subscribed - will record audio only"
+                )
+            elif not has_audio:
+                logger.warning(
+                    f"[{self.mint_id}] ⚠️ Audio track not subscribed - will record video only"
+                )
             
             # Ensure output directory exists and is writable
             self.output_dir.mkdir(parents=True, exist_ok=True)
             if not self.output_dir.exists():
                 raise RecordingError(f"Failed to create output directory: {self.output_dir}")
             
-            # Small delay to ensure tracks are fully ready before starting recording
-            # This helps prevent race conditions that can cause FFmpeg crashes
-            await asyncio.sleep(0.5)
+            # CRITICAL: Additional delay after tracks are subscribed to ensure they're fully ready
+            # This prevents race conditions where ParticipantRecorder starts before video frames are available
+            # The delay allows the WebRTC connection to stabilize and frames to start flowing
+            logger.info(
+                f"[{self.mint_id}] Waiting 1.0s after track subscription to ensure frames are flowing..."
+            )
+            await asyncio.sleep(1.0)
+            
+            # Verify tracks are still subscribed before starting recording
+            video_still_subscribed = any(
+                p.kind == rtc.TrackKind.KIND_VIDEO and p.track is not None 
+                for p in participant.track_publications.values()
+            )
+            audio_still_subscribed = any(
+                p.kind == rtc.TrackKind.KIND_AUDIO and p.track is not None 
+                for p in participant.track_publications.values()
+            )
+            
+            logger.info(
+                f"[{self.mint_id}] Pre-recording verification - Video subscribed: {video_still_subscribed}, "
+                f"Audio subscribed: {audio_still_subscribed}"
+            )
             
             self.participant_identity = participant_identity
             

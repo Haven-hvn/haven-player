@@ -98,42 +98,78 @@ export class LiveKitClient {
 
     // Handle track unsubscriptions
     this.room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
-      console.log(`Track unsubscribed: ${track.kind} from participant SID: ${participant.sid}`);
+      console.log(`⚠️ Track unsubscribed: ${track.kind} from participant SID: ${participant.sid}`);
       
       const participantSid = participant.sid;
       const tracks = this.participantTracks.get(participantSid);
       
       if (tracks) {
-        // Remove the specific track
-        if (track.kind === Track.Kind.Video) {
-          delete tracks.video;
-        } else if (track.kind === Track.Kind.Audio) {
-          delete tracks.audio;
+        // Check if track is still valid before removing
+        // Tracks might still be usable for recording even if "unsubscribed"
+        const trackToCheck = track.kind === Track.Kind.Video ? tracks.video : tracks.audio;
+        
+        if (trackToCheck) {
+          const trackState = trackToCheck.readyState;
+          console.log(`   Track state: ${trackState}`);
+          
+          // Only remove if track is actually ended
+          if (trackState === 'ended') {
+            console.log(`   Removing ended ${track.kind} track for ${participantSid}`);
+            if (track.kind === Track.Kind.Video) {
+              delete tracks.video;
+            } else if (track.kind === Track.Kind.Audio) {
+              delete tracks.audio;
+            }
+          } else {
+            console.log(`   ⚠️ Track ${track.kind} unsubscribed but still active (${trackState}) - keeping for recording`);
+            // Don't remove - track is still valid for recording
+          }
         }
         
         // If no tracks left, remove the MediaStream
         if (!tracks.video && !tracks.audio) {
+          console.log(`   ❌ No tracks left for ${participantSid}, removing MediaStream`);
           this.mediaStreams.delete(participantSid);
           this.participantTracks.delete(participantSid);
           this.emitStreamRemoved(participantSid);
         } else {
           // Update MediaStream with remaining tracks
           const streamTracks: MediaStreamTrack[] = [];
-          if (tracks.video) streamTracks.push(tracks.video);
-          if (tracks.audio) streamTracks.push(tracks.audio);
-          const mediaStream = new MediaStream(streamTracks);
-          this.mediaStreams.set(participantSid, mediaStream);
+          if (tracks.video && tracks.video.readyState !== 'ended') streamTracks.push(tracks.video);
+          if (tracks.audio && tracks.audio.readyState !== 'ended') streamTracks.push(tracks.audio);
+          
+          if (streamTracks.length > 0) {
+            const mediaStream = new MediaStream(streamTracks);
+            this.mediaStreams.set(participantSid, mediaStream);
+            console.log(`   ✅ Updated MediaStream for ${participantSid} with ${streamTracks.length} active tracks`);
+          }
         }
       }
     });
 
     // Handle participant disconnections
     this.room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
-      console.log(`Participant disconnected: SID ${participant.sid}, identity: ${participant.identity}`);
+      console.log(`⚠️ Participant disconnected: SID ${participant.sid}, identity: ${participant.identity}`);
       const participantSid = participant.sid;
+      
+      // Check if tracks are still valid before removing
+      const tracks = this.participantTracks.get(participantSid);
+      if (tracks) {
+        const hasActiveTracks = (tracks.video && tracks.video.readyState !== 'ended') || 
+                                (tracks.audio && tracks.audio.readyState !== 'ended');
+        
+        if (hasActiveTracks) {
+          console.log(`   ⚠️ Participant disconnected but tracks are still active - keeping MediaStream for recording`);
+          // Don't remove tracks yet - they might still be valid for recording
+          return;
+        }
+      }
+      
+      // Only remove if no active tracks
       this.mediaStreams.delete(participantSid);
       this.participantTracks.delete(participantSid);
       this.emitStreamRemoved(participantSid);
+      console.log(`   ✅ Removed MediaStream for disconnected participant ${participantSid}`);
     });
   }
 

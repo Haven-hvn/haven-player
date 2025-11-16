@@ -101,16 +101,33 @@ class StreamManager:
             if not token:
                 return {"success": False, "error": "Failed to get LiveKit token"}
 
-            # Create room for this mint_id
+            # Reuse existing room if it exists and is still connected
             if mint_id in self.rooms:
-                # Disconnect existing room if it exists
                 existing_room = self.rooms[mint_id]
+                # Check if room is still connected
+                try:
+                    # Try to check connection state - if room is still valid, reuse it
+                    if existing_room and hasattr(existing_room, 'connection_state'):
+                        # Room exists and might be connected - check if we can reuse
+                        stream_info = self.active_streams.get(mint_id)
+                        if stream_info:
+                            # We already have stream info, return it without reconnecting
+                            logger.info(f"Reusing existing connection for {mint_id}")
+                            return {
+                                "success": True,
+                                "mint_id": mint_id,
+                                "room_name": stream_info.room_name,
+                                "participant_sid": stream_info.participant_sid,
+                                "stream_info": self.pumpfun_service.format_stream_for_ui(stream_info.stream_data)
+                            }
+                except Exception as e:
+                    logger.warning(f"Error checking existing room for {mint_id}: {e}")
+                
+                # If we get here, the existing room is invalid, disconnect it
                 if existing_room:
                     try:
-                        # Try to disconnect - handle gracefully if already disconnected
                         await existing_room.disconnect()
                     except Exception as e:
-                        # If disconnect fails, log but continue (room might already be disconnected)
                         logger.warning(f"Error disconnecting existing room for {mint_id}: {e}")
                 del self.rooms[mint_id]
 

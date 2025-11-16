@@ -148,12 +148,20 @@ export class LiveKitClient {
     this.config = config;
     
     try {
+      console.log(`Connecting to LiveKit room: ${config.roomName} at ${config.url}`);
       await this.room.connect(config.url, config.token);
-      console.log(`Connected to LiveKit room: ${config.roomName}`);
+      console.log(`✅ Successfully connected to LiveKit room: ${config.roomName}`);
+      console.log(`Room state: ${this.room.state}`);
+      
+      // Wait a moment for participants to be discovered
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       // Subscribe to tracks from participants already in the room
-      this.room.remoteParticipants.forEach((participant) => {
-        console.log(`Found existing participant: SID ${participant.sid}, identity: ${participant.identity}`);
+      const participants = Array.from(this.room.remoteParticipants.values());
+      console.log(`Found ${participants.length} participants in room`);
+      
+      participants.forEach((participant) => {
+        console.log(`Found existing participant: SID ${participant.sid}, identity: ${participant.identity}, tracks: ${participant.trackPublications.size}`);
         participant.trackPublications.forEach((publication) => {
           if (publication.track) {
             // Track is already available
@@ -165,8 +173,12 @@ export class LiveKitClient {
           }
         });
       });
+      
+      if (participants.length === 0) {
+        console.warn('⚠️ No participants found in room - tracks may not be available yet');
+      }
     } catch (error) {
-      console.error('Failed to connect to LiveKit:', error);
+      console.error('❌ Failed to connect to LiveKit:', error);
       throw error;
     }
   }

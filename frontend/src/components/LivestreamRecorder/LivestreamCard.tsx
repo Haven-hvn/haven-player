@@ -96,8 +96,48 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     };
   }, [item.mint_id, disconnectFromRoom, isConnected]);
 
+  // Separate handler for connecting
+  const handleConnect = async () => {
+    if (status.isConnected || isLoading) return;
+    
+    try {
+      // Get complete connection details from backend using StreamManager
+      const response = await fetch(`http://localhost:8000/api/live/connection/${item.mint_id}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to get connection details');
+      }
+      
+      const connectionData = await response.json();
+      
+      if (!connectionData.success) {
+        throw new Error(connectionData.error || 'Connection failed');
+      }
+      
+      // Connect to LiveKit room
+      const config: LiveKitConnectionConfig = {
+        url: connectionData.livekit_url,
+        token: connectionData.token,
+        roomName: connectionData.room_name
+      };
+      
+      await connectToRoom(config);
+      setIsConnected(true);
+      setParticipantSid(connectionData.participant_sid);
+      
+      console.log(`✅ Connected to LiveKit room: ${connectionData.room_name}`);
+      console.log(`👤 Backend provided Participant SID: ${connectionData.participant_sid}`);
+    } catch (error) {
+      console.error('Failed to connect:', error);
+      setIsConnected(false);
+      // Error will be set by the hook's connectToRoom function
+    }
+  };
+
+  // Handler for starting/stopping recording
   const handleToggleRecord = async () => {
     if (status.isRecording) {
+      // Stop recording
       await stopRecording();
       // Disconnect when recording stops to free up resources
       if (isConnected) {
@@ -108,60 +148,26 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         setIsConnected(false);
         setParticipantSid(null);
       }
+    } else if (!status.isConnected) {
+      // Not connected - just connect (don't start recording yet)
+      await handleConnect();
     } else {
-      // Connect and get participant SID just-in-time when user wants to record
+      // Already connected - start recording
       try {
-        // Get complete connection details from backend using StreamManager
-        const response = await fetch(`http://localhost:8000/api/live/connection/${item.mint_id}`);
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.detail || 'Failed to get connection details');
-        }
-        
-        const connectionData = await response.json();
-        
-        if (!connectionData.success) {
-          throw new Error(connectionData.error || 'Connection failed');
-        }
-        
-        // Connect to LiveKit room
-        const config: LiveKitConnectionConfig = {
-          url: connectionData.livekit_url,
-          token: connectionData.token,
-          roomName: connectionData.room_name
-        };
-        
-        await connectToRoom(config);
-        setIsConnected(true);
-        
-        console.log(`✅ Connected to LiveKit room: ${connectionData.room_name}`);
-        console.log(`👤 Backend provided Participant SID: ${connectionData.participant_sid}`);
-        
-        // Wait a moment for tracks to subscribe, then verify and start recording
-        // Use the participant SID from the backend StreamManager
-        if (connectionData.participant_sid) {
-          // Small delay to allow tracks to subscribe
-          setTimeout(async () => {
-            // Verify the participant SID is correct by checking if we can find the streamer
-            // The backend finds the streamer, but we should verify on frontend too
-            const actualStreamerSid = liveKitClient.findStreamerParticipantSid();
-            
-            if (actualStreamerSid && actualStreamerSid !== connectionData.participant_sid) {
-              console.warn(`⚠️ Backend SID (${connectionData.participant_sid}) doesn't match frontend streamer SID (${actualStreamerSid}), using frontend SID`);
-              setParticipantSid(actualStreamerSid);
-              await startRecording(actualStreamerSid);
-            } else {
-              // Use the backend-provided SID (should be correct)
-              setParticipantSid(connectionData.participant_sid);
-              await startRecording(connectionData.participant_sid);
-            }
-          }, 1000);
+        if (participantSid) {
+          await startRecording(participantSid);
         } else {
-          throw new Error('No participant SID available for recording');
+          // Fallback: find the streamer participant
+          const actualStreamerSid = liveKitClient.findStreamerParticipantSid();
+          if (actualStreamerSid) {
+            setParticipantSid(actualStreamerSid);
+            await startRecording(actualStreamerSid);
+          } else {
+            throw new Error('No participant found to record');
+          }
         }
-      } catch (error) {
-        console.error('Failed to connect and start recording:', error);
-        // Error will be set by the hook's startRecording function
+      } catch (recordingError) {
+        console.error('Failed to start recording:', recordingError);
       }
     }
   };
@@ -275,8 +281,8 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
           </Box>
         )}
 
-        {/* Connection status indicator */}
-        {!status.isConnected && !status.error && (
+        {/* Connection status indicator - only show when actively connecting */}
+        {isLoading && !status.isConnected && !status.error && (
           <Box
             sx={{
               position: "absolute",
@@ -310,7 +316,13 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         {/* Hover overlay REC */}
         <Box
           role="button"
-          aria-label={status.isRecording ? "Stop recording" : "Start recording"}
+          aria-label={
+            status.isRecording 
+              ? "Stop recording" 
+              : status.isConnected 
+                ? "Start recording" 
+                : "Connect and record"
+          }
           onClick={handleToggleRecord}
           sx={{
             position: "absolute",
@@ -325,8 +337,8 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               opacity: 1,
               background: "rgba(0,0,0,0.6)",
             },
-            cursor: isLoading || !status.isConnected ? "not-allowed" : "pointer",
-            pointerEvents: isLoading || !status.isConnected ? "none" : "auto",
+            cursor: isLoading ? "not-allowed" : "pointer",
+            pointerEvents: isLoading ? "none" : "auto",
           }}
         >
           <Box
@@ -396,10 +408,16 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
                   {status.error}
                 </Typography>
               </>
-            ) : !status.isConnected ? (
+            ) : isLoading ? (
               <>
                 <Typography variant="caption" sx={{ color: "#FFA726" }}>
                   Connecting to LiveKit...
+                </Typography>
+              </>
+            ) : !status.isConnected ? (
+              <>
+                <Typography variant="caption" sx={{ color: "#9E9E9E" }}>
+                  Click to Connect
                 </Typography>
               </>
             ) : (

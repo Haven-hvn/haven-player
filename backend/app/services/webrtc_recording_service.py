@@ -375,6 +375,15 @@ class ParticipantRecorderWrapper:
                 )
                 # Don't fail - ParticipantRecorder might still work, but log warning
             
+            # Ensure output directory exists and is writable
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            if not self.output_dir.exists():
+                raise RecordingError(f"Failed to create output directory: {self.output_dir}")
+            
+            # Small delay to ensure tracks are fully ready before starting recording
+            # This helps prevent race conditions that can cause FFmpeg crashes
+            await asyncio.sleep(0.5)
+            
             self.participant_identity = participant_identity
             
             # Map quality presets to ParticipantRecorder options - Maximum quality
@@ -440,17 +449,32 @@ class ParticipantRecorderWrapper:
                 f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps}"
             )
             
+            # Generate output path BEFORE starting recording (required for ParticipantRecorder)
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+            self.output_path = self.output_dir / f"{self.mint_id}_{timestamp}.webm"
+            logger.info(f"[{self.mint_id}] Output path set: {self.output_path}")
+            
             # State: CONNECTING → RECORDING
             self.state = RecordingState.RECORDING
             self.start_time = datetime.now(timezone.utc)
             
             # Start recording with timeout (matching integration test pattern)
+            # Pass output_path to start_recording if it accepts it
             logger.info(f"[{self.mint_id}] Starting recording for participant: {participant_identity}")
             try:
-                await asyncio.wait_for(
-                    self.recorder.start_recording(participant_identity),
-                    timeout=10.0
-                )
+                # Try with output_path first, fallback to without if not supported
+                try:
+                    await asyncio.wait_for(
+                        self.recorder.start_recording(participant_identity, output_path=str(self.output_path)),
+                        timeout=10.0
+                    )
+                except TypeError:
+                    # If output_path parameter not supported, try without it
+                    logger.info(f"[{self.mint_id}] start_recording doesn't accept output_path, using default")
+                    await asyncio.wait_for(
+                        self.recorder.start_recording(participant_identity),
+                        timeout=10.0
+                    )
             except asyncio.TimeoutError:
                 error_msg = "Timeout starting recording - participant may have disconnected"
                 logger.error(f"[{self.mint_id}] ❌ {error_msg}")
@@ -478,10 +502,6 @@ class ParticipantRecorderWrapper:
                 self._last_frame_count = initial_stats.video_frames_recorded + initial_stats.audio_frames_recorded
             except Exception as e:
                 logger.warning(f"[{self.mint_id}] ⚠️ Could not get initial recorder stats: {e}")
-            
-            # Generate output path (will be finalized on stop)
-            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-            self.output_path = self.output_dir / f"{self.mint_id}_{timestamp}.webm"
             
             # Log room and participant state
             logger.info(

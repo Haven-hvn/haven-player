@@ -1,34 +1,29 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error - filecoin-pin package exports may not be properly typed in TypeScript
 import { createCarFromFile } from 'filecoin-pin/core';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error - filecoin-pin package exports may not be properly typed in TypeScript
 import { 
   initializeSynapse as initSynapse, 
   createStorageContext,
   cleanupSynapseService,
   type SynapseService,
 } from 'filecoin-pin/core/synapse';
-// Define Synapse type locally since it may not be exported
-type Synapse = Parameters<typeof initSynapse>[0] extends { privateKey: string; rpcUrl: string } 
-  ? Awaited<ReturnType<typeof initSynapse>>
-  : unknown;
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error - filecoin-pin package exports may not be properly typed in TypeScript
+// Define Synapse type - filecoin-pin may not export this type properly
+// Since TypeScript can't infer the return type from initSynapse, we define it as a generic object type
+// and use type assertions where needed
+type Synapse = Record<string, unknown>;
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 // Use CID from multiformats - type assertion needed due to version mismatch
 import type { CID } from 'multiformats/cid';
 import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
 
 // Simple logger for browser environment that matches filecoin-pin's Logger interface
+// LogFn expects (msg: string, ...args: unknown[]) signature
 const createLogger = () => ({
   level: 'info' as const,
-  info: (data: unknown, msg: string) => console.log(`[Filecoin] ${msg}`, data),
-  warn: (data: unknown, msg: string) => console.warn(`[Filecoin] ${msg}`, data),
-  error: (data: unknown, msg: string) => console.error(`[Filecoin] ${msg}`, data),
-  debug: (data: unknown, msg: string) => console.debug(`[Filecoin] ${msg}`, data),
-  fatal: (data: unknown, msg: string) => console.error(`[Filecoin] FATAL: ${msg}`, data),
-  trace: (data: unknown, msg: string) => console.trace(`[Filecoin] ${msg}`, data),
+  info: (msg: string, ...args: unknown[]) => console.log(`[Filecoin] ${msg}`, ...args),
+  warn: (msg: string, ...args: unknown[]) => console.warn(`[Filecoin] ${msg}`, ...args),
+  error: (msg: string, ...args: unknown[]) => console.error(`[Filecoin] ${msg}`, ...args),
+  debug: (msg: string, ...args: unknown[]) => console.debug(`[Filecoin] ${msg}`, ...args),
+  fatal: (msg: string, ...args: unknown[]) => console.error(`[Filecoin] FATAL: ${msg}`, ...args),
+  trace: (msg: string, ...args: unknown[]) => console.trace(`[Filecoin] ${msg}`, ...args),
   silent: false,
   msgPrefix: '[Filecoin]',
 });
@@ -85,7 +80,7 @@ async function initializeSynapseSDK(
   config: FilecoinConfig,
   logger: ReturnType<typeof createLogger>
 ): Promise<Synapse> {
-  return await initSynapse(
+  const result = await initSynapse(
     {
       privateKey: config.privateKey,
       rpcUrl: config.rpcUrl,
@@ -97,6 +92,8 @@ async function initializeSynapseSDK(
     },
     logger
   );
+  // Type assertion needed since TypeScript can't properly infer the return type from filecoin-pin
+  return result as Synapse;
 }
 
 /**
@@ -283,7 +280,7 @@ export async function uploadVideoToFilecoin(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    logger.error({ error }, 'Upload failed');
+    logger.error('Upload failed', { error });
     throw new Error(`Filecoin upload failed: ${errorMessage}`);
   } finally {
     // Always cleanup WebSocket providers to allow process termination (filecoin-pin pattern)
@@ -291,7 +288,7 @@ export async function uploadVideoToFilecoin(
     try {
       await cleanupSynapseService();
     } catch (cleanupError) {
-      logger.warn({ error: cleanupError }, 'Cleanup warning');
+      logger.warn('Cleanup warning', { error: cleanupError });
     }
   }
 }

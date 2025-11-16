@@ -3,6 +3,7 @@ import { liveKitClient, LiveKitConnectionConfig, MediaStreamInfo } from '@/servi
 
 export interface RecordingStatus {
   isRecording: boolean;
+  isFinalizing: boolean; // True when stopping/encoding the recording
   duration: number;
   progress: number; // 0-100
   error: string | null;
@@ -25,6 +26,7 @@ const API_BASE_URL = 'http://localhost:8000/api';
 export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn => {
   const [status, setStatus] = useState<RecordingStatus>({
     isRecording: false,
+    isFinalizing: false,
     duration: 0,
     progress: 0,
     error: null,
@@ -74,6 +76,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
           setStatus(prev => ({
             ...prev,
             isRecording: false,
+            isFinalizing: false,
             duration: 0,
             progress: 0
           }));
@@ -126,6 +129,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
         setStatus(prev => ({
           ...prev,
           isRecording: false,
+          isFinalizing: false,
           duration: 0,
           progress: 0
         }));
@@ -161,6 +165,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
               setStatus(prev => ({
                 ...prev,
                 isRecording: true,
+                isFinalizing: false,
                 duration,
                 progress
               }));
@@ -293,6 +298,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       setStatus(prev => ({
         ...prev,
         isRecording: true,
+        isFinalizing: false,
         participantId: result.participant_sid || participantId, // Use backend's participant SID if available
         duration: initialDuration,
         progress: calculateProgress(initialDuration)
@@ -313,24 +319,29 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
 
   // Stop recording using backend API
   const stopRecording = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-    setStatus(prev => ({ ...prev, error: null }));
+    // Set finalizing state immediately to show accurate UI
+    setStatus(prev => ({ 
+      ...prev, 
+      error: null,
+      isFinalizing: true,
+      isRecording: false // No longer recording, but finalizing
+    }));
+    
+    // Stop status checking immediately to prevent race conditions
+    if (statusCheckIntervalRef.current) {
+      clearInterval(statusCheckIntervalRef.current);
+      statusCheckIntervalRef.current = null;
+      console.log(`⏸️ Stopped status polling for ${mintId}`);
+    }
+    
+    // Stop duration tracking
+    if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current);
+      durationIntervalRef.current = null;
+    }
 
     try {
       console.log(`🛑 Stopping backend recording for mint_id: ${mintId}`);
-      
-      // Stop status checking immediately to prevent race conditions
-      if (statusCheckIntervalRef.current) {
-        clearInterval(statusCheckIntervalRef.current);
-        statusCheckIntervalRef.current = null;
-        console.log(`⏸️ Stopped status polling for ${mintId}`);
-      }
-      
-      // Stop duration tracking
-      if (durationIntervalRef.current) {
-        clearInterval(durationIntervalRef.current);
-        durationIntervalRef.current = null;
-      }
       
       // Call backend recording API to stop with timeout
       console.log(`📡 Sending stop request to backend for ${mintId}...`);
@@ -383,6 +394,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       setStatus(prev => ({
         ...prev,
         isRecording: false,
+        isFinalizing: false,
         participantId: null,
         duration: 0,
         progress: 0
@@ -394,10 +406,12 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       // The file is already saved to the recordings directory
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to stop recording';
-      setStatus(prev => ({ ...prev, error: errorMessage }));
+      setStatus(prev => ({ 
+        ...prev, 
+        error: errorMessage,
+        isFinalizing: false
+      }));
       throw error;
-    } finally {
-      setIsLoading(false);
     }
   }, [mintId]);
 

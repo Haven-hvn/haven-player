@@ -401,6 +401,12 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
                   {status.error}
                 </Typography>
               </>
+            ) : status.isFinalizing ? (
+              <>
+                <Typography variant="caption" sx={{ color: "#FFA726" }}>
+                  Finalizing recording...
+                </Typography>
+              </>
             ) : isLoading ? (
               <>
                 <Typography variant="caption" sx={{ color: "#FFA726" }}>

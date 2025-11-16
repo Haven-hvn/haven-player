@@ -17,8 +17,6 @@ import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
 
 // Simple logger for browser environment that matches filecoin-pin's Logger interface
 // LogFn expects (msg: string, ...args: unknown[]) signature
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error - Logger interface may have incompatible types, but this works at runtime
 const createLogger = () => ({
   level: 'info' as const,
   info: (msg: string, ...args: unknown[]) => console.log(`[Filecoin] ${msg}`, ...args),
@@ -93,6 +91,8 @@ async function initializeSynapseSDK(
         },
       },
     },
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
     logger
   );
   // Type assertion needed since TypeScript can't properly infer the return type from filecoin-pin
@@ -131,8 +131,6 @@ export async function uploadVideoToFilecoin(
 
     // Step 3: Check upload readiness (payment validation)
     // This validates payments BEFORE creating storage context (filecoin-pin pattern)
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error - Synapse type mismatch due to TypeScript inference limitations
     const readiness = await checkUploadReadiness({
       synapse: synapse as unknown as Parameters<typeof checkUploadReadiness>[0]['synapse'],
       fileSize: carBytes.length,
@@ -182,10 +180,10 @@ export async function uploadVideoToFilecoin(
 
     // Step 4: Create storage context AFTER payment validation passes
     // This matches filecoin-pin pattern from add.ts line 160-180
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error - Synapse type mismatch due to TypeScript inference limitations
     const { storage, providerInfo } = await createStorageContext(
       synapse as unknown as Parameters<typeof createStorageContext>[0],
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
       logger,
       config.dataSetId
         ? {
@@ -196,8 +194,6 @@ export async function uploadVideoToFilecoin(
         : undefined
     );
 
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error - Synapse type mismatch due to TypeScript inference limitations
     const synapseService: SynapseService = { 
       synapse: synapse as unknown as SynapseService['synapse'], 
       storage, 

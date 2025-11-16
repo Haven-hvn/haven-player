@@ -7,6 +7,7 @@ for better memory efficiency and simplified maintenance.
 
 import asyncio
 import logging
+import math
 import psutil
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -494,24 +495,49 @@ class ParticipantRecorderWrapper:
             # This prevents race conditions where ParticipantRecorder starts before video frames are available
             # The delay allows the WebRTC connection to stabilize and frames to start flowing
             logger.info(
-                f"[{self.mint_id}] Waiting 1.0s after track subscription to ensure frames are flowing..."
+                f"[{self.mint_id}] Waiting 2.0s after track subscription to ensure frames are flowing..."
             )
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(2.0)  # Increased from 1.0s to 2.0s for better stability
             
-            # Verify tracks are still subscribed before starting recording
-            video_still_subscribed = any(
-                p.kind == rtc.TrackKind.KIND_VIDEO and p.track is not None 
-                for p in participant.track_publications.values()
-            )
-            audio_still_subscribed = any(
-                p.kind == rtc.TrackKind.KIND_AUDIO and p.track is not None 
-                for p in participant.track_publications.values()
-            )
+            # Verify tracks are still subscribed and validate video track properties
+            video_track = None
+            video_still_subscribed = False
+            audio_still_subscribed = False
+            
+            for publication in participant.track_publications.values():
+                if publication.kind == rtc.TrackKind.KIND_VIDEO and publication.track is not None:
+                    video_still_subscribed = True
+                    video_track = publication.track
+                elif publication.kind == rtc.TrackKind.KIND_AUDIO and publication.track is not None:
+                    audio_still_subscribed = True
             
             logger.info(
                 f"[{self.mint_id}] Pre-recording verification - Video subscribed: {video_still_subscribed}, "
                 f"Audio subscribed: {audio_still_subscribed}"
             )
+            
+            # Validate video track properties to prevent PyAV division-by-zero crashes
+            if video_track and has_video:
+                try:
+                    # Check if track has valid dimensions (prevent division by zero in encoder)
+                    # LiveKit tracks may not expose dimensions directly, but we can check track state
+                    if hasattr(video_track, 'dimensions'):
+                        width, height = video_track.dimensions
+                        if width <= 0 or height <= 0:
+                            logger.error(
+                                f"[{self.mint_id}] ❌ Invalid video dimensions: {width}x{height}. "
+                                f"This will cause encoder crashes. Skipping video track."
+                            )
+                            has_video = False
+                        else:
+                            logger.info(
+                                f"[{self.mint_id}] Video track dimensions: {width}x{height}"
+                            )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.mint_id}] ⚠️ Could not validate video track dimensions: {e}. "
+                        f"Proceeding with caution."
+                    )
             
             self.participant_identity = participant_identity
             
@@ -538,15 +564,34 @@ class ParticipantRecorderWrapper:
             audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "256k"))
             video_fps = self.config.get("fps", 30)
             
-            # Validate parameters to prevent PyAV crashes
+            # Validate parameters to prevent PyAV division-by-zero crashes
+            # These validations are critical - invalid values cause crashes in FFmpeg encoder
             if video_bitrate <= 0:
                 logger.warning(f"[{self.mint_id}] ⚠️ Invalid video_bitrate: {video_bitrate}, using default 8000000")
                 video_bitrate = 8000000
             if audio_bitrate <= 0:
                 logger.warning(f"[{self.mint_id}] ⚠️ Invalid audio_bitrate: {audio_bitrate}, using default 256000")
                 audio_bitrate = 256000
-            if video_fps <= 0 or video_fps > 120:
-                logger.warning(f"[{self.mint_id}] ⚠️ Invalid video_fps: {video_fps}, using default 30")
+            # CRITICAL: video_fps must be > 0 to prevent division by zero in encoder timebase calculations
+            if video_fps <= 0:
+                logger.error(
+                    f"[{self.mint_id}] ❌ CRITICAL: Invalid video_fps: {video_fps}. "
+                    f"This will cause division-by-zero crash in encoder. Using default 30"
+                )
+                video_fps = 30
+            elif video_fps > 120:
+                logger.warning(f"[{self.mint_id}] ⚠️ video_fps {video_fps} > 120, clamping to 120")
+                video_fps = 120
+            elif video_fps < 1:
+                logger.warning(f"[{self.mint_id}] ⚠️ video_fps {video_fps} < 1, using default 30")
+                video_fps = 30
+            
+            # Additional safety check: ensure fps is a valid number (not NaN or infinity)
+            if not math.isfinite(video_fps) or video_fps <= 0:
+                logger.error(
+                    f"[{self.mint_id}] ❌ CRITICAL: video_fps is not finite or <= 0: {video_fps}. "
+                    f"Using safe default 30"
+                )
                 video_fps = 30
             
             logger.info(
@@ -555,8 +600,21 @@ class ParticipantRecorderWrapper:
             )
             
             # Create ParticipantRecorder with configuration
-            # Wrap in try-catch to handle PyAV initialization errors
+            # Wrap in try-catch to handle PyAV initialization errors (especially division-by-zero)
             try:
+                # Double-check all parameters before creating recorder to prevent crashes
+                if video_fps <= 0 or not math.isfinite(video_fps):
+                    raise ValueError(f"Invalid video_fps: {video_fps} (must be > 0 and finite)")
+                if video_bitrate <= 0:
+                    raise ValueError(f"Invalid video_bitrate: {video_bitrate} (must be > 0)")
+                if audio_bitrate <= 0:
+                    raise ValueError(f"Invalid audio_bitrate: {audio_bitrate} (must be > 0)")
+                
+                logger.info(
+                    f"[{self.mint_id}] Creating ParticipantRecorder with validated parameters: "
+                    f"fps={video_fps}, video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}"
+                )
+                
                 self.recorder = ParticipantRecorder(
                     self.room,
                     video_codec=video_codec,
@@ -566,11 +624,29 @@ class ParticipantRecorderWrapper:
                     audio_bitrate=audio_bitrate,
                     video_fps=video_fps
                 )
+            except ValueError as e:
+                # Parameter validation errors - should not happen but catch just in case
+                logger.error(f"[{self.mint_id}] ❌ Parameter validation error: {e}")
+                raise RecordingError(f"Invalid recording parameters: {str(e)}")
             except Exception as e:
-                logger.error(f"[{self.mint_id}] ❌ Failed to create ParticipantRecorder: {e}")
-                import traceback
-                logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
-                raise RecordingError(f"Failed to create ParticipantRecorder: {str(e)}")
+                # PyAV/FFmpeg errors - often division-by-zero or encoder initialization failures
+                error_msg = str(e)
+                if "division" in error_msg.lower() or "zero" in error_msg.lower():
+                    logger.error(
+                        f"[{self.mint_id}] ❌ Division-by-zero error in encoder initialization. "
+                        f"This usually indicates invalid video track parameters (dimensions, fps, etc.). "
+                        f"Error: {error_msg}"
+                    )
+                    raise RecordingError(
+                        f"Encoder initialization failed due to invalid video parameters. "
+                        f"This may indicate the video track has invalid dimensions or frame rate. "
+                        f"Original error: {error_msg}"
+                    )
+                else:
+                    logger.error(f"[{self.mint_id}] ❌ Failed to create ParticipantRecorder: {e}")
+                    import traceback
+                    logger.error(f"[{self.mint_id}] Traceback: {traceback.format_exc()}")
+                    raise RecordingError(f"Failed to create ParticipantRecorder: {str(e)}")
             
             logger.info(
                 f"[{self.mint_id}] ParticipantRecorder created: "

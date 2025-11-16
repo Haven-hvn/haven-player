@@ -38,53 +38,6 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
   const startTimeRef = useRef<number | null>(null);
   const statusCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Check for active recording when component mounts (e.g., user navigates back)
-  useEffect(() => {
-    const checkActiveRecording = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/recording/status/${mintId}`);
-        if (response.ok) {
-          const statusData = await response.json();
-          if (statusData.success && statusData.state === 'recording') {
-            // Restore recording status
-            if (statusData.start_time) {
-              const startTime = new Date(statusData.start_time).getTime();
-              startTimeRef.current = startTime;
-              const duration = Math.floor((Date.now() - startTime) / 1000);
-              const progress = calculateProgress(duration);
-              
-              setStatus(prev => ({
-                ...prev,
-                isRecording: true,
-                duration,
-                progress
-              }));
-              
-              // Start duration tracking
-              if (durationIntervalRef.current) {
-                clearInterval(durationIntervalRef.current);
-              }
-              durationIntervalRef.current = setInterval(updateDuration, 1000);
-              
-              // Start status checking
-              if (statusCheckIntervalRef.current) {
-                clearInterval(statusCheckIntervalRef.current);
-              }
-              statusCheckIntervalRef.current = setInterval(checkRecordingStatus, 2000);
-              
-              console.log(`✅ Restored active recording status for ${mintId}: ${duration}s`);
-            }
-          }
-        }
-      } catch (error) {
-        // Silently fail - recording might not exist, which is fine
-        console.debug(`No active recording found for ${mintId}`);
-      }
-    };
-    
-    checkActiveRecording();
-  }, [mintId, calculateProgress, updateDuration, checkRecordingStatus]);
-
   // Calculate progress based on duration (assuming 5 minutes max for 100%)
   const calculateProgress = useCallback((duration: number): number => {
     return Math.min(100, (duration / 300) * 100); // 5 minutes = 300 seconds
@@ -186,6 +139,53 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       console.error('Failed to check recording status:', error);
     }
   }, [mintId, calculateProgress]);
+
+  // Check for active recording when component mounts (e.g., user navigates back)
+  useEffect(() => {
+    const checkActiveRecording = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/recording/status/${mintId}`);
+        if (response.ok) {
+          const statusData = await response.json();
+          if (statusData.success && statusData.state === 'recording') {
+            // Restore recording status
+            if (statusData.start_time) {
+              const startTime = new Date(statusData.start_time).getTime();
+              startTimeRef.current = startTime;
+              const duration = Math.floor((Date.now() - startTime) / 1000);
+              const progress = calculateProgress(duration);
+              
+              setStatus(prev => ({
+                ...prev,
+                isRecording: true,
+                duration,
+                progress
+              }));
+              
+              // Start duration tracking
+              if (durationIntervalRef.current) {
+                clearInterval(durationIntervalRef.current);
+              }
+              durationIntervalRef.current = setInterval(updateDuration, 1000);
+              
+              // Start status checking
+              if (statusCheckIntervalRef.current) {
+                clearInterval(statusCheckIntervalRef.current);
+              }
+              statusCheckIntervalRef.current = setInterval(checkRecordingStatus, 2000);
+              
+              console.log(`✅ Restored active recording status for ${mintId}: ${duration}s`);
+            }
+          }
+        }
+      } catch (error) {
+        // Silently fail - recording might not exist, which is fine
+        console.debug(`No active recording found for ${mintId}`);
+      }
+    };
+    
+    checkActiveRecording();
+  }, [mintId, calculateProgress, updateDuration, checkRecordingStatus]);
 
   // Connect to LiveKit room
   const connectToRoom = useCallback(async (config: LiveKitConnectionConfig): Promise<void> => {

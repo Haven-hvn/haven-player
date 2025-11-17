@@ -273,16 +273,23 @@ class StreamManager:
                 del self.active_websockets[mint_id]
 
             # Disconnect and remove the specific room for this mint_id
+            # Note: If ParticipantRecorder was used, tracks are already unsubscribed automatically
+            # by ParticipantRecorder.stop_recording(), so we can disconnect cleanly
             if mint_id in self.rooms:
                 room = self.rooms[mint_id]
                 if room:
                     try:
-                        # Try to disconnect - handle gracefully if already disconnected
+                        # Disconnect the room - this closes the underlying SDK connection
+                        # Tracks should already be unsubscribed by ParticipantRecorder if it was used
+                        logger.info(f"Disconnecting room for {mint_id}...")
                         await room.disconnect()
+                        logger.info(f"✅ Room disconnected for {mint_id}")
                     except Exception as e:
                         # If disconnect fails, log but continue (room might already be disconnected)
                         logger.warning(f"Error disconnecting room for {mint_id}: {e}")
+                        # Try to remove from dict anyway to prevent leaks
                 del self.rooms[mint_id]
+                logger.info(f"✅ Room removed from StreamManager for {mint_id}")
 
             return {"success": True, "mint_id": mint_id}
 

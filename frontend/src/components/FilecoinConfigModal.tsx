@@ -37,7 +37,7 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<FilecoinConfig>({
     privateKey: "",
-    rpcUrl: "wss://api.calibration.node.glif.io/rpc/v1",
+    rpcUrl: "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
     dataSetId: undefined,
   });
 
@@ -55,7 +55,7 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
       if (savedConfig) {
         setConfig({
           privateKey: savedConfig.privateKey || "",
-          rpcUrl: savedConfig.rpcUrl || "wss://api.calibration.node.glif.io/rpc/v1",
+          rpcUrl: savedConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
           dataSetId: savedConfig.dataSetId,
         });
       }
@@ -229,8 +229,8 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
               onChange={(e) =>
                 setConfig((prev) => ({ ...prev, rpcUrl: e.target.value }))
               }
-              placeholder="wss://api.calibration.node.glif.io/rpc/v1"
-              helperText="Filecoin RPC endpoint (defaults to Calibration testnet)"
+              placeholder="wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1"
+              helperText="Filecoin RPC endpoint (WebSocket wss:// or HTTP https://). Default: Calibration testnet WebSocket"
               sx={{
                 "& .MuiOutlinedInput-root": {
                   backgroundColor: "#FAFAFA",

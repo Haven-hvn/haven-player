@@ -29,7 +29,8 @@ const VideoPlayer: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const playerRef = React.useRef<{ seekTo: (seconds: number) => void } | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const playerRef = React.useRef<any>(null);
 
   useEffect(() => {
     const fetchVideoData = async () => {
@@ -103,13 +104,13 @@ const VideoPlayer: React.FC = () => {
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
       <Box sx={{ position: 'relative', flexGrow: 1 }}>
-        {/* @ts-expect-error - react-player's onProgress type doesn't match TypeScript's inference */}
         <ReactPlayer
           ref={playerRef}
           url={`file://${video.path}`}
           width="100%"
           height="100%"
           playing={playing}
+          // @ts-expect-error - react-player types mismatch
           onProgress={handleProgress}
           onDuration={handleDuration}
           progressInterval={100}

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Grid,
+  Grid2,
   Card,
   CardContent,
   CardMedia,
@@ -74,9 +74,9 @@ const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
 
   return (
     <Box p={3}>
-      <Grid container spacing={3}>
+      <Grid2 container spacing={3}>
         {videos.map((video) => (
-          <Grid item xs={12} sm={6} md={4} lg={3} key={video.path}>
+          <Grid2 xs={12} sm={6} md={4} lg={3} key={video.path}>
             <Card
               sx={{
                 height: '100%',
@@ -114,9 +114,9 @@ const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
                 </IconButton>
               </CardContent>
             </Card>
-          </Grid>
+          </Grid2>
         ))}
-      </Grid>
+      </Grid2>
 
       <Menu
         anchorEl={anchorEl}

@@ -343,10 +343,12 @@ export async function uploadVideoToFilecoin(
     // Type assertion needed due to multiformats version mismatch between root and filecoin-pin's nested multiformats
     // Both CID types are structurally compatible, just from different package versions
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error - CID type mismatch due to different multiformats package versions (root vs filecoin-pin's nested)
+    // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
     const uploadResult = await executeUpload(synapseService, carBytes, rootCid, {
       logger,
       contextId: file.name,
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error - ProgressEventHandler expects specific event types, but our handler works with all event types at runtime
       onProgress: (event: { type: string; data?: { retryCount?: number } }) => {
         switch (event.type) {
           case 'onUploadComplete': {

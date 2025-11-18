@@ -21,15 +21,6 @@ from app.models.live_session import LiveSession
 from app.models.database import get_db
 from app.lib.phash_generator.phash_calculator import get_video_duration
 
-try:
-    import av
-    from av import VideoFrame, AudioFrame
-    AV_AVAILABLE = True
-except ImportError:
-    AV_AVAILABLE = False
-    av = None
-    VideoFrame = None
-    AudioFrame = None
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +91,7 @@ class ParticipantRecorderWrapper:
     """
     Wrapper for LiveKit's ParticipantRecorder that maps participant_sid to participant_identity.
     
-    Maintains compatibility with existing AiortcFileRecorder interface while using
-    the built-in ParticipantRecorder for memory-efficient recording.
+    Uses LiveKit's built-in ParticipantRecorder for memory-efficient recording.
     """
     
     def __init__(
@@ -116,11 +106,6 @@ class ParticipantRecorderWrapper:
             raise ImportError(
                 "ParticipantRecorder not available in LiveKit SDK. "
                 "Ensure you have the latest version: pip install livekit"
-            )
-        
-        if not AV_AVAILABLE:
-            raise WebMEncoderNotAvailableError(
-                "PyAV (av) is required for ParticipantRecorder. Install with: pip install av>=11.0.0"
             )
         
         self.mint_id = mint_id

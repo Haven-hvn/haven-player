@@ -1,7 +1,6 @@
 """
 Shared stream management for LiveKit connections.
 Manages single WebRTC connection for both streaming and recording.
-Uses aiortc for recording instead of FFmpeg subprocess.
 """
 
 import asyncio

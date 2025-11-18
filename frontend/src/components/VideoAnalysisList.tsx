@@ -14,6 +14,9 @@ import {
   Chip,
   Avatar,
   Tooltip,
+  Snackbar,
+  Alert,
+  Badge,
 } from "@mui/material";
 import {
   PlayArrow as PlayIcon,
@@ -27,8 +30,21 @@ import {
   SmartDisplay as VideoIcon,
   Timeline as TimelineIcon,
   CloudUpload as UploadIcon,
+  OpenInNew as OpenInNewIcon,
+  ContentCopy as ContentCopyIcon,
 } from "@mui/icons-material";
 import { Video, Timestamp } from "@/types/video";
+
+/**
+ * Construct an IPFS gateway URL from a CID
+ * Uses a public IPFS gateway (ipfs.io) to access the content
+ */
+function getIpfsGatewayUrl(cid: string): string {
+  // Remove any leading/trailing whitespace and ensure CID is valid
+  const cleanCid = cid.trim();
+  // Use ipfs.io gateway - a reliable public gateway
+  return `https://ipfs.io/ipfs/${cleanCid}`;
+}
 
 interface AnalysisSegment {
   start: number;
@@ -47,6 +63,7 @@ interface VideoAnalysisItemProps {
     status: "pending" | "uploading" | "completed" | "error";
     progress: number;
     error?: string;
+    rootCid?: string;
   };
   onPlay: (video: Video) => void;
   onAnalyze: (video: Video) => void;
@@ -71,6 +88,7 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
     mouseY: number;
   } | null>(null);
   const [isHovered, setIsHovered] = useState(false);
+  const [copyNotificationOpen, setCopyNotificationOpen] = useState(false);
 
   const handleContextMenu = (event: React.MouseEvent) => {
     event.preventDefault();
@@ -91,6 +109,42 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
   const handleRemoveClick = () => {
     onRemove(video);
     handleClose();
+  };
+
+  const handleOpenRemote = () => {
+    if (uploadStatus?.rootCid) {
+      const ipfsUrl = getIpfsGatewayUrl(uploadStatus.rootCid);
+      // Use window.open to open in default browser (works in Electron)
+      window.open(ipfsUrl, '_blank');
+      handleClose();
+    }
+  };
+
+  const handleCopyCid = async () => {
+    if (uploadStatus?.rootCid) {
+      try {
+        await navigator.clipboard.writeText(uploadStatus.rootCid);
+        setCopyNotificationOpen(true);
+        handleClose();
+      } catch (error) {
+        console.error('Failed to copy CID to clipboard:', error);
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = uploadStatus.rootCid;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+          setCopyNotificationOpen(true);
+          handleClose();
+        } catch (fallbackError) {
+          console.error('Fallback copy failed:', fallbackError);
+        }
+        document.body.removeChild(textArea);
+      }
+    }
   };
 
   // Generate analysis segments from timestamps
@@ -531,6 +585,50 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
                   }}
                 />
               </Box>
+              {/* Error Message */}
+              {uploadStatus.status === 'error' && uploadStatus.error && (
+                <Tooltip title={uploadStatus.error} arrow placement="top">
+                  <Typography
+                    sx={{
+                      fontSize: "9px",
+                      color: "#FF4D4D",
+                      fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                      fontWeight: 400,
+                      mt: 0.5,
+                      lineHeight: 1.3,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                      cursor: "help",
+                    }}
+                  >
+                    {uploadStatus.error}
+                  </Typography>
+                </Tooltip>
+              )}
+              {/* Success Message with IPFS options hint */}
+              {uploadStatus.status === 'completed' && uploadStatus.rootCid && (
+                <Tooltip 
+                  title="Right-click the menu button (⋮) to access IPFS options" 
+                  arrow 
+                  placement="top"
+                >
+                  <Typography
+                    sx={{
+                      fontSize: "9px",
+                      color: "#4CAF50",
+                      fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                      fontWeight: 400,
+                      mt: 0.5,
+                      lineHeight: 1.3,
+                      cursor: "help",
+                    }}
+                  >
+                    ✓ Upload complete • Right-click menu for IPFS options
+                  </Typography>
+                </Tooltip>
+              )}
             </Box>
           )}
 
@@ -565,25 +663,51 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
               )}
             </Box>
 
-            <IconButton
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleContextMenu(e);
-              }}
-              sx={{
-                color: "#6B6B6B",
-                width: 28,
-                height: 28,
-                "&:hover": {
-                  backgroundColor: "#F5F5F5",
-                  color: "#000000",
-                },
-                transition: "all 0.2s ease-in-out",
-              }}
+            <Tooltip
+              title={
+                uploadStatus?.status === 'completed' && uploadStatus?.rootCid
+                  ? "Right-click for options: Open Remote (IPFS) and Copy IPFS CID"
+                  : "Right-click for options"
+              }
+              arrow
+              placement="top"
             >
-              <MoreVertIcon fontSize="small" />
-            </IconButton>
+              <Badge
+                badgeContent={uploadStatus?.status === 'completed' && uploadStatus?.rootCid ? 1 : 0}
+                color="success"
+                overlap="circular"
+                sx={{
+                  "& .MuiBadge-badge": {
+                    width: 8,
+                    height: 8,
+                    minWidth: 8,
+                    padding: 0,
+                    right: 4,
+                    top: 4,
+                  },
+                }}
+              >
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleContextMenu(e);
+                  }}
+                  sx={{
+                    color: "#6B6B6B",
+                    width: 28,
+                    height: 28,
+                    "&:hover": {
+                      backgroundColor: "#F5F5F5",
+                      color: "#000000",
+                    },
+                    transition: "all 0.2s ease-in-out",
+                  }}
+                >
+                  <MoreVertIcon fontSize="small" />
+                </IconButton>
+              </Badge>
+            </Tooltip>
           </Box>
         </CardContent>
       </Card>
@@ -640,6 +764,60 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
             />
           </MenuItem>
         )}
+        {uploadStatus?.status === 'completed' && uploadStatus?.rootCid && (
+          <>
+            <MenuItem
+              onClick={handleOpenRemote}
+              sx={{
+                fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                fontSize: "14px",
+                color: "#000000",
+                "&:hover": {
+                  backgroundColor: "#F5F5F5",
+                },
+              }}
+            >
+              <ListItemIcon>
+                <OpenInNewIcon sx={{ color: "#4CAF50", fontSize: 18 }} />
+              </ListItemIcon>
+              <ListItemText
+                primary="Open Remote (IPFS)"
+                sx={{
+                  "& .MuiTypography-root": {
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontSize: "14px",
+                    fontWeight: 400,
+                  },
+                }}
+              />
+            </MenuItem>
+            <MenuItem
+              onClick={handleCopyCid}
+              sx={{
+                fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                fontSize: "14px",
+                color: "#000000",
+                "&:hover": {
+                  backgroundColor: "#F5F5F5",
+                },
+              }}
+            >
+              <ListItemIcon>
+                <ContentCopyIcon sx={{ color: "#2196F3", fontSize: 18 }} />
+              </ListItemIcon>
+              <ListItemText
+                primary="Copy IPFS CID"
+                sx={{
+                  "& .MuiTypography-root": {
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontSize: "14px",
+                    fontWeight: 400,
+                  },
+                }}
+              />
+            </MenuItem>
+          </>
+        )}
         <MenuItem
           onClick={handleRemoveClick}
           sx={{
@@ -666,6 +844,20 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
           />
         </MenuItem>
       </Menu>
+      <Snackbar
+        open={copyNotificationOpen}
+        autoHideDuration={3000}
+        onClose={() => setCopyNotificationOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setCopyNotificationOpen(false)}
+          severity="success"
+          sx={{ width: '100%' }}
+        >
+          IPFS CID copied to clipboard
+        </Alert>
+      </Snackbar>
     </>
   );
 };
@@ -687,6 +879,7 @@ interface VideoAnalysisListProps {
     status: "pending" | "uploading" | "completed" | "error";
     progress: number;
     error?: string;
+    rootCid?: string;
   }>;
 }
 

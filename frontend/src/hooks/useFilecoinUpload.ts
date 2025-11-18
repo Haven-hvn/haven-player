@@ -34,10 +34,10 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
       }
 
       const controller = new AbortController();
-      setUploadControllers((prev) => ({ ...prev, [videoPath]: controller }));
+      setUploadControllers((prev: Record<string, AbortController>) => ({ ...prev, [videoPath]: controller }));
 
       // Set initial status
-      setUploadStatus((prev) => ({
+      setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
         ...prev,
         [videoPath]: {
           status: 'uploading',
@@ -56,7 +56,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           onProgress: (progress: UploadProgress) => {
             if (controller.signal.aborted) return;
 
-            setUploadStatus((prev) => ({
+            setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
               ...prev,
               [videoPath]: {
                 status: progress.stage === 'completed' ? 'completed' : 'uploading',
@@ -67,7 +67,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
         });
 
         // Update status with result
-        setUploadStatus((prev) => ({
+        setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
           ...prev,
           [videoPath]: {
             status: 'completed',
@@ -96,7 +96,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
         }
 
         // Clean up controller
-        setUploadControllers((prev) => {
+        setUploadControllers((prev: Record<string, AbortController>) => {
           const updated = { ...prev };
           delete updated[videoPath];
           return updated;
@@ -104,9 +104,14 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
 
         return result;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+        let errorMessage = error instanceof Error ? error.message : 'Upload failed';
         
-        setUploadStatus((prev) => ({
+        // Clean up error message by removing "Filecoin upload failed: " prefix if present
+        if (errorMessage.startsWith('Filecoin upload failed: ')) {
+          errorMessage = errorMessage.substring('Filecoin upload failed: '.length);
+        }
+        
+        setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
           ...prev,
           [videoPath]: {
             status: 'error',
@@ -116,7 +121,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
         }));
 
         // Clean up controller
-        setUploadControllers((prev) => {
+        setUploadControllers((prev: Record<string, AbortController>) => {
           const updated = { ...prev };
           delete updated[videoPath];
           return updated;
@@ -131,7 +136,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
   const cancelUpload = useCallback((videoPath: string) => {
     if (uploadControllers[videoPath]) {
       uploadControllers[videoPath].abort();
-      setUploadStatus((prev) => ({
+      setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
         ...prev,
         [videoPath]: {
           status: 'error',
@@ -139,7 +144,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           error: 'Upload cancelled',
         },
       }));
-      setUploadControllers((prev) => {
+      setUploadControllers((prev: Record<string, AbortController>) => {
         const updated = { ...prev };
         delete updated[videoPath];
         return updated;
@@ -148,7 +153,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
   }, [uploadControllers]);
 
   const clearStatus = useCallback((videoPath: string) => {
-    setUploadStatus((prev) => {
+    setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => {
       const updated = { ...prev };
       delete updated[videoPath];
       return updated;

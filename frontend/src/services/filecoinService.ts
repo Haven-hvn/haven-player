@@ -342,9 +342,9 @@ export async function uploadVideoToFilecoin(
     // Step 5: Execute upload
     // Type assertion needed due to multiformats version mismatch between root and filecoin-pin's nested multiformats
     // Both CID types are structurally compatible, just from different package versions
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
     const uploadResult = await executeUpload(synapseService, carBytes, rootCid, {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
       logger,
       contextId: file.name,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment

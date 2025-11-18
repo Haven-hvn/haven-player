@@ -29,7 +29,7 @@ const VideoPlayer: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const playerRef = React.useRef<InstanceType<typeof ReactPlayer>>(null);
+  const playerRef = React.useRef<{ seekTo: (seconds: number) => void } | null>(null);
 
   useEffect(() => {
     const fetchVideoData = async () => {

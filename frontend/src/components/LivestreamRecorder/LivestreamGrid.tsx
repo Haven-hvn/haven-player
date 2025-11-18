@@ -1,5 +1,5 @@
 import React from "react";
-import { Grid, Box } from "@mui/material";
+import { Box } from "@mui/material";
 import LivestreamCard from "./LivestreamCard";
 import { StreamInfo } from "@/types/video";
 import { StreamRecordingStatus } from "@/hooks/useBulkRecording";
@@ -17,17 +17,27 @@ const LivestreamGrid: React.FC<LivestreamGridProps> = ({
 }) => {
   return (
     <Box sx={{ p: 2 }}>
-      <Grid container spacing={2}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: '1fr',
+            sm: 'repeat(2, 1fr)',
+            md: 'repeat(3, 1fr)',
+            lg: 'repeat(4, 1fr)',
+          },
+          gap: 2,
+        }}
+      >
         {items.map((item) => (
-          <Grid item key={item.mint_id} xs={12} sm={6} md={4} lg={3}>
-            <LivestreamCard
-              item={item}
-              onHide={onHide}
-              bulkRecordingStatus={getStreamStatus ? getStreamStatus(item.mint_id) : null}
-            />
-          </Grid>
+          <LivestreamCard
+            key={item.mint_id}
+            item={item}
+            onHide={onHide}
+            bulkRecordingStatus={getStreamStatus ? getStreamStatus(item.mint_id) : null}
+          />
         ))}
-      </Grid>
+      </Box>
     </Box>
   );
 };

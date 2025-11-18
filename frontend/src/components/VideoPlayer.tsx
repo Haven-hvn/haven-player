@@ -104,12 +104,12 @@ const VideoPlayer: React.FC = () => {
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
       <Box sx={{ position: 'relative', flexGrow: 1 }}>
         <ReactPlayer
-          ref={playerRef}
+          ref={playerRef as React.RefObject<ReactPlayer>}
           url={`file://${video.path}`}
           width="100%"
           height="100%"
           playing={playing}
-          onProgress={handleProgress}
+          onProgress={handleProgress as (state: { played: number; playedSeconds: number; loaded: number; loadedSeconds: number }) => void}
           onDuration={handleDuration}
           progressInterval={100}
         />

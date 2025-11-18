@@ -51,21 +51,6 @@ async def on_startup() -> None:
     # Initialize database tables
     init_db()
     
-    # Run migration to add Filecoin fields if needed
-    try:
-        import sys
-        from pathlib import Path
-        backend_dir = Path(__file__).parent.parent
-        migration_script = backend_dir / "migrate_add_filecoin_fields.py"
-        if migration_script.exists():
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("migrate_add_filecoin_fields", migration_script)
-            migration = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(migration)
-            migration.migrate_database()
-    except Exception as e:
-        print(f"⚠️  Migration warning: {e}")
-    
     # Create default configuration if none exists
     db = SessionLocal()
     try:

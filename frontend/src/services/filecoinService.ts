@@ -17,17 +17,46 @@ import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
 
 // Simple logger for browser environment that matches filecoin-pin's Logger interface
 // LogFn expects (msg: string, ...args: unknown[]) signature
-const createLogger = () => ({
-  level: 'info' as const,
-  info: (msg: string, ...args: unknown[]) => console.log(`[Filecoin] ${msg}`, ...args),
-  warn: (msg: string, ...args: unknown[]) => console.warn(`[Filecoin] ${msg}`, ...args),
-  error: (msg: string, ...args: unknown[]) => console.error(`[Filecoin] ${msg}`, ...args),
-  debug: (msg: string, ...args: unknown[]) => console.debug(`[Filecoin] ${msg}`, ...args),
-  fatal: (msg: string, ...args: unknown[]) => console.error(`[Filecoin] FATAL: ${msg}`, ...args),
-  trace: (msg: string, ...args: unknown[]) => console.trace(`[Filecoin] ${msg}`, ...args),
-  silent: false as const,
-  msgPrefix: '[Filecoin]',
-} as const);
+// But filecoin-pin may call it with objects, so we handle both cases
+const createLogger = () => {
+  const formatMessage = (msg: unknown, ...args: unknown[]): [string, ...unknown[]] => {
+    if (typeof msg === 'string') {
+      return [`[Filecoin] ${msg}`, ...args];
+    }
+    // If msg is an object, convert it to string and use args as additional context
+    return [`[Filecoin]`, msg, ...args];
+  };
+
+  return {
+    level: 'info' as const,
+    info: (msg: unknown, ...args: unknown[]) => {
+      const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
+      console.log(formattedMsg, ...formattedArgs);
+    },
+    warn: (msg: unknown, ...args: unknown[]) => {
+      const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
+      console.warn(formattedMsg, ...formattedArgs);
+    },
+    error: (msg: unknown, ...args: unknown[]) => {
+      const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
+      console.error(formattedMsg, ...formattedArgs);
+    },
+    debug: (msg: unknown, ...args: unknown[]) => {
+      const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
+      console.debug(formattedMsg, ...formattedArgs);
+    },
+    fatal: (msg: unknown, ...args: unknown[]) => {
+      const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
+      console.error(`[Filecoin] FATAL:`, formattedMsg, ...formattedArgs);
+    },
+    trace: (msg: unknown, ...args: unknown[]) => {
+      const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
+      console.trace(`[Filecoin]`, formattedMsg, ...formattedArgs);
+    },
+    silent: false as const,
+    msgPrefix: '[Filecoin]',
+  } as const;
+};
 
 export interface UploadProgress {
   stage: 'preparing' | 'creating-car' | 'checking-payments' | 'uploading' | 'validating' | 'completed';
@@ -39,6 +68,18 @@ export interface UploadOptions {
   file: File;
   config: FilecoinConfig;
   onProgress?: (progress: UploadProgress) => void;
+}
+
+/**
+ * Normalize private key by ensuring it has 0x prefix
+ * MetaMask exports private keys without 0x, but filecoin-pin expects it
+ */
+function normalizePrivateKey(privateKey: string): string {
+  const trimmed = privateKey.trim();
+  if (trimmed.startsWith('0x') || trimmed.startsWith('0X')) {
+    return trimmed;
+  }
+  return `0x${trimmed}`;
 }
 
 /**
@@ -81,23 +122,82 @@ async function initializeSynapseSDK(
   config: FilecoinConfig,
   logger: ReturnType<typeof createLogger>
 ): Promise<Synapse> {
-  const result = await initSynapse(
-    {
-      privateKey: config.privateKey,
+  // Validate configuration
+  if (!config.privateKey || !config.privateKey.trim()) {
+    throw new Error('Private key is required');
+  }
+
+  if (!config.rpcUrl || !config.rpcUrl.trim()) {
+    throw new Error('RPC URL is required');
+  }
+
+  // Normalize private key: add 0x prefix if missing (MetaMask exports without it)
+  const normalizedPrivateKey = normalizePrivateKey(config.privateKey);
+  
+  // Validate private key format (should be 66 characters with 0x prefix, or 64 without)
+  if (normalizedPrivateKey.length !== 66 || !normalizedPrivateKey.startsWith('0x')) {
+    throw new Error(`Invalid private key format. Expected 66 characters with 0x prefix, got ${normalizedPrivateKey.length} characters`);
+  }
+
+  logger.info('Initializing Synapse SDK', {
+    rpcUrl: config.rpcUrl,
+    hasPrivateKey: !!normalizedPrivateKey,
+    privateKeyLength: normalizedPrivateKey.length,
+  });
+
+  try {
+    logger.info('Calling initSynapse...');
+    
+    // Create init config
+    const initConfig = {
+      privateKey: normalizedPrivateKey,
       rpcUrl: config.rpcUrl,
       telemetry: {
         sentryInitOptions: {
           enabled: false, // Disable telemetry in browser
         },
       },
-    },
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
-    logger
-  );
-  // Type assertion needed since TypeScript can't properly infer the return type from filecoin-pin
-  // We use unknown as intermediate type to safely convert between incompatible types
-  return result as unknown as Synapse;
+    };
+
+    // Try calling initSynapse with logger first
+    let initPromise: Promise<unknown>;
+    try {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
+      initPromise = initSynapse(initConfig, logger);
+    } catch (syncError) {
+      // If synchronous error (e.g., wrong parameter format), try without logger
+      logger.warn('initSynapse failed with logger, trying without logger', { error: syncError });
+      // @ts-expect-error - Logger might be optional
+      initPromise = initSynapse(initConfig);
+    }
+
+    logger.info('Waiting for initSynapse to resolve...');
+    
+    const result = await Promise.race([
+      initPromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Synapse SDK initialization timed out after 30 seconds. Check your RPC URL and network connection.'));
+        }, 30000);
+      }),
+    ]);
+
+    logger.info('Synapse SDK initialized successfully');
+    
+    // Type assertion needed since TypeScript can't properly infer the return type from filecoin-pin
+    // We use unknown as intermediate type to safely convert between incompatible types
+    return result as unknown as Synapse;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error('Failed to initialize Synapse SDK', { 
+      error: errorMessage,
+      rpcUrl: config.rpcUrl,
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    throw error;
+  }
 }
 
 /**
@@ -125,9 +225,19 @@ export async function uploadVideoToFilecoin(
       message: 'Initializing Filecoin connection...',
     });
 
+    logger.info('Starting Synapse SDK initialization...');
+
     // Step 2: Initialize Synapse SDK (without storage context)
     // This matches filecoin-pin pattern: initialize first, validate payments, then create storage context
-    const synapse = await initializeSynapseSDK(config, logger);
+    let synapse: Synapse;
+    try {
+      synapse = await initializeSynapseSDK(config, logger);
+      logger.info('Synapse SDK initialization completed');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error during Synapse initialization';
+      logger.error('Synapse initialization failed', { error, errorMessage });
+      throw new Error(`Failed to initialize Filecoin connection: ${errorMessage}`);
+    }
 
     // Step 3: Check upload readiness (payment validation)
     // This validates payments BEFORE creating storage context (filecoin-pin pattern)

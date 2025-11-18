@@ -183,15 +183,15 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
 
             <TextField
               fullWidth
-              label="Private Key (0x...)"
+              label="Private Key"
               value={config.privateKey}
               onChange={(e) =>
                 setConfig((prev) => ({ ...prev, privateKey: e.target.value }))
               }
-              placeholder="0x..."
+              placeholder="Enter your private key from MetaMask"
               type="password"
               required
-              helperText="Your Ethereum-style private key (must start with 0x)"
+              helperText="Your Ethereum private key (0x prefix will be added automatically if missing)"
               sx={{
                 "& .MuiOutlinedInput-root": {
                   backgroundColor: "#FAFAFA",

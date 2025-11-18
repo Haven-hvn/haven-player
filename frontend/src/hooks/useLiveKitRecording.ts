@@ -344,9 +344,12 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       console.log(`🛑 Stopping backend recording for mint_id: ${mintId}`);
       
       // Call backend recording API to stop with timeout
+      // Backend timeout is dynamic (60-300s based on recording duration)
+      // Use 300 seconds (5 minutes) to match backend maximum
       console.log(`📡 Sending stop request to backend for ${mintId}...`);
+      const STOP_TIMEOUT_MS = 300000; // 5 minutes to match backend maximum
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), STOP_TIMEOUT_MS);
       
       try {
         const response = await fetch(`${API_BASE_URL}/recording/stop`, {
@@ -378,7 +381,7 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       } catch (fetchError) {
         clearTimeout(timeoutId);
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('Stop recording request timed out after 30 seconds');
+          throw new Error(`Stop recording request timed out after ${STOP_TIMEOUT_MS / 1000} seconds`);
         }
         throw fetchError;
       }

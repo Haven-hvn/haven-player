@@ -65,7 +65,7 @@ const VideoPlayer: React.FC = () => {
     setPlaying(!playing);
   };
 
-  const handleProgress = (state: { played: number; playedSeconds: number; loaded: number; loadedSeconds: number }) => {
+  const handleProgress: (state: { played: number; playedSeconds: number; loaded: number; loadedSeconds: number }) => void = (state) => {
     setPlayed(state.played);
   };
 
@@ -103,13 +103,14 @@ const VideoPlayer: React.FC = () => {
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
       <Box sx={{ position: 'relative', flexGrow: 1 }}>
+        {/* @ts-expect-error - react-player's onProgress type doesn't match TypeScript's inference */}
         <ReactPlayer
-          ref={playerRef as React.RefObject<ReactPlayer>}
+          ref={playerRef}
           url={`file://${video.path}`}
           width="100%"
           height="100%"
           playing={playing}
-          onProgress={handleProgress as (state: { played: number; playedSeconds: number; loaded: number; loadedSeconds: number }) => void}
+          onProgress={handleProgress}
           onDuration={handleDuration}
           progressInterval={100}
         />

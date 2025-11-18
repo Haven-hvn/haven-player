@@ -785,12 +785,25 @@ class ParticipantRecorderWrapper:
                 return {"success": False, "error": "No recorder instance available"}
             
             # Stop recording and save to file with timeout
-            logger.info(f"[{self.mint_id}] Calling recorder.stop_recording()...")
+            # Calculate timeout based on recording duration to allow for encoding time
+            # Encoding can take 1-2x the recording duration, so we use: duration * 2 + 30s buffer
+            recording_duration = 0
+            if self.start_time:
+                recording_duration = (datetime.now(timezone.utc) - self.start_time).total_seconds()
+            
+            # Minimum 60s, maximum 300s (5 minutes) timeout
+            # Formula: max(60, min(300, duration * 2 + 30))
+            stop_timeout = max(60.0, min(300.0, recording_duration * 2 + 30.0))
+            
+            logger.info(
+                f"[{self.mint_id}] Calling recorder.stop_recording()... "
+                f"(recording duration: {recording_duration:.1f}s, timeout: {stop_timeout:.1f}s)"
+            )
             try:
                 if self.output_path:
                     final_path = await asyncio.wait_for(
                         self.recorder.stop_recording(str(self.output_path)),
-                        timeout=30.0
+                        timeout=stop_timeout
                     )
                     self.output_path = Path(final_path) if final_path else self.output_path
                 else:
@@ -799,12 +812,12 @@ class ParticipantRecorderWrapper:
                     self.output_path = self.output_dir / f"{self.mint_id}_{timestamp}.webm"
                     final_path = await asyncio.wait_for(
                         self.recorder.stop_recording(str(self.output_path)),
-                        timeout=30.0
+                        timeout=stop_timeout
                     )
                     self.output_path = Path(final_path) if final_path else self.output_path
                 logger.info(f"[{self.mint_id}] ✅ recorder.stop_recording() completed")
             except asyncio.TimeoutError:
-                error_msg = "Timeout stopping recording - recorder.stop_recording() took longer than 30 seconds"
+                error_msg = f"Timeout stopping recording - recorder.stop_recording() took longer than {stop_timeout:.1f} seconds"
                 logger.error(f"[{self.mint_id}] ❌ {error_msg}")
                 self.state = RecordingState.STOPPED
                 return {"success": False, "error": error_msg}

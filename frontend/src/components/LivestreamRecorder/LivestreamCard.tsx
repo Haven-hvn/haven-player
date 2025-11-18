@@ -24,15 +24,18 @@ import {
 import { StreamInfo } from "@/types/video";
 import { useLiveKitRecording } from "@/hooks/useLiveKitRecording";
 import { LiveKitConnectionConfig, liveKitClient } from "@/services/livekitClient";
+import { StreamRecordingStatus } from "@/hooks/useBulkRecording";
 
 type LivestreamCardProps = {
   item: StreamInfo;
   onHide: (mint: string) => void;
+  bulkRecordingStatus?: StreamRecordingStatus | null;
 };
 
 const LivestreamCard: React.FC<LivestreamCardProps> = ({
   item,
   onHide,
+  bulkRecordingStatus,
 }) => {
   const { 
     status, 
@@ -42,6 +45,18 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
     disconnectFromRoom, 
     isLoading 
   } = useLiveKitRecording(item.mint_id);
+  
+  // Use bulk recording status if available, otherwise use individual status
+  const displayStatus = bulkRecordingStatus ? {
+    isRecording: bulkRecordingStatus.isRecording,
+    isFinalizing: bulkRecordingStatus.isFinalizing,
+    error: bulkRecordingStatus.error,
+    duration: bulkRecordingStatus.duration,
+    isConnected: status.isConnected,
+    participantId: status.participantId,
+    participantSid: status.participantSid,
+    progress: status.progress,
+  } : status;
   
   const [imageError, setImageError] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
@@ -135,7 +150,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
 
   // Handler for starting/stopping recording
   const handleToggleRecord = async () => {
-    if (status.isRecording) {
+    if (displayStatus.isRecording) {
       // Stop recording
       await stopRecording();
       // Don't disconnect frontend connection - user might want to keep viewing
@@ -244,7 +259,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         />
 
         {/* Error indicator */}
-        {status.error && (
+        {displayStatus.error && (
           <Box
             sx={{
               position: "absolute",
@@ -276,7 +291,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         )}
 
         {/* Connection status indicator - only show when actively connecting */}
-        {isLoading && !status.isConnected && !status.error && (
+        {isLoading && !displayStatus.isConnected && !displayStatus.error && (
           <Box
             sx={{
               position: "absolute",
@@ -311,7 +326,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         <Box
           role="button"
           aria-label={
-            status.isRecording 
+            displayStatus.isRecording 
               ? "Stop recording" 
               : "Start recording"
           }
@@ -345,7 +360,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
               boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
             }}
           >
-            <FiberManualRecordIcon sx={{ color: "#FF4D4D", animation: status.isRecording ? "pulse 1.5s infinite" : "none" }} />
+            <FiberManualRecordIcon sx={{ color: "#FF4D4D", animation: displayStatus.isRecording ? "pulse 1.5s infinite" : "none" }} />
           </Box>
         </Box>
       </Box>
@@ -365,12 +380,12 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
             sx={{
               height: 8,
               borderRadius: 999,
-              backgroundColor: status.error ? "#FFEBEE" : status.isRecording ? "#FFEBEE" : "#F0F0F0",
+              backgroundColor: displayStatus.error ? "#FFEBEE" : displayStatus.isRecording ? "#FFEBEE" : "#F0F0F0",
               overflow: "hidden",
               position: "relative",
             }}
           >
-            {status.isRecording && (
+            {displayStatus.isRecording && (
               <Box
                 sx={{
                   position: "absolute",
@@ -384,7 +399,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
             )}
           </Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.75 }}>
-            {status.error ? (
+            {displayStatus.error ? (
               <>
                 <ErrorIcon sx={{ color: "#FF4D4D", fontSize: 14 }} />
                 <Typography 
@@ -396,12 +411,12 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
-                  title={status.error}
+                  title={displayStatus.error}
                 >
-                  {status.error}
+                  {displayStatus.error}
                 </Typography>
               </>
-            ) : status.isFinalizing ? (
+            ) : displayStatus.isFinalizing ? (
               <>
                 <Typography variant="caption" sx={{ color: "#FFA726" }}>
                   Finalizing recording...
@@ -413,11 +428,11 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
                   Connecting to LiveKit...
                 </Typography>
               </>
-            ) : status.isRecording ? (
+            ) : displayStatus.isRecording ? (
               <>
                 <FiberManualRecordIcon sx={{ color: "#FF4D4D", fontSize: 12 }} />
                 <Typography variant="caption" sx={{ color: "#FF4D4D" }}>
-                  Recording... {status.duration}s
+                  Recording... {displayStatus.duration}s
                 </Typography>
               </>
             ) : (
@@ -501,7 +516,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         },
       }}
     >
-      {status.isRecording && (
+      {displayStatus.isRecording && (
         <MenuItem
           onClick={handleStopRecording}
           sx={{

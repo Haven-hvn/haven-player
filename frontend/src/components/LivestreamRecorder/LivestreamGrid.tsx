@@ -2,15 +2,18 @@ import React from "react";
 import { Grid, Box } from "@mui/material";
 import LivestreamCard from "./LivestreamCard";
 import { StreamInfo } from "@/types/video";
+import { StreamRecordingStatus } from "@/hooks/useBulkRecording";
 
 type LivestreamGridProps = {
   items: StreamInfo[];
   onHide: (mint: string) => void;
+  getStreamStatus?: (mintId: string) => StreamRecordingStatus | null;
 };
 
 const LivestreamGrid: React.FC<LivestreamGridProps> = ({
   items,
   onHide,
+  getStreamStatus,
 }) => {
   return (
     <Box sx={{ p: 2 }}>
@@ -20,6 +23,7 @@ const LivestreamGrid: React.FC<LivestreamGridProps> = ({
             <LivestreamCard
               item={item}
               onHide={onHide}
+              bulkRecordingStatus={getStreamStatus ? getStreamStatus(item.mint_id) : null}
             />
           </Grid>
         ))}

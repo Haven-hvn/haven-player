@@ -234,45 +234,68 @@ export async function uploadVideoToFilecoin(
       synapse = await initializeSynapseSDK(config, logger);
       logger.info('Synapse SDK initialization completed');
     } catch (error) {
+      const errorDetails = error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      } : { error: String(error) };
+      logger.error('Synapse initialization failed', errorDetails);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error during Synapse initialization';
-      logger.error('Synapse initialization failed', { error, errorMessage });
       throw new Error(`Failed to initialize Filecoin connection: ${errorMessage}`);
     }
 
     // Step 3: Check upload readiness (payment validation)
     // This validates payments BEFORE creating storage context (filecoin-pin pattern)
-    const readiness = await checkUploadReadiness({
-      synapse: synapse as unknown as Parameters<typeof checkUploadReadiness>[0]['synapse'],
+    logger.info('Checking upload readiness (payment validation)...', {
       fileSize: carBytes.length,
-      autoConfigureAllowances: true,
-      onProgress: (event: { type: string }) => {
-        if (event.type === 'checking-balances') {
-          onProgress?.({
-            stage: 'checking-payments',
-            progress: 55,
-            message: 'Checking wallet balances...',
-          });
-        } else if (event.type === 'checking-allowances') {
-          onProgress?.({
-            stage: 'checking-payments',
-            progress: 60,
-            message: 'Checking allowances...',
-          });
-        } else if (event.type === 'configuring-allowances') {
-          onProgress?.({
-            stage: 'checking-payments',
-            progress: 65,
-            message: 'Configuring allowances...',
-          });
-        } else if (event.type === 'validating-capacity') {
-          onProgress?.({
-            stage: 'checking-payments',
-            progress: 70,
-            message: 'Validating payment capacity...',
-          });
-        }
-      },
+      fileSizeMB: (carBytes.length / 1024 / 1024).toFixed(2),
     });
+
+    let readiness;
+    try {
+      readiness = await checkUploadReadiness({
+        synapse: synapse as unknown as Parameters<typeof checkUploadReadiness>[0]['synapse'],
+        fileSize: carBytes.length,
+        autoConfigureAllowances: true,
+        onProgress: (event: { type: string }) => {
+          logger.info('Upload readiness progress', { eventType: event.type });
+          if (event.type === 'checking-balances') {
+            onProgress?.({
+              stage: 'checking-payments',
+              progress: 55,
+              message: 'Checking wallet balances...',
+            });
+          } else if (event.type === 'checking-allowances') {
+            onProgress?.({
+              stage: 'checking-payments',
+              progress: 60,
+              message: 'Checking allowances...',
+            });
+          } else if (event.type === 'configuring-allowances') {
+            onProgress?.({
+              stage: 'checking-payments',
+              progress: 65,
+              message: 'Configuring allowances...',
+            });
+          } else if (event.type === 'validating-capacity') {
+            onProgress?.({
+              stage: 'checking-payments',
+              progress: 70,
+              message: 'Validating payment capacity...',
+            });
+          }
+        },
+      });
+      logger.info('Upload readiness check completed', { status: readiness.status });
+    } catch (error) {
+      const errorDetails = error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      } : { error: String(error) };
+      logger.error('Upload readiness check failed', errorDetails);
+      throw error;
+    }
 
     if (readiness.status === 'blocked') {
       const errorMessage =
@@ -399,8 +422,26 @@ export async function uploadVideoToFilecoin(
       providerInfo: uploadResult.providerInfo,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    logger.error('Upload failed', { error });
+    // Extract detailed error information
+    const errorDetails = error instanceof Error ? {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      cause: error.cause,
+    } : {
+      error: String(error),
+      type: typeof error,
+    };
+    
+    logger.error('Upload failed', errorDetails);
+    
+    // Create a more informative error message
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : typeof error === 'string' 
+        ? error 
+        : 'Unknown error occurred';
+    
     throw new Error(`Filecoin upload failed: ${errorMessage}`);
   } finally {
     // Always cleanup WebSocket providers to allow process termination (filecoin-pin pattern)

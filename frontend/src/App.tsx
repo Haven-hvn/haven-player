@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import LogViewer from "./components/LogViewer";
 import {
   HashRouter as Router,
@@ -17,7 +17,7 @@ import FilecoinConfigModal from "@/components/FilecoinConfigModal";
 import { useVideos } from "@/hooks/useVideos";
 import { useFilecoinUpload } from "@/hooks/useFilecoinUpload";
 import { Video, Timestamp } from "@/types/video";
-import type { FilecoinConfig } from "@/types/filecoin";
+import type { FilecoinConfig, FilecoinUploadStatus } from "@/types/filecoin";
 import {
   videoService,
   startAnalysisJob,
@@ -198,6 +198,37 @@ const MainApp: React.FC = () => {
   // Add search and view mode state
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+
+  // Initialize upload status from backend data (filecoin_root_cid from database)
+  // This reads from the backend data that's already in the videos array
+  const uploadStatusesFromBackend = useMemo(() => {
+    const statuses: Record<string, FilecoinUploadStatus> = {};
+
+    videos.forEach((video: Video) => {
+      if (video.filecoin_root_cid) {
+        // Video has been uploaded to Filecoin (data from backend)
+        statuses[video.path] = {
+          status: "completed",
+          progress: 100,
+          rootCid: video.filecoin_root_cid,
+        };
+      }
+    });
+
+    return statuses;
+  }, [videos]);
+
+  // Merge backend status with active upload status (active uploads take precedence)
+  const mergedUploadStatuses = useMemo(() => {
+    const merged: Record<string, FilecoinUploadStatus> = { ...uploadStatusesFromBackend };
+
+    // Override with active upload status if it exists (for in-progress uploads)
+    Object.entries(uploadStatus).forEach(([videoPath, status]: [string, FilecoinUploadStatus]) => {
+      merged[videoPath] = status;
+    });
+
+    return merged;
+  }, [uploadStatusesFromBackend, uploadStatus]);
 
   // Initialize hidden videos from localStorage
   const [hiddenVideos, setHiddenVideos] = useState<Set<string>>(() => {
@@ -508,12 +539,14 @@ const MainApp: React.FC = () => {
       try {
         await uploadVideoToFilecoin(video.path, filecoinConfig);
         console.log(`✅ Uploaded ${video.title} to Filecoin`);
+        // Refresh videos to get the updated filecoin_root_cid from backend
+        await refreshVideos();
       } catch (error) {
         console.error(`❌ Failed to upload ${video.title} to Filecoin:`, error);
         // Error is already handled by the upload hook
       }
     },
-    [filecoinConfig, uploadVideoToFilecoin]
+    [filecoinConfig, uploadVideoToFilecoin, refreshVideos]
   );
 
   // Handle Filecoin config save
@@ -608,7 +641,7 @@ const MainApp: React.FC = () => {
             onAnalyze={handleAnalyzeVideo}
             onRemove={handleRemoveVideo}
             onUpload={handleUploadToFilecoin}
-            uploadStatuses={uploadStatus}
+            uploadStatuses={mergedUploadStatuses}
           />
         </Box>
       </Box>

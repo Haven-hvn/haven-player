@@ -16,13 +16,29 @@ pip install -r requirements.txt
 ```
 
 3. Run the development server:
+   - From the project root:
 ```bash
+uvicorn backend.app.main:app --reload --log-level info
+```
+   - From the `backend/` directory (ensure Python can resolve the `app` package by setting `PYTHONPATH` to the project root first):
+```bash
+# macOS / Linux
+cd backend
+PYTHONPATH=".." uvicorn app.main:app --reload --log-level info
+
+# Windows PowerShell
+cd backend
+$env:PYTHONPATH=".."
 uvicorn app.main:app --reload --log-level info
 ```
 
-For more verbose logging (debug mode):
+For more verbose logging (debug mode), use the same approach:
 ```bash
-uvicorn app.main:app --reload --log-level debug
+# From project root
+uvicorn backend.app.main:app --reload --log-level debug
+
+# From backend directory with PYTHONPATH set
+PYTHONPATH=".." uvicorn app.main:app --reload --log-level debug
 ```
 
 The API will be available at http://localhost:8000

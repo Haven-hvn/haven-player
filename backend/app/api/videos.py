@@ -13,7 +13,7 @@ from collections import defaultdict
 from pydantic import BaseModel, ConfigDict
 from app.lib.phash_generator.phash_calculator import calculate_phash
 from app.lib.phash_generator.phash_calculator import get_video_duration
-from app.lib.thumbnail_generator.thumbnail_calculator import generate_video_thumbnail
+from app.lib.thumbnail_generator import generate_video_thumbnail
 from imagehash import hex_to_hash
 import asyncio
 

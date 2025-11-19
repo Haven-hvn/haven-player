@@ -665,14 +665,16 @@ class ParticipantRecorderWrapper:
                                 # Limit to 1 Mbps max for < 480p and force VP8 for safety
                                 max_bitrate = 1000000
                                 
-                                # Force VP8 for very low resolutions as it's more stable
-                                video_codec = "vp8"
-                                video_quality = "best" # Use best to avoid 'goodquality' encoder error
+                                # Force safe settings for very low resolutions
+                                # Use VP9 but with very low bitrate to avoid buffer overflows
+                                video_codec = "vp9"
+                                video_quality = "best" 
+                                max_bitrate = 1000000 # 1 Mbps
                                 
                                 if video_bitrate > max_bitrate:
                                     logger.warning(
                                         f"[{self.mint_id}] ⚠️ Low resolution detected ({width}x{height}). "
-                                        f"Switching to safe mode: VP8 codec, {max_bitrate} bitrate"
+                                        f"Clamping bitrate to {max_bitrate}"
                                     )
                                     video_bitrate = max_bitrate
                             elif pixel_count < 1280 * 720:  # < 720p
@@ -691,12 +693,12 @@ class ParticipantRecorderWrapper:
                     # Assume potentially problematic stream and cap bitrate for safety
                     logger.warning(
                         f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
-                        f"Switching to safe mode (VP8, 1.5Mbps) to prevent buffer overflows."
+                        f"Switching to safe mode (VP9, 1.5Mbps) to prevent buffer overflows."
                     )
                     # Force safe settings
                     video_bitrate = 1500000
-                    video_codec = "vp8"
-                    video_quality = "best" # Use best to avoid 'goodquality' encoder error
+                    video_codec = "vp9"
+                    video_quality = "best"
                     logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
             
             logger.info(

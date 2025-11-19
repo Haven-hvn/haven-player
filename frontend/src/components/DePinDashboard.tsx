@@ -90,6 +90,8 @@ const DePinDashboard: React.FC = () => {
   const isUploadingRef = useRef(false);
   // Ref to track if a tick check is in progress
   const isTickInProgressRef = useRef(false);
+  // Ref to track previous isActive state to detect transitions
+  const prevIsActiveRef = useRef<boolean | null>(null);
   
   const addLog = (message: string) => {
     setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev].slice(0, 100));
@@ -229,6 +231,74 @@ const DePinDashboard: React.FC = () => {
     loadConfig();
     restoreState();
   }, []);
+
+  // Stop all active recordings when node is deactivated
+  useEffect(() => {
+    // Only stop recordings when transitioning from active to inactive (not on initial mount)
+    if (prevIsActiveRef.current === true && !isActive) {
+      const stopAllRecordings = async () => {
+        try {
+          // Fetch all active recordings
+          const response = await fetch('http://localhost:8000/api/recording/active');
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.recordings && Object.keys(data.recordings).length > 0) {
+              const recordingEntries = Object.entries(data.recordings);
+              const mintIds = recordingEntries.map(([mintId]) => mintId);
+              
+              addLog(`🛑 Stopping ${mintIds.length} active recording(s)...`);
+              
+              // Stop each recording
+              const stopPromises = mintIds.map(async (mintId: string) => {
+                try {
+                  const stopResponse = await fetch('http://localhost:8000/api/recording/stop', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ mint_id: mintId }),
+                  });
+                  
+                  if (stopResponse.ok) {
+                    const stopData = await stopResponse.json();
+                    if (stopData.success) {
+                      addLog(`✅ Stopped recording: ${mintId.slice(0, 8)}...`);
+                      return true;
+                    } else {
+                      addLog(`❌ Failed to stop ${mintId.slice(0, 8)}...: ${stopData.error || 'Unknown error'}`);
+                      return false;
+                    }
+                  } else {
+                    const errorData = await stopResponse.json().catch(() => ({}));
+                    addLog(`❌ Failed to stop ${mintId.slice(0, 8)}...: ${errorData.detail || `HTTP ${stopResponse.status}`}`);
+                    return false;
+                  }
+                } catch (error) {
+                  addLog(`❌ Error stopping ${mintId.slice(0, 8)}...: ${String(error)}`);
+                  return false;
+                }
+              });
+              
+              await Promise.all(stopPromises);
+              addLog('🛑 All recordings stopped');
+            }
+          }
+        } catch (error) {
+          console.error('Failed to stop recordings:', error);
+          addLog(`❌ Failed to stop recordings: ${String(error)}`);
+        } finally {
+          // Clear local state
+          setCurrentRecording(null);
+          setCurrentTask('Idle');
+        }
+      };
+      
+      stopAllRecordings();
+    }
+    
+    // Update the previous value
+    prevIsActiveRef.current = isActive;
+  }, [isActive]);
 
   // Tick Loop (Backend Agent)
   useEffect(() => {
@@ -449,44 +519,69 @@ const DePinDashboard: React.FC = () => {
           p: 0, 
           display: 'flex', 
           flexDirection: 'column',
-          overflow: 'hidden',
+          overflow: 'visible',
           background: 'linear-gradient(135deg, #1a237e 0%, #0d47a1 100%)',
           color: 'white',
           borderRadius: 3,
           boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
         }}
       >
-        <Box sx={{ p: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box>
-            <Typography variant="overline" sx={{ opacity: 0.8, letterSpacing: 2 }}>
+        <Box sx={{ 
+          p: { xs: 2, sm: 3 }, 
+          display: 'flex', 
+          flexDirection: { xs: 'column', md: 'row' },
+          alignItems: { xs: 'flex-start', md: 'center' },
+          justifyContent: 'space-between',
+          gap: { xs: 2, md: 0 }
+        }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="overline" sx={{ opacity: 0.8, letterSpacing: { xs: 1, sm: 2 }, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
               HAVEN REWARDS DASHBOARD
             </Typography>
-            <Typography variant="h3" sx={{ fontWeight: 700, my: 1 }}>
-              {Math.floor(points).toLocaleString()} <Typography component="span" variant="h5" sx={{ opacity: 0.7 }}>PTS</Typography>
+            <Typography variant="h3" sx={{ 
+              fontWeight: 700, 
+              my: 1,
+              fontSize: { xs: '1.75rem', sm: '2.5rem', md: '3rem' }
+            }}>
+              {Math.floor(points).toLocaleString()} <Typography component="span" variant="h5" sx={{ opacity: 0.7, fontSize: { xs: '1rem', sm: '1.5rem' } }}>PTS</Typography>
             </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 1, 
+              mt: 1,
+              flexWrap: 'wrap'
+            }}>
               <Chip 
                 icon={<StarIcon sx={{ color: '#FFD700 !important' }} />} 
                 label={rankTitle}
+                size="small"
                 sx={{ 
                   bgcolor: 'rgba(255,255,255,0.1)', 
                   color: 'white', 
                   fontWeight: 600,
-                  border: '1px solid rgba(255,255,255,0.2)'
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  fontSize: { xs: '0.7rem', sm: '0.75rem' }
                 }} 
               />
               <Chip 
                 icon={<StreakIcon sx={{ color: '#FF5722 !important' }} />} 
                 label={`${streak} Day Streak`}
+                size="small"
                 sx={{ 
                   bgcolor: 'rgba(255,255,255,0.1)', 
                   color: 'white',
-                  border: '1px solid rgba(255,255,255,0.2)'
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  fontSize: { xs: '0.7rem', sm: '0.75rem' }
                 }} 
               />
             </Box>
           </Box>
-          <Box sx={{ textAlign: 'right' }}>
+          <Box sx={{ 
+            textAlign: { xs: 'left', md: 'right' },
+            width: { xs: '100%', md: 'auto' },
+            mt: { xs: 1, md: 0 }
+          }}>
             <FormControlLabel
               control={
                 <Switch
@@ -505,23 +600,33 @@ const DePinDashboard: React.FC = () => {
                 />
               }
               label={
-                <Typography sx={{ fontWeight: 600, color: isActive ? '#4CAF50' : 'rgba(255,255,255,0.7)' }}>
+                <Typography sx={{ 
+                  fontWeight: 600, 
+                  color: isActive ? '#4CAF50' : 'rgba(255,255,255,0.7)',
+                  fontSize: { xs: '0.75rem', sm: '0.875rem' }
+                }}>
                   {isActive ? "NODE ACTIVE" : "NODE INACTIVE"}
                 </Typography>
               }
               labelPlacement="start"
             />
-            <Typography variant="caption" display="block" sx={{ opacity: 0.6, mt: 1 }}>
+            <Typography variant="caption" display="block" sx={{ opacity: 0.6, mt: 1, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
               {isActive ? "Earning passive rewards..." : "Start node to earn rewards"}
             </Typography>
           </Box>
         </Box>
         
         {/* Level Progress Bar */}
-        <Box sx={{ bgcolor: 'rgba(0,0,0,0.2)', px: 3, py: 1.5 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-            <Typography variant="caption" sx={{ opacity: 0.8 }}>Level {level}</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.8 }}>{(points % 1000).toFixed(0)} / 1000 XP to Level {level + 1}</Typography>
+        <Box sx={{ bgcolor: 'rgba(0,0,0,0.2)', px: { xs: 2, sm: 3 }, py: 1.5 }}>
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: { xs: 'column', sm: 'row' },
+            justifyContent: 'space-between', 
+            mb: 0.5,
+            gap: { xs: 0.5, sm: 0 }
+          }}>
+            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>Level {level}</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>{(points % 1000).toFixed(0)} / 1000 XP to Level {level + 1}</Typography>
           </Box>
           <Box sx={{ height: 6, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden' }}>
             <Box 

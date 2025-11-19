@@ -13,6 +13,7 @@ from collections import defaultdict
 from pydantic import BaseModel, ConfigDict
 from app.lib.phash_generator.phash_calculator import calculate_phash
 from app.lib.phash_generator.phash_calculator import get_video_duration
+from app.lib.thumbnail_generator.thumbnail_calculator import generate_video_thumbnail
 from imagehash import hex_to_hash
 import asyncio
 
@@ -461,6 +462,20 @@ async def upload_livekit_recording(
         db.add(db_video)
         db.commit()
         db.refresh(db_video)
+        
+        # Generate thumbnail after video file is saved
+        try:
+            thumbnail_path = await asyncio.to_thread(generate_video_thumbnail, filepath)
+            if thumbnail_path:
+                db_video.thumbnail_path = thumbnail_path
+                db.commit()
+                db.refresh(db_video)
+                print(f"✅ Thumbnail generated and saved for uploaded recording: {thumbnail_path}")
+            else:
+                print(f"⚠️ Thumbnail generation failed for {filepath}, continuing without thumbnail")
+        except Exception as e:
+            print(f"⚠️ Error generating thumbnail for {filepath}: {e}, continuing without thumbnail")
+            # Don't fail the upload process if thumbnail generation fails
         
         # TODO: Trigger analysis pipeline on uploaded blob
         # This would start the AI analysis process for the uploaded recording

@@ -20,6 +20,7 @@ from app.models.video import Video
 from app.models.live_session import LiveSession
 from app.models.database import get_db
 from app.lib.phash_generator.phash_calculator import get_video_duration
+from app.lib.thumbnail_generator.thumbnail_calculator import generate_video_thumbnail
 
 
 logger = logging.getLogger(__name__)
@@ -1236,6 +1237,20 @@ class WebRTCRecordingService:
                             db.commit()
                             db.refresh(db_video)
                             logger.info(f"✅ Recording added to videos database: {db_video.id} - {title}")
+                            
+                            # Generate thumbnail after video is saved
+                            try:
+                                thumbnail_path = generate_video_thumbnail(output_path)
+                                if thumbnail_path:
+                                    db_video.thumbnail_path = thumbnail_path
+                                    db.commit()
+                                    db.refresh(db_video)
+                                    logger.info(f"✅ Thumbnail generated and saved for recording: {thumbnail_path}")
+                                else:
+                                    logger.warning(f"⚠️ Thumbnail generation failed for {output_path}, continuing without thumbnail")
+                            except Exception as e:
+                                logger.warning(f"⚠️ Error generating thumbnail for {output_path}: {e}, continuing without thumbnail")
+                                # Don't fail the recording process if thumbnail generation fails
                     finally:
                         db.close()
                 except Exception as e:

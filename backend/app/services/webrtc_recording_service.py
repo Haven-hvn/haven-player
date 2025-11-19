@@ -585,24 +585,24 @@ class ParticipantRecorderWrapper:
             self.participant_identity = participant_identity
             
             # Map quality presets to ParticipantRecorder options
-            video_codec = self.config.get("video_codec", "vp8")
-            # Default to VP8 for better compatibility/stability
-            if video_codec not in ["vp8", "vp9", "h264"]:
-                video_codec = "vp8"
+            video_codec = self.config.get("video_codec", "vp9")
+            # Ensure VP9
+            if video_codec not in ["vp9", "vp8"]:
+                video_codec = "vp9"
             
-            video_quality_str = self.config.get("video_quality", "high")
-            # Map to ParticipantRecorder quality levels
+            video_quality_str = self.config.get("video_quality", "medium")
+            # Map to ParticipantRecorder quality levels - avoid "best" to prevent crashes/slow encoding
             quality_map = {
-                "low": "medium",    
-                "medium": "high",   
-                "high": "best",     
-                "best": "best"      
+                "low": "low",    
+                "medium": "medium",   
+                "high": "medium",     # Map high to medium to be safe
+                "best": "medium"      # Map best to medium to avoid 'deadline=best' issues
             }
-            video_quality = quality_map.get(video_quality_str, "high")
+            video_quality = quality_map.get(video_quality_str, "medium")
             
             # Parse bitrates - defaults
-            video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "4M"))
-            audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "128k"))
+            video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "2500000"))
+            audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "128000"))
             
             # Use detected FPS if available, otherwise use config FPS
             # This prevents encoder crashes from frame rate mismatches
@@ -702,12 +702,12 @@ class ParticipantRecorderWrapper:
                     # Assume potentially problematic stream and cap bitrate for safety
                     logger.warning(
                         f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
-                        f"Switching to safe mode (VP8, 1.0Mbps) to prevent buffer overflows and encoder crashes."
+                        f"Switching to safe mode (VP9, 1.5Mbps) to prevent buffer overflows."
                     )
-                    # Force safe settings - use VP8 which is more robust
-                    video_bitrate = 1000000  # 1 Mbps
-                    video_codec = "vp8"      # VP8 is more stable than VP9 in avformat
-                    video_quality = "high"   # Slightly lower than best
+                    # Force safe settings
+                    video_bitrate = 1500000  # 1.5 Mbps
+                    video_codec = "vp9"      
+                    video_quality = "medium" # Safe quality
                     logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
             
             logger.info(
@@ -1169,13 +1169,13 @@ class WebRTCRecordingService:
 
         # Default recording configuration for ParticipantRecorder - Balanced quality
         self.default_config = {
-            "video_codec": "vp8",  # VP8 for better compatibility and stability
+            "video_codec": "vp9",  # VP9 is standard for WebM
             "audio_codec": "opus",  # Always Opus for WebM
-            "video_bitrate": "4M",  # Balanced bitrate
-            "audio_bitrate": "128k",  # Balanced audio bitrate
+            "video_bitrate": "2500000",  # 2.5 Mbps (good for 720p)
+            "audio_bitrate": "128000",  # 128 kbps (standard opus)
             "format": "webm",  # ParticipantRecorder only supports WebM
             "fps": 30,
-            "video_quality": "high",  # High quality setting for ParticipantRecorder
+            "video_quality": "medium",  # Safe default
             "auto_bitrate": True,  # Auto-adjust bitrate based on resolution
         }
 

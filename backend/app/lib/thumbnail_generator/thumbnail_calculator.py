@@ -4,10 +4,62 @@ Thumbnail generation utility for video files using ffmpeg.
 import os
 import subprocess
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _wait_for_file_ready(file_path: str, max_retries: int = 5, initial_delay: float = 0.5) -> bool:
+    """
+    Wait for a file to be ready (exists, readable, and not locked).
+    
+    Args:
+        file_path: Path to the file to check
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay in seconds before first retry
+    
+    Returns:
+        True if file is ready, False otherwise
+    """
+    file_path_obj = Path(file_path)
+    
+    for attempt in range(max_retries):
+        # Wait before checking (except first attempt)
+        delay = 0.0
+        if attempt > 0:
+            delay = initial_delay * (2 ** (attempt - 1))  # Exponential backoff
+            time.sleep(delay)
+        
+        # Check if file exists
+        if not file_path_obj.exists():
+            if attempt < max_retries - 1:
+                next_delay = initial_delay * (2 ** attempt)  # Delay for next retry
+                logger.debug(f"File not found, retrying in {next_delay}s: {file_path}")
+                continue
+            else:
+                logger.warning(f"File does not exist after {max_retries} attempts: {file_path}")
+                return False
+        
+        # Check if file is readable (not locked)
+        try:
+            with open(file_path, 'rb') as f:
+                # Try to read a small chunk to verify file is accessible
+                f.read(1)
+            # File is ready
+            if attempt > 0:
+                logger.info(f"File ready after {attempt} retry attempts: {file_path}")
+            return True
+        except (PermissionError, IOError, OSError) as e:
+            if attempt < max_retries - 1:
+                logger.debug(f"File not ready (locked?), retrying: {file_path} - {e}")
+                continue
+            else:
+                logger.warning(f"File not accessible after {max_retries} attempts: {file_path} - {e}")
+                return False
+    
+    return False
 
 
 def generate_video_thumbnail(
@@ -29,26 +81,30 @@ def generate_video_thumbnail(
         Path to the generated thumbnail file, or None if generation failed
     """
     try:
-        # Check if video file exists
-        if not os.path.exists(video_path):
-            logger.warning(f"Video file does not exist: {video_path}")
+        # Normalize path for cross-platform compatibility
+        video_path_obj = Path(video_path)
+        video_path = str(video_path_obj.resolve())
+        
+        # Wait for file to be ready (exists and not locked)
+        # This handles cases where the file was just created/moved and may still be locked
+        if not _wait_for_file_ready(video_path, max_retries=5, initial_delay=0.5):
+            logger.warning(f"Video file not ready after retries: {video_path}")
             return None
         
         # Determine thumbnail directory
         if thumbnail_dir is None:
             # Use 'thumbnails' directory in the same directory as the video
-            video_dir = os.path.dirname(os.path.abspath(video_path))
-            thumbnail_dir = os.path.join(video_dir, "thumbnails")
+            video_dir = video_path_obj.parent
+            thumbnail_dir = str(video_dir / "thumbnails")
         else:
-            thumbnail_dir = os.path.abspath(thumbnail_dir)
+            thumbnail_dir = str(Path(thumbnail_dir).resolve())
         
         # Create thumbnail directory if it doesn't exist
-        os.makedirs(thumbnail_dir, exist_ok=True)
+        Path(thumbnail_dir).mkdir(parents=True, exist_ok=True)
         
         # Generate thumbnail filename
-        video_basename = os.path.basename(video_path)
-        video_name_without_ext = os.path.splitext(video_basename)[0]
-        thumbnail_path = os.path.join(thumbnail_dir, f"{video_name_without_ext}.jpg")
+        video_name_without_ext = video_path_obj.stem
+        thumbnail_path = str(Path(thumbnail_dir) / f"{video_name_without_ext}.jpg")
         
         # Determine timestamp for frame extraction
         if timestamp is None:

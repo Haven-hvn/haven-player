@@ -503,6 +503,7 @@ class ParticipantRecorderWrapper:
             )
             
             # Validate video track properties to prevent PyAV division-by-zero crashes
+            detected_fps: Optional[float] = None
             if video_track and has_video:
                 try:
                     # Check if track has valid dimensions (prevent division by zero in encoder)
@@ -519,9 +520,54 @@ class ParticipantRecorderWrapper:
                             logger.info(
                                 f"[{self.mint_id}] Video track dimensions: {width}x{height}"
                             )
+                    
+                    # Try to detect actual frame rate from video track to prevent encoder crashes
+                    # This is critical - using wrong FPS can cause division-by-zero in encoder timebase
+                    if hasattr(video_track, 'source'):
+                        # Try to get frame rate from track source
+                        try:
+                            source = video_track.source
+                            if hasattr(source, 'get_stats'):
+                                stats = source.get_stats()
+                                if stats and hasattr(stats, 'frames_per_second'):
+                                    detected_fps = stats.frames_per_second
+                                    if detected_fps and detected_fps > 0 and math.isfinite(detected_fps):
+                                        logger.info(
+                                            f"[{self.mint_id}] Detected video track frame rate: {detected_fps} fps"
+                                        )
+                        except Exception:
+                            pass
+                    
+                    # Alternative: try to get frame rate from track publication
+                    if detected_fps is None:
+                        try:
+                            for pub in participant.track_publications.values():
+                                if pub.kind == rtc.TrackKind.KIND_VIDEO and pub.track == video_track:
+                                    if hasattr(pub, 'source'):
+                                        source = pub.source
+                                        if hasattr(source, 'get_stats'):
+                                            stats = source.get_stats()
+                                            if stats and hasattr(stats, 'frames_per_second'):
+                                                detected_fps = stats.frames_per_second
+                                                if detected_fps and detected_fps > 0 and math.isfinite(detected_fps):
+                                                    logger.info(
+                                                        f"[{self.mint_id}] Detected video track frame rate from publication: {detected_fps} fps"
+                                                    )
+                                                    break
+                        except Exception:
+                            pass
+                    
+                    # Validate detected FPS
+                    if detected_fps is not None:
+                        if not math.isfinite(detected_fps) or detected_fps <= 0 or detected_fps > 120:
+                            logger.warning(
+                                f"[{self.mint_id}] ⚠️ Detected invalid FPS: {detected_fps}, ignoring"
+                            )
+                            detected_fps = None
+                            
                 except Exception as e:
                     logger.warning(
-                        f"[{self.mint_id}] ⚠️ Could not validate video track dimensions: {e}. "
+                        f"[{self.mint_id}] ⚠️ Could not validate video track properties: {e}. "
                         f"Proceeding with caution."
                     )
             
@@ -548,7 +594,19 @@ class ParticipantRecorderWrapper:
             # Parse bitrates - use high defaults for maximum quality
             video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "8M"))
             audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "256k"))
-            video_fps = self.config.get("fps", 30)
+            
+            # Use detected FPS if available, otherwise use config FPS
+            # This prevents encoder crashes from frame rate mismatches
+            if detected_fps is not None and detected_fps > 0 and math.isfinite(detected_fps):
+                video_fps = detected_fps
+                logger.info(
+                    f"[{self.mint_id}] Using detected frame rate: {video_fps} fps (from video track)"
+                )
+            else:
+                video_fps = self.config.get("fps", 30)
+                logger.info(
+                    f"[{self.mint_id}] Using configured frame rate: {video_fps} fps (detection failed or not available)"
+                )
             
             # Validate parameters to prevent PyAV division-by-zero crashes
             # These validations are critical - invalid values cause crashes in FFmpeg encoder
@@ -558,11 +616,13 @@ class ParticipantRecorderWrapper:
             if audio_bitrate <= 0:
                 logger.warning(f"[{self.mint_id}] ⚠️ Invalid audio_bitrate: {audio_bitrate}, using default 256000")
                 audio_bitrate = 256000
-            # CRITICAL: video_fps must be > 0 to prevent division by zero in encoder timebase calculations
-            if video_fps <= 0:
+            
+            # CRITICAL: video_fps must be > 0 and finite to prevent division by zero in encoder timebase calculations
+            # Also ensure it's a reasonable value to prevent encoder crashes
+            if not math.isfinite(video_fps) or video_fps <= 0:
                 logger.error(
-                    f"[{self.mint_id}] ❌ CRITICAL: Invalid video_fps: {video_fps}. "
-                    f"This will cause division-by-zero crash in encoder. Using default 30"
+                    f"[{self.mint_id}] ❌ CRITICAL: video_fps is not finite or <= 0: {video_fps}. "
+                    f"This will cause division-by-zero crash in encoder. Using safe default 30"
                 )
                 video_fps = 30
             elif video_fps > 120:
@@ -572,10 +632,20 @@ class ParticipantRecorderWrapper:
                 logger.warning(f"[{self.mint_id}] ⚠️ video_fps {video_fps} < 1, using default 30")
                 video_fps = 30
             
-            # Additional safety check: ensure fps is a valid number (not NaN or infinity)
-            if not math.isfinite(video_fps) or video_fps <= 0:
+            # Round FPS to nearest integer to avoid floating point precision issues in encoder
+            # Some encoders can have issues with very precise fractional frame rates
+            video_fps_rounded = round(video_fps)
+            if abs(video_fps - video_fps_rounded) > 0.01:
+                logger.info(
+                    f"[{self.mint_id}] Rounding FPS from {video_fps} to {video_fps_rounded} "
+                    f"to avoid encoder precision issues"
+                )
+            video_fps = video_fps_rounded
+            
+            # Final validation after rounding
+            if video_fps <= 0 or not math.isfinite(video_fps):
                 logger.error(
-                    f"[{self.mint_id}] ❌ CRITICAL: video_fps is not finite or <= 0: {video_fps}. "
+                    f"[{self.mint_id}] ❌ CRITICAL: video_fps is invalid after rounding: {video_fps}. "
                     f"Using safe default 30"
                 )
                 video_fps = 30
@@ -649,9 +719,42 @@ class ParticipantRecorderWrapper:
             self.state = RecordingState.RECORDING
             self.start_time = datetime.now(timezone.utc)
             
+            # Final validation before starting recording - ensure video track is still valid
+            # This prevents crashes from starting recording with invalid tracks
+            if has_video and video_track:
+                try:
+                    # Verify track is still subscribed and has valid state
+                    if not hasattr(video_track, 'kind') or video_track.kind != rtc.TrackKind.KIND_VIDEO:
+                        logger.warning(
+                            f"[{self.mint_id}] ⚠️ Video track kind mismatch, proceeding with caution"
+                        )
+                    
+                    # Check dimensions one more time before starting
+                    if hasattr(video_track, 'dimensions'):
+                        width, height = video_track.dimensions
+                        if width <= 0 or height <= 0:
+                            logger.error(
+                                f"[{self.mint_id}] ❌ Video track has invalid dimensions {width}x{height} "
+                                f"before starting recording. This will cause encoder crash. Aborting."
+                            )
+                            raise RecordingError(
+                                f"Video track has invalid dimensions {width}x{height}. "
+                                f"Cannot start recording safely."
+                            )
+                except RecordingError:
+                    raise
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.mint_id}] ⚠️ Could not validate video track before starting: {e}. "
+                        f"Proceeding with caution."
+                    )
+            
             # Start recording with timeout (matching integration test pattern)
             # Pass output_path to start_recording if it accepts it
-            logger.info(f"[{self.mint_id}] Starting recording for participant: {participant_identity}")
+            logger.info(
+                f"[{self.mint_id}] Starting recording for participant: {participant_identity} "
+                f"(fps={video_fps}, bitrate={video_bitrate}, codec={video_codec})"
+            )
             try:
                 # Try with output_path first, fallback to without if not supported
                 try:
@@ -673,12 +776,25 @@ class ParticipantRecorderWrapper:
                 raise RecordingError(error_msg)
             except Exception as e:
                 # Catch any PyAV or encoding errors during start
-                error_msg = f"Error starting recording: {str(e)}"
-                logger.error(f"[{self.mint_id}] ❌ {error_msg}")
-                import traceback
-                logger.error(f"[{self.mint_id}] Start recording traceback: {traceback.format_exc()}")
-                self.state = RecordingState.STOPPED
-                raise RecordingError(error_msg)
+                error_msg = str(e)
+                # Check for common crash indicators in error messages
+                if "division" in error_msg.lower() or "zero" in error_msg.lower():
+                    logger.error(
+                        f"[{self.mint_id}] ❌ Division-by-zero error during recording start. "
+                        f"This indicates invalid video parameters (FPS, dimensions, or bitrate). "
+                        f"Error: {error_msg}"
+                    )
+                    raise RecordingError(
+                        f"Encoder initialization failed due to invalid video parameters. "
+                        f"Detected FPS: {detected_fps}, Using FPS: {video_fps}. "
+                        f"Original error: {error_msg}"
+                    )
+                else:
+                    logger.error(f"[{self.mint_id}] ❌ Error starting recording: {error_msg}")
+                    import traceback
+                    logger.error(f"[{self.mint_id}] Start recording traceback: {traceback.format_exc()}")
+                    self.state = RecordingState.STOPPED
+                    raise RecordingError(f"Error starting recording: {error_msg}")
             
             logger.info(f"[{self.mint_id}] ✅ Recording started with ParticipantRecorder")
             
@@ -787,11 +903,23 @@ class ParticipantRecorderWrapper:
             )
             try:
                 if self.output_path:
+                    original_path = str(self.output_path)
                     final_path = await asyncio.wait_for(
                         self.recorder.stop_recording(str(self.output_path)),
                         timeout=stop_timeout
                     )
-                    self.output_path = Path(final_path) if final_path else self.output_path
+                    # Update output_path with final_path if returned (file may have been moved from temp location)
+                    if final_path:
+                        self.output_path = Path(final_path).resolve()
+                        logger.info(
+                            f"[{self.mint_id}] File path updated: {original_path} -> {self.output_path}"
+                        )
+                    else:
+                        # If no final_path returned, use original path but resolve it
+                        self.output_path = Path(self.output_path).resolve()
+                        logger.info(
+                            f"[{self.mint_id}] Using original path (resolved): {self.output_path}"
+                        )
                 else:
                     # Generate path if not set
                     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
@@ -800,7 +928,17 @@ class ParticipantRecorderWrapper:
                         self.recorder.stop_recording(str(self.output_path)),
                         timeout=stop_timeout
                     )
-                    self.output_path = Path(final_path) if final_path else self.output_path
+                    # Update output_path with final_path if returned
+                    if final_path:
+                        self.output_path = Path(final_path).resolve()
+                        logger.info(
+                            f"[{self.mint_id}] File path set from stop_recording(): {self.output_path}"
+                        )
+                    else:
+                        self.output_path = Path(self.output_path).resolve()
+                        logger.info(
+                            f"[{self.mint_id}] Using generated path (resolved): {self.output_path}"
+                        )
                 logger.info(f"[{self.mint_id}] ✅ recorder.stop_recording() completed")
             except asyncio.TimeoutError:
                 error_msg = f"Timeout stopping recording - recorder.stop_recording() took longer than {stop_timeout:.1f} seconds"
@@ -1239,18 +1377,37 @@ class WebRTCRecordingService:
                             logger.info(f"✅ Recording added to videos database: {db_video.id} - {title}")
                             
                             # Generate thumbnail after video is saved
-                            try:
-                                thumbnail_path = generate_video_thumbnail(output_path)
-                                if thumbnail_path:
-                                    db_video.thumbnail_path = thumbnail_path
-                                    db.commit()
-                                    db.refresh(db_video)
-                                    logger.info(f"✅ Thumbnail generated and saved for recording: {thumbnail_path}")
-                                else:
-                                    logger.warning(f"⚠️ Thumbnail generation failed for {output_path}, continuing without thumbnail")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Error generating thumbnail for {output_path}: {e}, continuing without thumbnail")
-                                # Don't fail the recording process if thumbnail generation fails
+                            # Use the actual final path from the result (may differ from original if file was moved)
+                            final_output_path = result.get("output_path")
+                            if final_output_path:
+                                # Resolve to absolute path to ensure we're using the correct location
+                                final_output_path = str(Path(final_output_path).resolve())
+                                logger.info(
+                                    f"[{mint_id}] Generating thumbnail for: {final_output_path} "
+                                    f"(original path was: {output_path})"
+                                )
+                                try:
+                                    thumbnail_path = generate_video_thumbnail(final_output_path)
+                                    if thumbnail_path:
+                                        db_video.thumbnail_path = thumbnail_path
+                                        db.commit()
+                                        db.refresh(db_video)
+                                        logger.info(f"✅ Thumbnail generated and saved for recording: {thumbnail_path}")
+                                    else:
+                                        logger.warning(
+                                            f"⚠️ Thumbnail generation failed for {final_output_path}, "
+                                            f"continuing without thumbnail"
+                                        )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"⚠️ Error generating thumbnail for {final_output_path}: {e}, "
+                                        f"continuing without thumbnail"
+                                    )
+                                    # Don't fail the recording process if thumbnail generation fails
+                            else:
+                                logger.warning(
+                                    f"⚠️ No output_path in result, skipping thumbnail generation"
+                                )
                     finally:
                         db.close()
                 except Exception as e:

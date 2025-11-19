@@ -169,10 +169,21 @@ class ParticipantRecorderWrapper:
                 
                 # Check if room is still connected
                 # ConnectionState enum values vary by version, so check string representation
-                connection_state_str = str(self.room.connection_state)
-                if "disconnected" in connection_state_str.lower() or "failed" in connection_state_str.lower():
+                # 0=disconnected, 1=connecting, 2=connected, 3=reconnecting
+                connection_state = self.room.connection_state
+                connection_state_str = str(connection_state).lower()
+                
+                # Check for explicit disconnected states or "0" (disconnected)
+                is_disconnected = (
+                    "disconnected" in connection_state_str or 
+                    "failed" in connection_state_str or
+                    connection_state_str == "0" or
+                    (isinstance(connection_state, int) and connection_state == 0)
+                )
+                
+                if is_disconnected:
                     logger.error(
-                        f"[{self.mint_id}] ❌ Room connection lost! State: {connection_state_str}"
+                        f"[{self.mint_id}] ❌ Room connection lost! State: {connection_state} ({connection_state_str})"
                     )
                     self.state = RecordingState.STOPPED
                     break
@@ -1313,7 +1324,14 @@ class WebRTCRecordingService:
                 return {"success": False, "error": f"No active recording for {mint_id}"}
             
             recorder = self.active_recordings[mint_id]
-            result = await recorder.stop()
+            
+            try:
+                result = await recorder.stop()
+            finally:
+                # Ensure we remove from active_recordings even if stop() fails
+                # This prevents "zombie" recordings that block new ones from starting
+                if mint_id in self.active_recordings:
+                    del self.active_recordings[mint_id]
             
             # Update database - mark recording as completed
             try:
@@ -1338,8 +1356,8 @@ class WebRTCRecordingService:
                 logger.warning(f"⚠️ Failed to update recording session in database: {e}")
                 # Don't fail if DB update fails
             
-            # Remove from active recordings
-            del self.active_recordings[mint_id]
+            # Remove from active recordings - handled in finally block above
+            # del self.active_recordings[mint_id]
             
             # Disconnect the stream connection after recording stops
             # Note: ParticipantRecorder.stop_recording() now automatically unsubscribes from tracks,

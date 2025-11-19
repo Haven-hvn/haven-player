@@ -32,9 +32,18 @@ For more verbose logging (debug mode):
 uvicorn app.main:app --reload --log-level debug
 ```
 
-**Note:** If you didn't install the package in editable mode (step 3), you'll need to either:
-- Set PYTHONPATH: `PYTHONPATH=".." uvicorn app.main:app --reload` (from backend directory)
-- Or run from project root: `uvicorn backend.app.main:app --reload`
+**Note:** If you didn't install the package in editable mode (step 3), you have alternative options:
+
+- **Use `python -m uvicorn`** (automatically adds current directory to path):
+  ```bash
+  python -m uvicorn app.main:app --reload
+  ```
+
+- **Set PYTHONPATH** (from backend directory):
+  - Linux/Mac: `PYTHONPATH="." uvicorn app.main:app --reload`
+  - Windows PowerShell: `$env:PYTHONPATH="."; uvicorn app.main:app --reload`
+
+- **Run from project root**: `uvicorn backend.app.main:app --reload`
 
 The API will be available at http://localhost:8000
 

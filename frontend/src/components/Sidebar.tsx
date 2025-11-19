@@ -13,6 +13,7 @@ import {
   ExpandLess as ExpandLessIcon,
   AcUnit as BrainIcon,
   LiveTv as LiveTvIcon,
+  CloudUpload as CloudUploadIcon,
 } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -54,6 +55,12 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
         label: "Livestream Recorder",
         path: "/livestream-recorder",
         active: location.pathname === "/livestream-recorder",
+      },
+      {
+        icon: CloudUploadIcon,
+        label: "DePin Node",
+        path: "/depin",
+        active: location.pathname === "/depin",
       },
     ],
     [location.pathname]

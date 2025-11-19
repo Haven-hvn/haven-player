@@ -21,7 +21,7 @@ logging.basicConfig(
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording
+from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin
 from app.models.base import init_db
 from app.models.database import SessionLocal
 from app.models.config import AppConfig
@@ -102,6 +102,7 @@ app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(pumpfun_streams.router, prefix="/api/live", tags=["live"])
 app.include_router(live_sessions.router, prefix="/api/live-sessions", tags=["live-sessions"])
 app.include_router(recording.router, prefix="/api/recording", tags=["recording"])
+app.include_router(depin.router, prefix="/api/depin", tags=["depin"])
 
 
 @app.get("/")

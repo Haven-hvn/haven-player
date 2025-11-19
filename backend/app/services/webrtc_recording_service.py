@@ -667,7 +667,7 @@ class ParticipantRecorderWrapper:
                                 
                                 # Force VP8 for very low resolutions as it's more stable
                                 video_codec = "vp8"
-                                video_quality = "high" # Downgrade from best to high
+                                video_quality = "best" # Use best to avoid 'goodquality' encoder error
                                 
                                 if video_bitrate > max_bitrate:
                                     logger.warning(
@@ -696,7 +696,7 @@ class ParticipantRecorderWrapper:
                     # Force safe settings
                     video_bitrate = 1500000
                     video_codec = "vp8"
-                    video_quality = "high"
+                    video_quality = "best" # Use best to avoid 'goodquality' encoder error
                     logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
             
             logger.info(

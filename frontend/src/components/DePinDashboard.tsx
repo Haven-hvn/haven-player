@@ -88,6 +88,8 @@ const DePinDashboard: React.FC = () => {
   
   // Ref to track if an upload is currently in progress to prevent overlaps
   const isUploadingRef = useRef(false);
+  // Ref to track if a tick check is in progress
+  const isTickInProgressRef = useRef(false);
   
   const addLog = (message: string) => {
     setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev].slice(0, 100));
@@ -234,7 +236,9 @@ const DePinDashboard: React.FC = () => {
 
     if (isActive) {
       const tick = async () => {
+        let startedRecording = false;
         try {
+          isTickInProgressRef.current = true;
           setCurrentTask('Checking Top Stream...');
           const response = await fetch('http://localhost:8000/api/depin/tick', {
             method: 'POST',
@@ -247,6 +251,7 @@ const DePinDashboard: React.FC = () => {
               
               // Check if a new recording was started
               if (data.actions.some((a: string) => a.includes('Started'))) {
+                startedRecording = true;
                 // Fetch current recording status
                 const activeResponse = await fetch('http://localhost:8000/api/recording/active');
                 if (activeResponse.ok) {
@@ -262,6 +267,7 @@ const DePinDashboard: React.FC = () => {
                           duration: 0,
                           startTime
                         });
+                        setCurrentTask(`Recording: ${mintId}`);
                       }
                     }
                   }
@@ -285,7 +291,12 @@ const DePinDashboard: React.FC = () => {
           console.error('Tick error:', error);
           addLog(`❌ Agent Tick Failed: ${String(error)}`);
         } finally {
-          setCurrentTask('Idle');
+          isTickInProgressRef.current = false;
+          // Only set to Idle if we aren't immediately transitioning to another state
+          // and didn't just start a recording
+          if (!isUploadingRef.current && !startedRecording) {
+             setCurrentTask('Idle');
+          }
         }
       };
 
@@ -341,15 +352,26 @@ const DePinDashboard: React.FC = () => {
                   });
                   setCurrentTask(`Recording: ${mintId}`);
                 }
+              } else if (recording.state === 'stopping') {
+                // Handle stopping/encoding state
+                setCurrentTask(`Encoding: ${mintId}`);
+                // Keep current recording info visible but maybe freeze duration?
+                // For now, we just update the status text as requested.
               } else {
                 // Recording stopped
                 setCurrentRecording(null);
-                setCurrentTask('Idle');
+                // Only set Idle if not checking stream or uploading
+                if (!isTickInProgressRef.current && !isUploadingRef.current) {
+                  setCurrentTask('Idle');
+                }
               }
             } else {
               // No active recordings
               setCurrentRecording(null);
-              setCurrentTask('Idle');
+              // Only set Idle if not checking stream or uploading
+              if (!isTickInProgressRef.current && !isUploadingRef.current) {
+                setCurrentTask('Idle');
+              }
             }
           }
         } catch (error) {

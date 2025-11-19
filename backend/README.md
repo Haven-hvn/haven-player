@@ -15,31 +15,26 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Run the development server:
-   - From the project root:
+3. Install the package in editable mode (recommended):
 ```bash
-uvicorn backend.app.main:app --reload --log-level info
+pip install -e .
 ```
-   - From the `backend/` directory (ensure Python can resolve the `app` package by setting `PYTHONPATH` to the project root first):
-```bash
-# macOS / Linux
-cd backend
-PYTHONPATH=".." uvicorn app.main:app --reload --log-level info
 
-# Windows PowerShell
-cd backend
-$env:PYTHONPATH=".."
+This allows Python to find the `app` package regardless of where you run commands from.
+
+4. Run the development server:
+```bash
 uvicorn app.main:app --reload --log-level info
 ```
 
-For more verbose logging (debug mode), use the same approach:
+For more verbose logging (debug mode):
 ```bash
-# From project root
-uvicorn backend.app.main:app --reload --log-level debug
-
-# From backend directory with PYTHONPATH set
-PYTHONPATH=".." uvicorn app.main:app --reload --log-level debug
+uvicorn app.main:app --reload --log-level debug
 ```
+
+**Note:** If you didn't install the package in editable mode (step 3), you'll need to either:
+- Set PYTHONPATH: `PYTHONPATH=".." uvicorn app.main:app --reload` (from backend directory)
+- Or run from project root: `uvicorn backend.app.main:app --reload`
 
 The API will be available at http://localhost:8000
 

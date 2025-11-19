@@ -30,13 +30,20 @@ def _wait_for_file_ready(file_path: str, max_retries: int = 5, initial_delay: fl
         delay = 0.0
         if attempt > 0:
             delay = initial_delay * (2 ** (attempt - 1))  # Exponential backoff
+            logger.debug(f"Waiting {delay}s before retry attempt {attempt + 1}/{max_retries}")
             time.sleep(delay)
         
         # Check if file exists
-        if not file_path_obj.exists():
+        try:
+            exists = file_path_obj.exists()
+        except Exception as e:
+            logger.warning(f"Error checking if file exists: {file_path} - {e}")
+            exists = False
+        
+        if not exists:
             if attempt < max_retries - 1:
                 next_delay = initial_delay * (2 ** attempt)  # Delay for next retry
-                logger.debug(f"File not found, retrying in {next_delay}s: {file_path}")
+                logger.debug(f"File not found (attempt {attempt + 1}/{max_retries}), will retry in {next_delay}s: {file_path}")
                 continue
             else:
                 logger.warning(f"File does not exist after {max_retries} attempts: {file_path}")
@@ -50,10 +57,22 @@ def _wait_for_file_ready(file_path: str, max_retries: int = 5, initial_delay: fl
             # File is ready
             if attempt > 0:
                 logger.info(f"File ready after {attempt} retry attempts: {file_path}")
+            else:
+                logger.debug(f"File ready on first attempt: {file_path}")
             return True
+        except FileNotFoundError:
+            # File was deleted between exists() check and open()
+            if attempt < max_retries - 1:
+                next_delay = initial_delay * (2 ** attempt)
+                logger.debug(f"File disappeared (attempt {attempt + 1}/{max_retries}), will retry in {next_delay}s: {file_path}")
+                continue
+            else:
+                logger.warning(f"File not found after {max_retries} attempts: {file_path}")
+                return False
         except (PermissionError, IOError, OSError) as e:
             if attempt < max_retries - 1:
-                logger.debug(f"File not ready (locked?), retrying: {file_path} - {e}")
+                next_delay = initial_delay * (2 ** attempt)
+                logger.debug(f"File not ready (locked?), attempt {attempt + 1}/{max_retries}, will retry in {next_delay}s: {file_path} - {e}")
                 continue
             else:
                 logger.warning(f"File not accessible after {max_retries} attempts: {file_path} - {e}")
@@ -82,14 +101,24 @@ def generate_video_thumbnail(
     """
     try:
         # Normalize path for cross-platform compatibility
+        logger.debug(f"Generating thumbnail for: {video_path}")
         video_path_obj = Path(video_path)
-        video_path = str(video_path_obj.resolve())
+        
+        # Resolve path - this doesn't require the file to exist
+        try:
+            video_path = str(video_path_obj.resolve())
+            logger.debug(f"Resolved path: {video_path}")
+        except Exception as e:
+            logger.warning(f"Could not resolve path {video_path}: {e}, using as-is")
+            video_path = str(video_path_obj)
         
         # Wait for file to be ready (exists and not locked)
         # This handles cases where the file was just created/moved and may still be locked
+        logger.debug(f"Waiting for file to be ready: {video_path}")
         if not _wait_for_file_ready(video_path, max_retries=5, initial_delay=0.5):
             logger.warning(f"Video file not ready after retries: {video_path}")
             return None
+        logger.debug(f"File is ready: {video_path}")
         
         # Determine thumbnail directory
         if thumbnail_dir is None:
@@ -158,7 +187,18 @@ def generate_video_thumbnail(
     except subprocess.TimeoutExpired:
         logger.warning(f"⚠️ Thumbnail generation timed out for {video_path}")
         return None
+    except FileNotFoundError as e:
+        logger.warning(f"⚠️ File not found when generating thumbnail for {video_path}: {e}")
+        return None
+    except PermissionError as e:
+        logger.warning(f"⚠️ Permission denied when generating thumbnail for {video_path}: {e}")
+        return None
+    except OSError as e:
+        logger.warning(f"⚠️ OS error when generating thumbnail for {video_path}: {e}")
+        return None
     except Exception as e:
         logger.warning(f"⚠️ Error generating thumbnail for {video_path}: {e}")
+        import traceback
+        logger.debug(f"Thumbnail generation traceback: {traceback.format_exc()}")
         return None
 

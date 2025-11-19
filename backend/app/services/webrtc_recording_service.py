@@ -640,7 +640,7 @@ class ParticipantRecorderWrapper:
                     f"[{self.mint_id}] Rounding FPS from {video_fps} to {video_fps_rounded} "
                     f"to avoid encoder precision issues"
                 )
-            video_fps = video_fps_rounded
+            video_fps = int(video_fps_rounded)  # Explicitly cast to int
             
             # Final validation after rounding
             if video_fps <= 0 or not math.isfinite(video_fps):
@@ -649,6 +649,41 @@ class ParticipantRecorderWrapper:
                     f"Using safe default 30"
                 )
                 video_fps = 30
+
+            # Adjust bitrate based on resolution to prevent excessive bitrates for small resolutions
+            # 8Mbps for 262p (480x262) is too high and might cause muxer issues
+            if has_video and video_track and hasattr(video_track, 'dimensions'):
+                try:
+                    width, height = video_track.dimensions
+                    if width > 0 and height > 0:
+                        pixel_count = width * height
+                        # Reference: 1080p (1920x1080) is ~2MP. 8Mbps is good for 1080p.
+                        # 262p (480x262) is ~0.12MP.
+                        
+                        # Cap bitrate based on pixel count
+                        # Simple heuristic: max 2 bits per pixel * fps?
+                        # Or just a simple tier check
+                        
+                        if pixel_count < 640 * 480:  # < 480p
+                            # Limit to 2 Mbps max for < 480p
+                            max_bitrate = 2000000
+                            if video_bitrate > max_bitrate:
+                                logger.warning(
+                                    f"[{self.mint_id}] ⚠️ Reducing video_bitrate from {video_bitrate} to {max_bitrate} "
+                                    f"for low resolution {width}x{height}"
+                                )
+                                video_bitrate = max_bitrate
+                        elif pixel_count < 1280 * 720:  # < 720p
+                            # Limit to 4 Mbps max for < 720p
+                            max_bitrate = 4000000
+                            if video_bitrate > max_bitrate:
+                                logger.warning(
+                                    f"[{self.mint_id}] ⚠️ Reducing video_bitrate from {video_bitrate} to {max_bitrate} "
+                                    f"for medium resolution {width}x{height}"
+                                )
+                                video_bitrate = max_bitrate
+                except Exception as e:
+                    logger.warning(f"[{self.mint_id}] ⚠️ Could not adjust bitrate based on resolution: {e}")
             
             logger.info(
                 f"[{self.mint_id}] Validated recording parameters: "
@@ -659,8 +694,8 @@ class ParticipantRecorderWrapper:
             # Wrap in try-catch to handle PyAV initialization errors (especially division-by-zero)
             try:
                 # Double-check all parameters before creating recorder to prevent crashes
-                if video_fps <= 0 or not math.isfinite(video_fps):
-                    raise ValueError(f"Invalid video_fps: {video_fps} (must be > 0 and finite)")
+                if video_fps <= 0:
+                    raise ValueError(f"Invalid video_fps: {video_fps} (must be > 0)")
                 if video_bitrate <= 0:
                     raise ValueError(f"Invalid video_bitrate: {video_bitrate} (must be > 0)")
                 if audio_bitrate <= 0:
@@ -668,14 +703,15 @@ class ParticipantRecorderWrapper:
                 
                 logger.info(
                     f"[{self.mint_id}] Creating ParticipantRecorder with validated parameters: "
-                    f"fps={video_fps}, video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}"
+                    f"fps={video_fps}, video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, "
+                    f"auto_bitrate=False"
                 )
                 
                 self.recorder = ParticipantRecorder(
                     self.room,
                     video_codec=video_codec,
                     video_quality=video_quality,
-                    auto_bitrate=self.config.get("auto_bitrate", True),
+                    auto_bitrate=False,  # Disable auto_bitrate as we are providing manual bitrates
                     video_bitrate=video_bitrate,
                     audio_bitrate=audio_bitrate,
                     video_fps=video_fps
@@ -1386,6 +1422,12 @@ class WebRTCRecordingService:
                                     f"[{mint_id}] Generating thumbnail for: {final_output_path} "
                                     f"(original path was: {output_path})"
                                 )
+                                
+                                # Add a small delay to ensure file system has flushed after file move
+                                # This is especially important on Windows where file moves may take time to propagate
+                                await asyncio.sleep(1.0)
+                                logger.debug(f"[{mint_id}] Waited 1s after file save before thumbnail generation")
+                                
                                 try:
                                     thumbnail_path = generate_video_thumbnail(final_output_path)
                                     if thumbnail_path:
@@ -1403,6 +1445,8 @@ class WebRTCRecordingService:
                                         f"⚠️ Error generating thumbnail for {final_output_path}: {e}, "
                                         f"continuing without thumbnail"
                                     )
+                                    import traceback
+                                    logger.debug(f"[{mint_id}] Thumbnail generation traceback: {traceback.format_exc()}")
                                     # Don't fail the recording process if thumbnail generation fails
                             else:
                                 logger.warning(

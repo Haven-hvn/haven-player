@@ -26,9 +26,17 @@ def get_video_duration(video_path):
         return 0
     
     try:
+        # Check if file exists first
+        import os
+        if not os.path.exists(video_path):
+            print(f"Warning: Video file does not exist: {video_path}")
+            return 0
+        
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            raise ValueError(f"Failed to open the video file: {video_path}")
+            print(f"Warning: Failed to open the video file: {video_path}")
+            return 0
+        
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
         
@@ -39,8 +47,17 @@ def get_video_duration(video_path):
         duration = frame_count / fps
         cap.release()
         return duration  # in seconds
+    except FileNotFoundError as e:
+        print(f"Error: Video file not found: {video_path} - {e}")
+        return 0
+    except PermissionError as e:
+        print(f"Error: Permission denied accessing video file: {video_path} - {e}")
+        return 0
+    except OSError as e:
+        print(f"Error: OS error accessing video file: {video_path} - {e}")
+        return 0
     except Exception as e:
-        print(f"Error getting video duration with cv2: {e}")
+        print(f"Error getting video duration with cv2: {video_path} - {e}")
         return 0
 
 def extract_frames(video_path):

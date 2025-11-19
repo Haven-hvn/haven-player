@@ -1,12 +1,25 @@
 """
-Thumbnail generation utility for video files using ffmpeg.
+Thumbnail generation utility for video files using PyAV (av).
 """
 import os
-import subprocess
 import logging
 import time
 from pathlib import Path
 from typing import Optional
+
+# Try importing av (PyAV) and PIL (Pillow)
+try:
+    import av
+    import av.error
+    AV_AVAILABLE = True
+except ImportError:
+    AV_AVAILABLE = False
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -81,44 +94,30 @@ def _wait_for_file_ready(file_path: str, max_retries: int = 5, initial_delay: fl
     return False
 
 
-def _check_ffmpeg_available() -> bool:
-    """Check if ffmpeg is available in the system PATH."""
-    try:
-        subprocess.run(
-            ['ffmpeg', '-version'], 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            check=False
-        )
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
-
-
 def generate_video_thumbnail(
     video_path: str,
     thumbnail_dir: Optional[str] = None,
     timestamp: Optional[float] = None,
-    quality: int = 2
+    quality: int = 85
 ) -> Optional[str]:
     """
-    Generate a thumbnail image from a video file using ffmpeg.
+    Generate a thumbnail image from a video file using PyAV.
     
     Args:
         video_path: Path to the video file
         thumbnail_dir: Directory to save thumbnails (default: 'thumbnails' in same dir as video)
         timestamp: Time in seconds to extract frame from (default: 1 second or 10% of duration)
-        quality: JPEG quality (2 = high quality, 31 = low quality)
+        quality: JPEG quality (1-100, default: 85)
     
     Returns:
         Path to the generated thumbnail file, or None if generation failed
     """
-    # Check if ffmpeg is available first
-    if not _check_ffmpeg_available():
-        logger.error("❌ FFmpeg not found in system PATH. Cannot generate thumbnail.")
-        logger.error("Please install FFmpeg and add it to your system PATH.")
+    if not AV_AVAILABLE:
+        logger.error("❌ PyAV (av) not installed. Cannot generate thumbnail.")
+        return None
+        
+    if not PIL_AVAILABLE:
+        logger.error("❌ Pillow (PIL) not installed. Cannot save thumbnail image.")
         return None
 
     try:
@@ -135,7 +134,6 @@ def generate_video_thumbnail(
             video_path = str(video_path_obj)
         
         # Wait for file to be ready (exists and not locked)
-        # This handles cases where the file was just created/moved and may still be locked
         logger.debug(f"Waiting for file to be ready: {video_path}")
         if not _wait_for_file_ready(video_path, max_retries=5, initial_delay=0.5):
             logger.warning(f"Video file not ready after retries: {video_path}")
@@ -157,74 +155,54 @@ def generate_video_thumbnail(
         video_name_without_ext = video_path_obj.stem
         thumbnail_path = str(Path(thumbnail_dir) / f"{video_name_without_ext}.jpg")
         
-        # Determine timestamp for frame extraction
-        if timestamp is None:
-            # Try to get video duration to use 10% or 1 second, whichever is smaller
-            try:
-                from app.lib.phash_generator.phash_calculator import get_video_duration
-                duration = get_video_duration(video_path)
-                if duration > 0:
-                    # Use 10% of duration or 1 second, whichever is smaller
-                    timestamp = min(duration * 0.1, 1.0)
+        # Open container
+        with av.open(video_path) as container:
+            if not container.streams.video:
+                logger.warning(f"No video stream found in {video_path}")
+                return None
+            
+            stream = container.streams.video[0]
+            stream.thread_type = 'AUTO'  # Enable multithreading
+            
+            # Determine timestamp if not provided
+            if timestamp is None:
+                # Use 10% of duration or 1 second, whichever is smaller
+                if stream.duration:
+                    duration_sec = float(stream.duration * stream.time_base)
+                    timestamp = min(duration_sec * 0.1, 1.0)
                 else:
-                    # Fallback to 1 second if duration can't be determined
                     timestamp = 1.0
-            except Exception as e:
-                logger.warning(f"Could not get video duration, using 1 second: {e}")
-                timestamp = 1.0
-        
-        # Build ffmpeg command
-        # -ss: seek to timestamp
-        # -i: input file
-        # -vframes 1: extract only 1 frame
-        # -q:v 2: high quality JPEG (2 = best quality, 31 = worst)
-        # -y: overwrite output file if it exists
-        cmd = [
-            'ffmpeg',
-            '-y',  # Overwrite output file
-            '-ss', str(timestamp),  # Seek to timestamp
-            '-i', video_path,  # Input video
-            '-vframes', '1',  # Extract only 1 frame
-            '-q:v', str(quality),  # JPEG quality
-            thumbnail_path  # Output thumbnail
-        ]
-        
-        # Run ffmpeg command
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30  # 30 second timeout
-        )
-        
-        # Check if thumbnail was created successfully
-        if result.returncode == 0 and os.path.exists(thumbnail_path):
-            logger.info(f"✅ Generated thumbnail: {thumbnail_path}")
-            return thumbnail_path
-        else:
-            error_msg = result.stderr.decode('utf-8', errors='ignore')
-            logger.warning(f"⚠️ Failed to generate thumbnail for {video_path}: {error_msg}")
+            
+            # Seek to timestamp
+            # Convert seconds to time_base units
+            target_pts = int(timestamp / stream.time_base)
+            container.seek(target_pts, stream=stream)
+            
+            # Decode frames
+            for frame in container.decode(stream):
+                # We only need one frame
+                img = frame.to_image()
+                
+                # Convert to RGB if necessary (Pillow requires RGB for JPEG)
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Save image
+                img.save(thumbnail_path, quality=quality)
+                logger.info(f"✅ Generated thumbnail: {thumbnail_path}")
+                return thumbnail_path
+                
+            logger.warning(f"Could not extract any frames from {video_path}")
             return None
             
-    except subprocess.TimeoutExpired:
-        logger.warning(f"⚠️ Thumbnail generation timed out for {video_path}")
+    except av.error.InvalidDataError:
+        logger.warning(f"Invalid data in video file {video_path}")
         return None
-    except FileNotFoundError as e:
-        # This catches if the executable is not found (redundant with check above but safe) 
-        # OR if the input file is somehow not found by subprocess despite our check
-        logger.warning(f"⚠️ File or FFmpeg executable not found: {e}")
-        if "[WinError 2]" in str(e):
-            logger.error("❌ This error likely means FFmpeg is not installed or not in PATH.")
-        return None
-    except PermissionError as e:
-        logger.warning(f"⚠️ Permission denied when generating thumbnail for {video_path}: {e}")
-        return None
-    except OSError as e:
-        logger.warning(f"⚠️ OS error when generating thumbnail for {video_path}: {e}")
+    except FileNotFoundError:
+        logger.warning(f"File not found during thumbnail generation: {video_path}")
         return None
     except Exception as e:
         logger.warning(f"⚠️ Error generating thumbnail for {video_path}: {e}")
         import traceback
         logger.debug(f"Thumbnail generation traceback: {traceback.format_exc()}")
         return None
-

@@ -219,29 +219,47 @@ class PumpFunService:
         """
         Get popular live streams sorted by participant count.
         
+        Fetches a large number of streams to ensure we find the truly most popular ones,
+        then filters and sorts by participant count.
+        
         Args:
             limit: Maximum number of streams to return
             
         Returns:
-            List of popular live streams
+            List of popular live streams, sorted by participant count (descending)
         """
         try:
-            streams = await self.get_currently_live_streams(limit=limit * 2)  # Get more to filter
+            # Fetch a large number of streams to ensure we don't miss the most popular ones
+            # The API might not return them sorted by popularity, so we need to fetch many
+            streams = await self.get_currently_live_streams(limit=100)  # Fetch up to 100 streams
             
-            # Filter only live streams and sort by participant count
+            # Filter only live streams
             live_streams = [
                 stream for stream in streams 
                 if stream.get("is_currently_live", False)
             ]
             
-            # Sort by participant count (descending)
+            if not live_streams:
+                logger.warning("No live streams found after filtering")
+                return []
+            
+            # Sort by participant count (descending) to get the most popular first
             popular_streams = sorted(
                 live_streams,
                 key=lambda x: x.get("num_participants", 0),
                 reverse=True
             )[:limit]
             
-            logger.info(f"Found {len(popular_streams)} popular live streams")
+            # Log the top stream info for debugging
+            if popular_streams:
+                top_stream = popular_streams[0]
+                logger.info(
+                    f"Top stream: {top_stream.get('name', 'Unknown')} "
+                    f"({top_stream.get('symbol', 'N/A')}) - "
+                    f"{top_stream.get('num_participants', 0)} participants"
+                )
+            
+            logger.info(f"Found {len(popular_streams)} popular live streams (from {len(live_streams)} total live)")
             return popular_streams
             
         except Exception as e:

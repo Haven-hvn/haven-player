@@ -34,11 +34,17 @@ async def depin_tick():
         
         top_stream = popular_streams[0]
         top_mint_id = top_stream.get("mint")
+        top_participants = top_stream.get("num_participants", 0)
+        top_name = top_stream.get("name", "Unknown")
+        top_symbol = top_stream.get("symbol", "N/A")
         
         if not top_mint_id:
             return {"success": False, "message": "Top stream has no mint ID."}
             
-        logger.info(f"DePin Tick: Top stream is {top_mint_id} ({top_stream.get('name', 'Unknown')})")
+        logger.info(
+            f"DePin Tick: Top stream is {top_mint_id} "
+            f"({top_name} / {top_symbol}) - {top_participants} participants"
+        )
         
         # 2. Check current recording status
         active_recordings = recording_service.active_recordings
@@ -75,9 +81,15 @@ async def depin_tick():
             else:
                 return {
                     "success": True, 
-                    "message": f"Continuing to record {current_mint_id} ({duration:.1f}s elapsed).",
+                    "message": f"Continuing to record {current_mint_id} ({duration:.1f}s elapsed). Top stream: {top_name} ({top_participants} participants).",
                     "current_mint_id": current_mint_id,
-                    "duration": duration
+                    "duration": duration,
+                    "top_stream": {
+                        "mint_id": top_mint_id,
+                        "name": top_name,
+                        "symbol": top_symbol,
+                        "participants": top_participants
+                    }
                 }
         else:
             should_start_new = True
@@ -107,8 +119,14 @@ async def depin_tick():
                 result_data["actions"].append(f"Started {top_mint_id}")
                 return {
                     "success": True,
-                    "message": f"Switched recording to {top_mint_id}. Reason: {reason}",
-                    "actions": result_data["actions"]
+                    "message": f"Switched recording to {top_name} ({top_participants} participants). Reason: {reason}",
+                    "actions": result_data["actions"],
+                    "top_stream": {
+                        "mint_id": top_mint_id,
+                        "name": top_name,
+                        "symbol": top_symbol,
+                        "participants": top_participants
+                    }
                 }
             else:
                 return {

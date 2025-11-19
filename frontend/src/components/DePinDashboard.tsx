@@ -42,6 +42,11 @@ const DePinDashboard: React.FC = () => {
   const [currentTask, setCurrentTask] = useState<string>('Idle');
   const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
   const [lastTick, setLastTick] = useState<Date | null>(null);
+  const [currentRecording, setCurrentRecording] = useState<{
+    mintId: string;
+    duration: number;
+    startTime: Date | null;
+  } | null>(null);
   
   const { videos, refreshVideos } = useVideos();
   const { uploadStatus, uploadVideo } = useFilecoinUpload();
@@ -53,7 +58,7 @@ const DePinDashboard: React.FC = () => {
     setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev].slice(0, 100));
   };
 
-  // Load Filecoin config
+  // Load Filecoin config and restore state on mount
   useEffect(() => {
     const loadConfig = async () => {
       try {
@@ -70,7 +75,52 @@ const DePinDashboard: React.FC = () => {
         addLog('❌ Failed to load Filecoin config.');
       }
     };
+    
+    const restoreState = async () => {
+      try {
+        // Check for active recordings
+        const response = await fetch('http://localhost:8000/api/recording/active');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.recordings && Object.keys(data.recordings).length > 0) {
+            // There are active recordings - restore state
+            const recordingEntries = Object.entries(data.recordings);
+            const firstRecording = recordingEntries[0][1] as any;
+            const mintId = recordingEntries[0][0];
+            
+            if (firstRecording.state === 'recording' || firstRecording.is_recording) {
+              setIsActive(true);
+              setCurrentTask(`Recording: ${mintId}`);
+              
+              // Set current recording info
+              if (firstRecording.start_time) {
+                const startTime = new Date(firstRecording.start_time);
+                const duration = Math.floor((Date.now() - startTime.getTime()) / 1000);
+                setCurrentRecording({
+                  mintId,
+                  duration,
+                  startTime
+                });
+                addLog(`🔄 Restored active recording: ${mintId} (${Math.floor(duration / 60)}m ${duration % 60}s)`);
+              } else {
+                setCurrentRecording({
+                  mintId,
+                  duration: 0,
+                  startTime: null
+                });
+                addLog(`🔄 Restored active recording: ${mintId}`);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to restore state:', error);
+        // Don't add to logs - this is expected if no recordings exist
+      }
+    };
+    
     loadConfig();
+    restoreState();
   }, []);
 
   // Tick Loop (Backend Agent)
@@ -89,10 +139,42 @@ const DePinDashboard: React.FC = () => {
           if (data.success) {
             if (data.actions && data.actions.length > 0) {
               data.actions.forEach(action => addLog(`🤖 Agent: ${action}`));
+              
+              // Check if a new recording was started
+              if (data.actions.some((a: string) => a.includes('Started'))) {
+                // Fetch current recording status
+                const activeResponse = await fetch('http://localhost:8000/api/recording/active');
+                if (activeResponse.ok) {
+                  const activeData = await activeResponse.json();
+                  if (activeData.success && activeData.recordings) {
+                    const recordingEntries = Object.entries(activeData.recordings);
+                    if (recordingEntries.length > 0) {
+                      const [mintId, recording] = recordingEntries[0] as [string, any];
+                      if (recording.start_time) {
+                        const startTime = new Date(recording.start_time);
+                        setCurrentRecording({
+                          mintId,
+                          duration: 0,
+                          startTime
+                        });
+                      }
+                    }
+                  }
+                }
+              }
             }
             if (data.message && !data.message.includes("No action")) {
                // Only log interesting messages
                // addLog(`ℹ️ ${data.message}`);
+            }
+            
+            // Update current recording info if available
+            if (data.current_mint_id && data.duration !== undefined) {
+              setCurrentRecording({
+                mintId: data.current_mint_id,
+                duration: data.duration,
+                startTime: null
+              });
             }
           } else {
             addLog(`❌ Agent Error: ${data.message}`);
@@ -112,6 +194,78 @@ const DePinDashboard: React.FC = () => {
     }
 
     return () => clearInterval(intervalId);
+  }, [isActive]);
+
+  // Update current recording duration periodically
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (currentRecording && currentRecording.startTime) {
+      const updateDuration = () => {
+        const duration = Math.floor((Date.now() - currentRecording.startTime!.getTime()) / 1000);
+        setCurrentRecording(prev => prev ? { ...prev, duration } : null);
+      };
+
+      updateDuration(); // Update immediately
+      intervalId = setInterval(updateDuration, 1000); // Update every second
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [currentRecording?.startTime]);
+
+  // Periodically check for active recordings (in case recording stops externally)
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (isActive) {
+      const checkActiveRecordings = async () => {
+        try {
+          const response = await fetch('http://localhost:8000/api/recording/active');
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.recordings && Object.keys(data.recordings).length > 0) {
+              const recordingEntries = Object.entries(data.recordings);
+              const [mintId, recording] = recordingEntries[0] as [string, any];
+              
+              if (recording.state === 'recording' || recording.is_recording) {
+                if (recording.start_time) {
+                  const startTime = new Date(recording.start_time);
+                  const duration = Math.floor((Date.now() - startTime.getTime()) / 1000);
+                  setCurrentRecording({
+                    mintId,
+                    duration,
+                    startTime
+                  });
+                  setCurrentTask(`Recording: ${mintId}`);
+                }
+              } else {
+                // Recording stopped
+                setCurrentRecording(null);
+                setCurrentTask('Idle');
+              }
+            } else {
+              // No active recordings
+              setCurrentRecording(null);
+              setCurrentTask('Idle');
+            }
+          }
+        } catch (error) {
+          console.error('Failed to check active recordings:', error);
+        }
+      };
+
+      intervalId = setInterval(checkActiveRecordings, 5000); // Check every 5 seconds
+    } else {
+      // Clear recording info when inactive
+      setCurrentRecording(null);
+      setCurrentTask('Idle');
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [isActive]);
 
   // Upload Loop (Frontend Worker)
@@ -199,12 +353,32 @@ const DePinDashboard: React.FC = () => {
             Current Status
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {isActive ? <AutorenewIcon color="success" className="spin" /> : <StorageIcon color="disabled" />}
+            {isActive ? (
+              <CircularProgress size={20} color="success" />
+            ) : (
+              <StorageIcon color="disabled" />
+            )}
             <Typography variant="h6">
               {isActive ? currentTask : 'Stopped'}
             </Typography>
           </Box>
         </Paper>
+        
+        {currentRecording && (
+          <Paper sx={{ p: 2, border: '2px solid', borderColor: 'success.main' }}>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              Active Recording
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px' }}>
+                {currentRecording.mintId.slice(0, 8)}...
+              </Typography>
+              <Typography variant="h6">
+                {Math.floor(currentRecording.duration / 60)}m {currentRecording.duration % 60}s
+              </Typography>
+            </Box>
+          </Paper>
+        )}
         
         <Paper sx={{ p: 2 }}>
           <Typography variant="subtitle2" color="text.secondary" gutterBottom>

@@ -7,6 +7,7 @@ export interface Video {
   thumbnail_path: string | null;
   position: number;
   created_at: string;
+  mint_id?: string | null;
   filecoin_root_cid?: string | null;
   filecoin_piece_cid?: string | null;
   filecoin_piece_id?: number | null;
@@ -57,4 +58,20 @@ export interface StreamInfo {
   website?: string;
   twitter?: string;
   telegram?: string;
+}
+
+// Grouped videos types
+export interface TokenGroupInfo {
+  mint_id: string;
+  name?: string | null;
+  symbol?: string | null;
+  image_uri?: string | null;
+  thumbnail?: string | null;
+}
+
+export interface VideoGroup {
+  token_info: TokenGroupInfo | null; // null for "Other Videos" group
+  videos: Video[];
+  recording_count: number;
+  latest_recording_date?: string | null;
 } 

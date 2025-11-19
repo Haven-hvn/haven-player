@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Video, Timestamp, VideoCreate, TimestampCreate, StreamInfo } from '@/types/video';
+import { Video, Timestamp, VideoCreate, TimestampCreate, StreamInfo, VideoGroup } from '@/types/video';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
@@ -30,6 +30,11 @@ export interface JobCreateResponse {
 export const videoService = {
   getAll: async (): Promise<Video[]> => {
     const response = await api.get<Video[]>('/videos/');
+    return response.data;
+  },
+
+  getGrouped: async (): Promise<VideoGroup[]> => {
+    const response = await api.get<VideoGroup[]>('/videos/grouped');
     return response.data;
   },
 

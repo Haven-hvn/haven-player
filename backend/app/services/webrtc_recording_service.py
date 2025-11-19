@@ -1229,7 +1229,8 @@ class WebRTCRecordingService:
                                 has_ai_data=False,  # Will be set to True after analysis
                                 thumbnail_path=None,
                                 position=position,
-                                phash=None  # Skipped for now
+                                phash=None,  # Skipped for now
+                                mint_id=mint_id  # Associate with pump.fun token
                             )
                             db.add(db_video)
                             db.commit()

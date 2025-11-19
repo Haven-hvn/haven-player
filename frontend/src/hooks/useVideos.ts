@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Video, VideoCreate, Timestamp } from '@/types/video';
+import { Video, VideoCreate, Timestamp, VideoGroup } from '@/types/video';
 import { videoService } from '@/services/api';
 
 export const useVideos = () => {
   const [videos, setVideos] = useState<Video[]>([]);
+  const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [videoTimestamps, setVideoTimestamps] = useState<Record<string, Timestamp[]>>({});
@@ -27,12 +28,20 @@ export const useVideos = () => {
   const fetchVideos = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await videoService.getAll();
-      console.log(`📋 Fetched ${data.length} videos from API`);
-      setVideos(data);
+      // Fetch grouped videos
+      const groups = await videoService.getGrouped();
+      console.log(`📋 Fetched ${groups.length} video groups from API`);
+      setVideoGroups(groups);
+      
+      // Flatten groups to maintain backward compatibility with existing code
+      const allVideos: Video[] = [];
+      for (const group of groups) {
+        allVideos.push(...group.videos);
+      }
+      setVideos(allVideos);
       
       // Fetch timestamps for videos that have AI data
-      for (const video of data) {
+      for (const video of allVideos) {
         if (video.has_ai_data) {
           console.log(`🤖 Video ${video.title} has AI data, fetching timestamps...`);
           await fetchTimestampsForVideo(video);
@@ -117,6 +126,7 @@ export const useVideos = () => {
 
   return {
     videos,
+    videoGroups,
     loading,
     error,
     videoTimestamps,

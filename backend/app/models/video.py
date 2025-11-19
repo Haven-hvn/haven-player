@@ -20,6 +20,9 @@ class Video(Base):
     phash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     
+    # Pump.fun token association
+    mint_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    
     # Filecoin storage metadata
     filecoin_root_cid: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     filecoin_piece_cid: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -41,6 +44,7 @@ class Video(Base):
             'position': self.position,
             'phash': self.phash,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'mint_id': self.mint_id,
             'filecoin_root_cid': self.filecoin_root_cid,
             'filecoin_piece_cid': self.filecoin_piece_cid,
             'filecoin_piece_id': self.filecoin_piece_id,

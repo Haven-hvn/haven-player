@@ -173,6 +173,7 @@ const MainApp: React.FC = () => {
   const navigate = useNavigate();
   const {
     videos,
+    videoGroups,
     loading,
     error,
     videoTimestamps,
@@ -633,6 +634,7 @@ const MainApp: React.FC = () => {
         >
           <VideoAnalysisList
             videos={visibleVideos}
+            videoGroups={videoGroups}
             videoTimestamps={videoTimestamps}
             analysisStatuses={analysisStatuses}
             jobProgresses={jobProgresses}
@@ -642,6 +644,8 @@ const MainApp: React.FC = () => {
             onRemove={handleRemoveVideo}
             onUpload={handleUploadToFilecoin}
             uploadStatuses={mergedUploadStatuses}
+            hiddenVideos={hiddenVideos}
+            searchQuery={searchQuery}
           />
         </Box>
       </Box>

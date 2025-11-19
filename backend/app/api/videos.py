@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 import json
 import uuid
@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, 
 from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.video import Video, Timestamp
+from app.models.pumpfun_coin import PumpFunCoin
+from collections import defaultdict
 from pydantic import BaseModel, ConfigDict
 from app.lib.phash_generator.phash_calculator import calculate_phash
 from app.lib.phash_generator.phash_calculator import get_video_duration
@@ -42,6 +44,7 @@ class VideoResponse(BaseModel):
     position: int
     created_at: datetime
     phash: Optional[str] = None
+    mint_id: Optional[str] = None
     filecoin_root_cid: Optional[str] = None
     filecoin_piece_cid: Optional[str] = None
     filecoin_piece_id: Optional[int] = None
@@ -57,6 +60,21 @@ class TimestampResponse(BaseModel):
     start_time: float
     end_time: Optional[float]
     confidence: float
+
+class TokenGroupInfo(BaseModel):
+    """Token information for a group"""
+    mint_id: str
+    name: Optional[str] = None
+    symbol: Optional[str] = None
+    image_uri: Optional[str] = None
+    thumbnail: Optional[str] = None
+
+class VideoGroupResponse(BaseModel):
+    """Response model for grouped videos"""
+    token_info: Optional[TokenGroupInfo] = None  # None for "Other Videos" group
+    videos: List[VideoResponse]
+    recording_count: int
+    latest_recording_date: Optional[datetime] = None
 
 def process_ai_analysis_file(video_path: str, db: Session) -> bool:
     """
@@ -117,6 +135,85 @@ def get_videos(
 ) -> List[Video]:
     videos = db.query(Video).order_by(Video.position.desc(), Video.created_at.desc()).offset(skip).limit(limit).all()
     return videos
+
+@router.get("/grouped", response_model=List[VideoGroupResponse])
+def get_grouped_videos(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+) -> List[VideoGroupResponse]:
+    """
+    Get videos grouped by mint_id (token).
+    Videos with the same mint_id are grouped together.
+    Videos without mint_id are grouped in an "Other Videos" group.
+    Groups with only one video are still shown as groups (automatic grouping).
+    """
+    # Get all videos
+    all_videos = db.query(Video).order_by(Video.position.desc(), Video.created_at.desc()).offset(skip).limit(limit).all()
+    
+    # Group videos by mint_id
+    videos_by_mint: Dict[Optional[str], list[Video]] = defaultdict(list)
+    for video in all_videos:
+        videos_by_mint[video.mint_id].append(video)
+    
+    # Get token info for each mint_id
+    mint_ids = [mint_id for mint_id in videos_by_mint.keys() if mint_id is not None]
+    token_info_map: dict[str, TokenGroupInfo] = {}
+    
+    if mint_ids:
+        coins = db.query(PumpFunCoin).filter(PumpFunCoin.mint_id.in_(mint_ids)).all()
+        for coin in coins:
+            token_info_map[coin.mint_id] = TokenGroupInfo(
+                mint_id=coin.mint_id,
+                name=coin.name,
+                symbol=coin.symbol,
+                image_uri=coin.image_uri,
+                thumbnail=coin.thumbnail
+            )
+    
+    # Build response groups
+    groups: list[VideoGroupResponse] = []
+    
+    # Process token groups (with mint_id)
+    for mint_id in sorted(mint_ids, key=lambda m: m or ""):
+        videos = videos_by_mint[mint_id]
+        if not videos:
+            continue
+        
+        # Get token info or create default
+        token_info = token_info_map.get(mint_id)
+        if not token_info:
+            # Create default token info if not found in database
+            token_info = TokenGroupInfo(
+                mint_id=mint_id,
+                name=None,
+                symbol=None,
+                image_uri=None,
+                thumbnail=None
+            )
+        
+        # Find latest recording date
+        latest_date = max((v.created_at for v in videos), default=None)
+        
+        groups.append(VideoGroupResponse(
+            token_info=token_info,
+            videos=[VideoResponse.model_validate(v) for v in videos],
+            recording_count=len(videos),
+            latest_recording_date=latest_date
+        ))
+    
+    # Process "Other Videos" group (videos without mint_id)
+    other_videos = videos_by_mint.get(None, [])
+    if other_videos:
+        latest_date = max((v.created_at for v in other_videos), default=None)
+        groups.append(VideoGroupResponse(
+            token_info=None,  # No token info for "Other Videos"
+            videos=[VideoResponse.model_validate(v) for v in other_videos],
+            recording_count=len(other_videos),
+            latest_recording_date=latest_date
+        ))
+    
+    return groups
 
 @router.post("/", response_model=VideoResponse)
 async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Video:
@@ -358,7 +455,8 @@ async def upload_livekit_recording(
             has_ai_data=False,  # Will be set to True after analysis
             thumbnail_path=None,
             position=position,
-            phash=phash
+            phash=phash,
+            mint_id=mint_id  # Associate with pump.fun token
         )
         db.add(db_video)
         db.commit()

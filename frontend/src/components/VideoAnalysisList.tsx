@@ -33,7 +33,8 @@ import {
   OpenInNew as OpenInNewIcon,
   ContentCopy as ContentCopyIcon,
 } from "@mui/icons-material";
-import { Video, Timestamp } from "@/types/video";
+import { Video, Timestamp, VideoGroup } from "@/types/video";
+import TokenGroup from "@/components/TokenGroup";
 
 /**
  * Construct an IPFS gateway URL from a CID
@@ -864,6 +865,7 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
 
 interface VideoAnalysisListProps {
   videos: Video[];
+  videoGroups?: VideoGroup[];
   videoTimestamps: Record<string, Timestamp[]>;
   analysisStatuses: Record<
     string,
@@ -881,10 +883,13 @@ interface VideoAnalysisListProps {
     error?: string;
     rootCid?: string;
   }>;
+  hiddenVideos?: Set<string>;
+  searchQuery?: string;
 }
 
 const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   videos,
+  videoGroups,
   videoTimestamps,
   analysisStatuses,
   jobProgresses = {},
@@ -894,6 +899,8 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   onRemove,
   onUpload,
   uploadStatuses = {},
+  hiddenVideos = new Set(),
+  searchQuery = "",
 }) => {
   // Create list item component for list view
   const VideoListItem: React.FC<{
@@ -1357,9 +1364,98 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
     );
   };
 
+  // Filter video groups based on hidden videos and search query
+  const filterVideoGroup = (group: VideoGroup): VideoGroup | null => {
+    // Filter out hidden videos
+    const visibleVideos = group.videos.filter(
+      (video) => !hiddenVideos.has(video.path)
+    );
+
+    // Apply search filter if provided
+    const filteredVideos = searchQuery.trim()
+      ? visibleVideos.filter((video) => {
+          const query = searchQuery.toLowerCase();
+          const searchableFields = [
+            video.title.toLowerCase(),
+            video.path.toLowerCase(),
+            ...(videoTimestamps[video.path]?.map((ts) =>
+              ts.tag_name.toLowerCase()
+            ) || []),
+            // Also search in token info
+            group.token_info?.name?.toLowerCase() || "",
+            group.token_info?.symbol?.toLowerCase() || "",
+            group.token_info?.mint_id?.toLowerCase() || "",
+          ];
+          return searchableFields.some((field) => field.includes(query));
+        })
+      : visibleVideos;
+
+    if (filteredVideos.length === 0) {
+      return null;
+    }
+
+    return {
+      ...group,
+      videos: filteredVideos,
+      recording_count: filteredVideos.length,
+    };
+  };
+
+  // Use grouped view if videoGroups is provided and has data
+  const useGroupedView = videoGroups && videoGroups.length > 0;
+  const filteredGroups = useGroupedView
+    ? videoGroups.map(filterVideoGroup).filter((g): g is VideoGroup => g !== null)
+    : [];
+
+  // Render a single video item (used by TokenGroup)
+  const renderVideoItem = (video: Video, index: number): React.ReactNode => {
+    return viewMode === "grid" ? (
+      <VideoAnalysisItem
+        key={video.path}
+        video={video}
+        index={index}
+        timestamps={videoTimestamps[video.path] || []}
+        analysisStatus={analysisStatuses[video.path] || "pending"}
+        jobProgress={jobProgresses[video.path] || 0}
+        uploadStatus={uploadStatuses[video.path]}
+        onPlay={onPlay}
+        onAnalyze={onAnalyze}
+        onRemove={onRemove}
+        onUpload={onUpload}
+      />
+    ) : (
+      <VideoListItem
+        key={video.path}
+        video={video}
+        timestamps={videoTimestamps[video.path] || []}
+        analysisStatus={analysisStatuses[video.path] || "pending"}
+        jobProgress={jobProgresses[video.path] || 0}
+      />
+    );
+  };
+
   return (
     <Box sx={{ flexGrow: 1, overflow: "auto", p: 2 }}>
-      {videos.length > 0 ? (
+      {useGroupedView && filteredGroups.length > 0 ? (
+        <Box sx={{ pb: 4 }}>
+          {filteredGroups.map((group, groupIndex) => (
+            <TokenGroup
+              key={group.token_info?.mint_id || `other-${groupIndex}`}
+              group={group}
+              videoTimestamps={videoTimestamps}
+              analysisStatuses={analysisStatuses}
+              jobProgresses={jobProgresses}
+              viewMode={viewMode}
+              onPlay={onPlay}
+              onAnalyze={onAnalyze}
+              onRemove={onRemove}
+              onUpload={onUpload}
+              uploadStatuses={uploadStatuses}
+              renderVideoItem={renderVideoItem}
+            />
+          ))}
+        </Box>
+      ) : videos.length > 0 ? (
         <Box
           sx={{
             display: viewMode === "grid" ? "grid" : "flex",
@@ -1375,31 +1471,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
             pb: 4,
           }}
         >
-          {videos.map((video, index) =>
-            viewMode === "grid" ? (
-              <VideoAnalysisItem
-                key={video.path}
-                video={video}
-                index={index}
-                timestamps={videoTimestamps[video.path] || []}
-                analysisStatus={analysisStatuses[video.path] || "pending"}
-                jobProgress={jobProgresses[video.path] || 0}
-                uploadStatus={uploadStatuses[video.path]}
-                onPlay={onPlay}
-                onAnalyze={onAnalyze}
-                onRemove={onRemove}
-                onUpload={onUpload}
-              />
-            ) : (
-              <VideoListItem
-                key={video.path}
-                video={video}
-                timestamps={videoTimestamps[video.path] || []}
-                analysisStatus={analysisStatuses[video.path] || "pending"}
-                jobProgress={jobProgresses[video.path] || 0}
-              />
-            )
-          )}
+          {videos.map((video, index) => renderVideoItem(video, index))}
         </Box>
       ) : (
         <Box

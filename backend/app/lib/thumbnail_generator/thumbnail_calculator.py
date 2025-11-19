@@ -81,6 +81,22 @@ def _wait_for_file_ready(file_path: str, max_retries: int = 5, initial_delay: fl
     return False
 
 
+def _check_ffmpeg_available() -> bool:
+    """Check if ffmpeg is available in the system PATH."""
+    try:
+        subprocess.run(
+            ['ffmpeg', '-version'], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            check=False
+        )
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
 def generate_video_thumbnail(
     video_path: str,
     thumbnail_dir: Optional[str] = None,
@@ -99,6 +115,12 @@ def generate_video_thumbnail(
     Returns:
         Path to the generated thumbnail file, or None if generation failed
     """
+    # Check if ffmpeg is available first
+    if not _check_ffmpeg_available():
+        logger.error("❌ FFmpeg not found in system PATH. Cannot generate thumbnail.")
+        logger.error("Please install FFmpeg and add it to your system PATH.")
+        return None
+
     try:
         # Normalize path for cross-platform compatibility
         logger.debug(f"Generating thumbnail for: {video_path}")
@@ -188,7 +210,11 @@ def generate_video_thumbnail(
         logger.warning(f"⚠️ Thumbnail generation timed out for {video_path}")
         return None
     except FileNotFoundError as e:
-        logger.warning(f"⚠️ File not found when generating thumbnail for {video_path}: {e}")
+        # This catches if the executable is not found (redundant with check above but safe) 
+        # OR if the input file is somehow not found by subprocess despite our check
+        logger.warning(f"⚠️ File or FFmpeg executable not found: {e}")
+        if "[WinError 2]" in str(e):
+            logger.error("❌ This error likely means FFmpeg is not installed or not in PATH.")
         return None
     except PermissionError as e:
         logger.warning(f"⚠️ Permission denied when generating thumbnail for {video_path}: {e}")

@@ -652,42 +652,56 @@ class ParticipantRecorderWrapper:
 
             # Adjust bitrate based on resolution to prevent excessive bitrates for small resolutions
             # 8Mbps for 262p (480x262) is too high and might cause muxer issues
-            if has_video and video_track and hasattr(video_track, 'dimensions'):
-                try:
-                    width, height = video_track.dimensions
-                    if width > 0 and height > 0:
-                        pixel_count = width * height
-                        # Reference: 1080p (1920x1080) is ~2MP. 8Mbps is good for 1080p.
-                        # 262p (480x262) is ~0.12MP.
-                        
-                        # Cap bitrate based on pixel count
-                        # Simple heuristic: max 2 bits per pixel * fps?
-                        # Or just a simple tier check
-                        
-                        if pixel_count < 640 * 480:  # < 480p
-                            # Limit to 2 Mbps max for < 480p
-                            max_bitrate = 2000000
-                            if video_bitrate > max_bitrate:
-                                logger.warning(
-                                    f"[{self.mint_id}] ⚠️ Reducing video_bitrate from {video_bitrate} to {max_bitrate} "
-                                    f"for low resolution {width}x{height}"
-                                )
-                                video_bitrate = max_bitrate
-                        elif pixel_count < 1280 * 720:  # < 720p
-                            # Limit to 4 Mbps max for < 720p
-                            max_bitrate = 4000000
-                            if video_bitrate > max_bitrate:
-                                logger.warning(
-                                    f"[{self.mint_id}] ⚠️ Reducing video_bitrate from {video_bitrate} to {max_bitrate} "
-                                    f"for medium resolution {width}x{height}"
-                                )
-                                video_bitrate = max_bitrate
-                except Exception as e:
-                    logger.warning(f"[{self.mint_id}] ⚠️ Could not adjust bitrate based on resolution: {e}")
+            if has_video and video_track:
+                if hasattr(video_track, 'dimensions'):
+                    try:
+                        width, height = video_track.dimensions
+                        if width > 0 and height > 0:
+                            pixel_count = width * height
+                            # Reference: 1080p (1920x1080) is ~2MP. 8Mbps is good for 1080p.
+                            # 262p (480x262) is ~0.12MP.
+                            
+                            if pixel_count < 640 * 480:  # < 480p
+                                # Limit to 1 Mbps max for < 480p and force VP8 for safety
+                                max_bitrate = 1000000
+                                
+                                # Force VP8 for very low resolutions as it's more stable
+                                video_codec = "vp8"
+                                video_quality = "high" # Downgrade from best to high
+                                
+                                if video_bitrate > max_bitrate:
+                                    logger.warning(
+                                        f"[{self.mint_id}] ⚠️ Low resolution detected ({width}x{height}). "
+                                        f"Switching to safe mode: VP8 codec, {max_bitrate} bitrate"
+                                    )
+                                    video_bitrate = max_bitrate
+                            elif pixel_count < 1280 * 720:  # < 720p
+                                # Limit to 4 Mbps max for < 720p
+                                max_bitrate = 4000000
+                                if video_bitrate > max_bitrate:
+                                    logger.warning(
+                                        f"[{self.mint_id}] ⚠️ Reducing video_bitrate from {video_bitrate} to {max_bitrate} "
+                                        f"for medium resolution {width}x{height}"
+                                    )
+                                    video_bitrate = max_bitrate
+                    except Exception as e:
+                        logger.warning(f"[{self.mint_id}] ⚠️ Could not adjust bitrate based on resolution: {e}")
+                else:
+                    # Dimensions not available (likely PyAV track or older SDK)
+                    # Assume potentially problematic stream and cap bitrate for safety
+                    logger.warning(
+                        f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
+                        f"Switching to safe mode (VP8, 1.5Mbps) to prevent buffer overflows."
+                    )
+                    # Force safe settings
+                    video_bitrate = 1500000
+                    video_codec = "vp8"
+                    video_quality = "high"
+                    logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
             
             logger.info(
                 f"[{self.mint_id}] Validated recording parameters: "
-                f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps}"
+                f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps}, codec={video_codec}"
             )
             
             # Create ParticipantRecorder with configuration
@@ -704,7 +718,7 @@ class ParticipantRecorderWrapper:
                 logger.info(
                     f"[{self.mint_id}] Creating ParticipantRecorder with validated parameters: "
                     f"fps={video_fps}, video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, "
-                    f"auto_bitrate=False"
+                    f"auto_bitrate=False, codec={video_codec}"
                 )
                 
                 self.recorder = ParticipantRecorder(

@@ -10,7 +10,6 @@ import {
   ListItemText,
   CircularProgress,
   Alert,
-  Grid,
   Card,
   CardContent,
   useTheme,
@@ -522,78 +521,91 @@ const DePinDashboard: React.FC = () => {
       )}
 
       {/* Key Metrics */}
-      <Grid container spacing={2}>
-        <Grid item xs={12} md={4}>
-          <Card sx={{ height: '100%' }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                <Box sx={{ p: 1, borderRadius: 2, bgcolor: theme.palette.primary.main + '15' }}>
-                  <TrendingUpIcon color="primary" />
-                </Box>
-                <Typography variant="subtitle2" color="text.secondary">Network Status</Typography>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: '1fr',
+            md: 'repeat(3, 1fr)',
+          },
+          gap: 2,
+        }}
+      >
+        <Card sx={{ height: '100%' }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+              <Box sx={{ p: 1, borderRadius: 2, bgcolor: theme.palette.primary.main + '15' }}>
+                <TrendingUpIcon color="primary" />
               </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {isActive ? (
-                  <CircularProgress size={20} color="success" />
-                ) : (
-                  <StorageIcon color="disabled" />
-                )}
-                <Typography variant="h6">
-                  {isActive ? currentTask : 'Stopped'}
+              <Typography variant="subtitle2" color="text.secondary">Network Status</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {isActive ? (
+                <CircularProgress size={20} color="success" />
+              ) : (
+                <StorageIcon color="disabled" />
+              )}
+              <Typography variant="h6">
+                {isActive ? currentTask : 'Stopped'}
+              </Typography>
+            </Box>
+          </CardContent>
+        </Card>
+        
+        <Card sx={{ height: '100%', border: currentRecording ? '2px solid #4CAF50' : undefined }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+              <Box sx={{ p: 1, borderRadius: 2, bgcolor: theme.palette.secondary.main + '15' }}>
+                <TimelineIcon color="secondary" />
+              </Box>
+              <Typography variant="subtitle2" color="text.secondary">Active Recording</Typography>
+            </Box>
+            {currentRecording ? (
+              <Box>
+                <Typography variant="h5" sx={{ fontFamily: 'monospace' }}>
+                  {Math.floor(currentRecording.duration / 60)}:{(currentRecording.duration % 60).toString().padStart(2, '0')}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                  ID: {currentRecording.mintId.slice(0, 8)}...
                 </Typography>
               </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        
-        <Grid item xs={12} md={4}>
-          <Card sx={{ height: '100%', border: currentRecording ? '2px solid #4CAF50' : undefined }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                <Box sx={{ p: 1, borderRadius: 2, bgcolor: theme.palette.secondary.main + '15' }}>
-                  <TimelineIcon color="secondary" />
-                </Box>
-                <Typography variant="subtitle2" color="text.secondary">Active Recording</Typography>
-              </Box>
-              {currentRecording ? (
-                <Box>
-                  <Typography variant="h5" sx={{ fontFamily: 'monospace' }}>
-                    {Math.floor(currentRecording.duration / 60)}:{(currentRecording.duration % 60).toString().padStart(2, '0')}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
-                    ID: {currentRecording.mintId.slice(0, 8)}...
-                  </Typography>
-                </Box>
-              ) : (
-                <Typography variant="body1" color="text.secondary">No active session</Typography>
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
+            ) : (
+              <Typography variant="body1" color="text.secondary">No active session</Typography>
+            )}
+          </CardContent>
+        </Card>
 
-        <Grid item xs={12} md={4}>
-          <Card sx={{ height: '100%' }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#9c27b015' }}>
-                  <CloudUploadIcon sx={{ color: '#9c27b0' }} />
-                </Box>
-                <Typography variant="subtitle2" color="text.secondary">Pending Uploads</Typography>
+        <Card sx={{ height: '100%' }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+              <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#9c27b015' }}>
+                <CloudUploadIcon sx={{ color: '#9c27b0' }} />
               </Box>
-              <Typography variant="h4">
-                {videos.filter(v => !v.filecoin_root_cid).length}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Queued for archival
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+              <Typography variant="subtitle2" color="text.secondary">Pending Uploads</Typography>
+            </Box>
+            <Typography variant="h4">
+              {videos.filter(v => !v.filecoin_root_cid).length}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Queued for archival
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
 
       {/* Concept: Points + Missions Dashboard */}
-      <Grid container spacing={2} sx={{ mt: 0 }}>
-        <Grid item xs={12} lg={5}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: '1fr',
+            lg: '1.2fr 1fr',
+          },
+          gap: 2,
+          mt: 0,
+        }}
+      >
+        <Box>
           <Paper
             sx={{
               p: 3,
@@ -673,9 +685,18 @@ const DePinDashboard: React.FC = () => {
               </Button>
             </Box>
           </Paper>
-        </Grid>
+        </Box>
 
-        <Grid item xs={12} md={4}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: '1fr',
+              md: 'repeat(2, 1fr)',
+            },
+            gap: 2,
+          }}
+        >
           <Paper sx={{ p: 3, height: '100%' }}>
             <Typography variant="subtitle2" color="text.secondary">
               Archival Impact
@@ -761,9 +782,7 @@ const DePinDashboard: React.FC = () => {
               Simulate Node Boost
             </Button>
           </Paper>
-        </Grid>
 
-        <Grid item xs={12} md={3}>
           <Paper sx={{ p: 3 }}>
             <Typography variant="subtitle2" color="text.secondary">
               Leaderboard (Concept)
@@ -796,8 +815,8 @@ const DePinDashboard: React.FC = () => {
               ))}
             </List>
           </Paper>
-        </Grid>
-      </Grid>
+        </Box>
+      </Box>
 
       {/* Activity Log */}
       <Paper sx={{ flexGrow: 1, p: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

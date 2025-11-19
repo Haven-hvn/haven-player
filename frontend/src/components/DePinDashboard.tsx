@@ -515,15 +515,20 @@ const DePinDashboard: React.FC = () => {
       
       {/* Rewards Dashboard Header */}
       <Paper 
+        elevation={0}
         sx={{ 
           p: 0, 
           display: 'flex', 
           flexDirection: 'column',
-          overflow: 'visible',
+          overflow: 'hidden',
           background: 'linear-gradient(135deg, #1a237e 0%, #0d47a1 100%)',
+          backgroundColor: 'transparent',
           color: 'white',
           borderRadius: 3,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+          boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+          '&::before': {
+            display: 'none'
+          }
         }}
       >
         <Box sx={{ 

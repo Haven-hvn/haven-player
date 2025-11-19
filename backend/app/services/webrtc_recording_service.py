@@ -704,9 +704,17 @@ class ParticipantRecorderWrapper:
                         f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
                         f"Switching to safe mode (VP9, 1.5Mbps) to prevent buffer overflows."
                     )
+                    
+                    # Try to log stats to debug missing dimensions
+                    if hasattr(video_track, 'get_stats'):
+                         try:
+                             logger.info(f"[{self.mint_id}] Video track stats: {video_track.get_stats()}")
+                         except Exception as e:
+                             logger.warning(f"Could not get stats for debug: {e}")
+
                     # Force safe settings
                     video_bitrate = 1500000  # 1.5 Mbps
-                    video_codec = "vp9"      
+                    video_codec = "vp9"      # VP9
                     video_quality = "medium" # Safe quality
                     logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
             

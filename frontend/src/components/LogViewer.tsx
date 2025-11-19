@@ -52,17 +52,20 @@ const LogViewer: React.FC = () => {
         return String(arg);
       }).join(' ');
 
-      setLogs(prev => {
-        const newLog: LogEntry = {
-          id: logIdRef.current++,
-          timestamp,
-          level,
-          message,
-          args,
-        };
-        const updated = [...prev, newLog].slice(-maxLogs);
-        return updated;
-      });
+      // Defer state update to avoid setState during render
+      setTimeout(() => {
+        setLogs(prev => {
+          const newLog: LogEntry = {
+            id: logIdRef.current++,
+            timestamp,
+            level,
+            message,
+            args,
+          };
+          const updated = [...prev, newLog].slice(-maxLogs);
+          return updated;
+        });
+      }, 0);
     };
 
     console.log = (...args: any[]) => {

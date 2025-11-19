@@ -584,27 +584,25 @@ class ParticipantRecorderWrapper:
             
             self.participant_identity = participant_identity
             
-            # Map quality presets to ParticipantRecorder options - Maximum quality
-            video_codec = self.config.get("video_codec", "vp9")
-            # Always use VP9 for maximum quality (better compression than VP8)
-            if video_codec in ["vp9", "libvpx-vp9"]:
-                video_codec = "vp9"
-            else:
-                video_codec = "vp9"  # Default to VP9 for maximum quality
+            # Map quality presets to ParticipantRecorder options
+            video_codec = self.config.get("video_codec", "vp8")
+            # Default to VP8 for better compatibility/stability
+            if video_codec not in ["vp8", "vp9", "h264"]:
+                video_codec = "vp8"
             
-            video_quality_str = self.config.get("video_quality", "best")
-            # Map to ParticipantRecorder quality levels - favor highest quality
+            video_quality_str = self.config.get("video_quality", "high")
+            # Map to ParticipantRecorder quality levels
             quality_map = {
-                "low": "high",      # Even low maps to high quality
-                "medium": "high",   # Medium maps to high quality
-                "high": "best",     # High maps to best quality
-                "best": "best"      # Best is maximum
+                "low": "medium",    
+                "medium": "high",   
+                "high": "best",     
+                "best": "best"      
             }
-            video_quality = quality_map.get(video_quality_str, "best")
+            video_quality = quality_map.get(video_quality_str, "high")
             
-            # Parse bitrates - use high defaults for maximum quality
-            video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "8M"))
-            audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "256k"))
+            # Parse bitrates - defaults
+            video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "4M"))
+            audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "128k"))
             
             # Use detected FPS if available, otherwise use config FPS
             # This prevents encoder crashes from frame rate mismatches
@@ -704,12 +702,12 @@ class ParticipantRecorderWrapper:
                     # Assume potentially problematic stream and cap bitrate for safety
                     logger.warning(
                         f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
-                        f"Switching to safe mode (VP9, 1.5Mbps) to prevent buffer overflows."
+                        f"Switching to safe mode (VP8, 1.0Mbps) to prevent buffer overflows and encoder crashes."
                     )
-                    # Force safe settings
-                    video_bitrate = 1500000
-                    video_codec = "vp9"
-                    video_quality = "best"
+                    # Force safe settings - use VP8 which is more robust
+                    video_bitrate = 1000000  # 1 Mbps
+                    video_codec = "vp8"      # VP8 is more stable than VP9 in avformat
+                    video_quality = "high"   # Slightly lower than best
                     logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
             
             logger.info(
@@ -1169,15 +1167,15 @@ class WebRTCRecordingService:
         # Active recordings - use ParticipantRecorderWrapper
         self.active_recordings: Dict[str, ParticipantRecorderWrapper] = {}
 
-        # Default recording configuration for ParticipantRecorder - Maximum quality
+        # Default recording configuration for ParticipantRecorder - Balanced quality
         self.default_config = {
-            "video_codec": "vp9",  # VP9 for best quality (better compression than VP8)
+            "video_codec": "vp8",  # VP8 for better compatibility and stability
             "audio_codec": "opus",  # Always Opus for WebM
-            "video_bitrate": "8M",  # High bitrate for maximum quality
-            "audio_bitrate": "256k",  # High audio bitrate for maximum quality
+            "video_bitrate": "4M",  # Balanced bitrate
+            "audio_bitrate": "128k",  # Balanced audio bitrate
             "format": "webm",  # ParticipantRecorder only supports WebM
             "fps": 30,
-            "video_quality": "best",  # Maximum quality setting for ParticipantRecorder
+            "video_quality": "high",  # High quality setting for ParticipantRecorder
             "auto_bitrate": True,  # Auto-adjust bitrate based on resolution
         }
 

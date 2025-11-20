@@ -106,6 +106,20 @@ async def depin_tick():
                 logger.error(f"Failed to stop recording {current_mint_id}: {stop_result.get('error')}")
         
         if should_start_new:
+            # Check if recording is currently stopping (encoding)
+            if top_mint_id in recording_service.active_recordings:
+                recorder = recording_service.active_recordings[top_mint_id]
+                if recorder.state.value == "stopping":
+                    logger.info(
+                        f"DePin Action: Waiting for {top_mint_id} to finish encoding "
+                        f"before starting new recording"
+                    )
+                    return {
+                        "success": True,
+                        "message": f"Recording for {top_mint_id} is currently encoding. Will retry next tick.",
+                        "actions": result_data["actions"]
+                    }
+            
             logger.info(f"DePin Action: Starting {top_mint_id} - {reason}")
             # Ensure we wait a bit if we just stopped, although stop_recording handles some cleanup
             # Start the new recording

@@ -164,9 +164,10 @@ class ParticipantRecorderWrapper:
             try:
                 await asyncio.sleep(5)  # Check every 5 seconds
                 
+                # Double-check state after sleep (may have changed during sleep)
                 if self.state != RecordingState.RECORDING:
+                    logger.info(f"[{self.mint_id}] Health check detected state change to {self.state.value}, exiting")
                     break
-                
                 # Check if room is still connected
                 # ConnectionState enum values vary by version, so check string representation
                 connection_state_str = str(self.room.connection_state)
@@ -916,14 +917,8 @@ class ParticipantRecorderWrapper:
         """Stop recording and save to file."""
         try:
             logger.info(f"[{self.mint_id}] Stopping ParticipantRecorder recording")
-            
-            if self.state != RecordingState.RECORDING:
-                return {
-                    "success": False,
-                    "error": f"No active recording to stop (state: {self.state.value})"
-                }
-            
-            # Stop health check task
+            # CRITICAL: Stop health check task FIRST before any other logic
+            # This prevents false "stuck frame" warnings during encoding phase
             if self._health_check_task and not self._health_check_task.done():
                 self._health_check_task.cancel()
                 try:
@@ -931,6 +926,13 @@ class ParticipantRecorderWrapper:
                 except asyncio.CancelledError:
                     pass
                 logger.info(f"[{self.mint_id}] Health check task stopped")
+
+            if self.state != RecordingState.RECORDING:
+                return {
+                    "success": False,
+                    "error": f"No active recording to stop (state: {self.state.value})"
+                }
+            
             
             # State: RECORDING → STOPPING
             self.state = RecordingState.STOPPING
@@ -1204,7 +1206,16 @@ class WebRTCRecordingService:
                 )
             
             if mint_id in self.active_recordings:
-                logger.warning(f"⚠️  Recording already active for {mint_id}")
+                recorder = self.active_recordings[mint_id]
+                state = recorder.state.value
+                logger.warning(f"⚠️  Recording already active for {mint_id} (state: {state})")
+                
+                if state == "stopping":
+                    return {
+                        "success": False,
+                        "error": f"Recording is currently stopping (encoding) for {mint_id}. Please wait."
+                    }
+                
                 return {"success": False, "error": f"Recording already active for {mint_id}"}
             
             # Get stream info from StreamManager - if not found, start the stream automatically
@@ -1313,33 +1324,41 @@ class WebRTCRecordingService:
                 return {"success": False, "error": f"No active recording for {mint_id}"}
             
             recorder = self.active_recordings[mint_id]
-            result = await recorder.stop()
-            
-            # Update database - mark recording as completed
+
             try:
-                db = next(get_db())
-                try:
-                    session = db.query(LiveSession).filter(
-                        LiveSession.mint_id == mint_id,
-                        LiveSession.status == "active",
-                        LiveSession.record_session == True
-                    ).first()
-                    
-                    if session:
-                        session.record_session = False
-                        session.recording_path = result.get("output_path") or session.recording_path
-                        session.end_time = datetime.now(timezone.utc)
-                        session.updated_at = datetime.now(timezone.utc)
-                        db.commit()
-                        logger.info(f"✅ Recording session updated in database for {mint_id}")
-                finally:
-                    db.close()
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to update recording session in database: {e}")
-                # Don't fail if DB update fails
+                result = await recorder.stop()
             
-            # Remove from active recordings
-            del self.active_recordings[mint_id]
+                # Update database - mark recording as completed
+                try:
+                    db = next(get_db())
+                    try:
+                        session = db.query(LiveSession).filter(
+                            LiveSession.mint_id == mint_id,
+                            LiveSession.status == "active",
+                            LiveSession.record_session == True
+                        ).first()
+                    
+                        if session:
+                            session.record_session = False
+                            session.recording_path = result.get("output_path") or session.recording_path
+                            session.end_time = datetime.now(timezone.utc)
+                            session.updated_at = datetime.now(timezone.utc)
+                            db.commit()
+                            logger.info(f"✅ Recording session updated in database for {mint_id}")
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to update recording session in database: {e}")
+                    # Don't fail if DB update fails
+            
+                # Remove from active recordings
+
+            finally:
+                # CRITICAL: Always remove from active_recordings, even if stop() failed
+                # This prevents zombie recordings from remaining in memory
+                if mint_id in self.active_recordings:
+                    del self.active_recordings[mint_id]
+                    logger.info(f"[{mint_id}] Removed from active_recordings")
             
             # Disconnect the stream connection after recording stops
             # Note: ParticipantRecorder.stop_recording() now automatically unsubscribes from tracks,

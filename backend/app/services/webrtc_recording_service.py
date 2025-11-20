@@ -503,10 +503,45 @@ class ParticipantRecorderWrapper:
                 f"Audio subscribed: {audio_still_subscribed}"
             )
             
+            # Poll for video dimensions if not immediately available
+            if video_track and video_still_subscribed:
+                for i in range(5):
+                    try:
+                        if hasattr(video_track, 'dimensions'):
+                            dims = video_track.dimensions
+                            if dims and dims[0] > 0 and dims[1] > 0:
+                                logger.info(f"[{self.mint_id}] Video dimensions verified: {dims[0]}x{dims[1]}")
+                                break
+                    except Exception:
+                        pass
+                    
+                    if i < 4: # Don't sleep on last iteration
+                        logger.info(f"[{self.mint_id}] Waiting for video dimensions... ({i+1}/5)")
+                        await asyncio.sleep(1.0)
+
             # Validate video track properties to prevent PyAV division-by-zero crashes
             detected_fps: Optional[float] = None
             if video_track and has_video:
                 try:
+                    # Debug logging for video track
+                    logger.info(f"[{self.mint_id}] 🔍 Inspecting video track: {video_track}")
+                    if hasattr(video_track, 'sid'):
+                        logger.info(f"[{self.mint_id}] Video track SID: {video_track.sid}")
+                    
+                    # Try to log internal info if available
+                    if hasattr(video_track, '_info'):
+                        try:
+                            logger.info(f"[{self.mint_id}] Video track _info: {video_track._info}")
+                        except Exception as e:
+                            logger.warning(f"[{self.mint_id}] Could not access _info: {e}")
+
+                    # Try to get stats
+                    try:
+                        stats = await self.room.get_stats()
+                        logger.info(f"[{self.mint_id}] Room stats: {stats}")
+                    except Exception as e:
+                         logger.warning(f"[{self.mint_id}] Could not get room stats: {e}")
+
                     # Check if track has valid dimensions (prevent division by zero in encoder)
                     # LiveKit tracks may not expose dimensions directly, but we can check track state
                     if hasattr(video_track, 'dimensions'):
@@ -704,7 +739,7 @@ class ParticipantRecorderWrapper:
             
             logger.info(
                 f"[{self.mint_id}] Validated recording parameters: "
-                f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps}, codec={video_codec}"
+                f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps} (type: {type(video_fps)}), codec={video_codec}"
             )
             
             # Create ParticipantRecorder with configuration
@@ -718,6 +753,13 @@ class ParticipantRecorderWrapper:
                 if audio_bitrate <= 0:
                     raise ValueError(f"Invalid audio_bitrate: {audio_bitrate} (must be > 0)")
                 
+                # Debug logging for PyAV/FFmpeg environment
+                try:
+                    import av
+                    logger.info(f"[{self.mint_id}] PyAV version: {av.__version__}")
+                except ImportError:
+                    pass
+
                 logger.info(
                     f"[{self.mint_id}] Creating ParticipantRecorder with validated parameters: "
                     f"fps={video_fps}, video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, "

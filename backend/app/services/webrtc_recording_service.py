@@ -534,11 +534,13 @@ class ParticipantRecorderWrapper:
             video_track = None
             video_still_subscribed = False
             audio_still_subscribed = False
+            video_publication = None
             
             for publication in participant.track_publications.values():
                 if publication.kind == rtc.TrackKind.KIND_VIDEO and publication.track is not None:
                     video_still_subscribed = True
                     video_track = publication.track
+                    video_publication = publication
                 elif publication.kind == rtc.TrackKind.KIND_AUDIO and publication.track is not None:
                     audio_still_subscribed = True
             
@@ -549,6 +551,7 @@ class ParticipantRecorderWrapper:
             
             # Poll for video dimensions if not immediately available
             resolved_dimensions: Optional[tuple[int, int]] = None
+            record_video = has_video and video_still_subscribed
             if video_track and video_still_subscribed:
                 # First check if we can even read dimensions from this SDK version
                 has_dim_prop = hasattr(video_track, 'dimensions')
@@ -628,14 +631,23 @@ class ParticipantRecorderWrapper:
                     if not resolved_dimensions:
                         logger.error(
                             f"[{self.mint_id}] ❌ Timed out waiting for video dimensions after 15s. "
-                            f"Proceeding with safe-mode defaults (1.5Mbps, VP9)."
+                            f"Switching to audio-only recording to avoid encoder crash."
                         )
+                        record_video = False
+                        has_video = False
+                        video_track = None
+                        video_still_subscribed = False
+                        if video_publication and video_publication.subscribed:
+                            try:
+                                video_publication.set_subscribed(False)
+                            except Exception as e:
+                                logger.warning(f"[{self.mint_id}] Could not unsubscribe video track: {e}")
 
             # Validate video track properties to prevent PyAV division-by-zero crashes
             detected_fps: Optional[float] = None
             auto_bitrate = False  # Initialize default
             
-            if video_track and has_video:
+            if video_track and has_video and record_video:
                 safe_mode_enforced = False
                 try:
                     # Debug logging for video track

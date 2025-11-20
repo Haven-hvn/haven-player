@@ -526,6 +526,10 @@ const DePinDashboard: React.FC = () => {
           color: 'white',
           borderRadius: 3,
           boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+          flexShrink: 0,
+          height: 'auto',
+          minHeight: 'auto',
+          position: 'relative',
           '&::before': {
             display: 'none'
           }
@@ -537,7 +541,9 @@ const DePinDashboard: React.FC = () => {
           flexDirection: { xs: 'column', md: 'row' },
           alignItems: { xs: 'flex-start', md: 'center' },
           justifyContent: 'space-between',
-          gap: { xs: 2, md: 0 }
+          gap: { xs: 2, md: 0 },
+          width: '100%',
+          boxSizing: 'border-box'
         }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="overline" sx={{ opacity: 0.8, letterSpacing: { xs: 1, sm: 2 }, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>

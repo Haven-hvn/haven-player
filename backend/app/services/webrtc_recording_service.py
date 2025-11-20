@@ -335,52 +335,37 @@ class ParticipantRecorderWrapper:
             )
             return (has_video, has_audio)
         
-        # Wait for tracks to be published AND subscribed
-        logger.info(
-            f"[{self.mint_id}] Waiting for tracks to be published and subscribed (timeout: {timeout}s)..."
-        )
-        logger.info(
-            f"[{self.mint_id}] Current state - Video published: {any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())}, "
-            f"Audio published: {any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())}"
-        )
-        
-        # Ensure tracks are subscribed if they're published but not subscribed
-        # This is needed when auto_subscribe=False
-        for publication in participant.track_publications.values():
-            if publication.track is None and publication.subscribed:
-                # Track is published and marked for subscription but not yet subscribed
-                # Try to set subscribed to True to trigger subscription
-                try:
-                    publication.set_subscribed(True)
-                    logger.info(
-                        f"[{self.mint_id}] Manually triggered subscription for {publication.kind} track"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"[{self.mint_id}] Could not manually subscribe {publication.kind} track: {e}"
-                    )
-            elif not publication.subscribed:
-                # Track is published but not subscribed - subscribe to it
-                try:
-                    publication.set_subscribed(True)
-                    logger.info(
-                        f"[{self.mint_id}] Manually subscribed to {publication.kind} track"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"[{self.mint_id}] Could not subscribe to {publication.kind} track: {e}"
-                    )
-        
-        while time.time() - start_time < timeout:
-            has_video, has_audio = check_tracks_subscribed()
+            # Wait for tracks to be published AND subscribed
+            # Also wait for video dimensions to be available to prevent 0x0 crashes
+            logger.info(
+                f"[{self.mint_id}] Waiting for tracks to be published, subscribed, and have valid dimensions (timeout: {timeout}s)..."
+            )
             
-            if has_video and has_audio:
-                logger.info(
-                    f"[{self.mint_id}] ✅ Both tracks subscribed - Video: {has_video}, Audio: {has_audio}"
-                )
-                break
+            # Helper to check dimensions
+            def has_valid_dimensions(p):
+                for pub in p.track_publications.values():
+                    if pub.kind == rtc.TrackKind.KIND_VIDEO and pub.track:
+                        if hasattr(pub.track, 'dimensions'):
+                            w, h = pub.track.dimensions
+                            if w > 0 and h > 0:
+                                return True
+                return False # No video track or no dimensions
             
-            # If tracks are published but not subscribed, try subscribing again
+            while time.time() - start_time < timeout:
+                has_video, has_audio = check_tracks_subscribed()
+                
+                # If we have video, ensure we have dimensions
+                dimensions_ok = True
+                if has_video:
+                    dimensions_ok = has_valid_dimensions(participant)
+                
+                if has_video and has_audio and dimensions_ok:
+                    logger.info(
+                        f"[{self.mint_id}] ✅ Both tracks subscribed and ready - Video: {has_video} (Dims OK), Audio: {has_audio}"
+                    )
+                    break
+                
+                # If tracks are published but not subscribed, try subscribing again
             if not has_video or not has_audio:
                 for publication in participant.track_publications.values():
                     if publication.track is None:
@@ -708,7 +693,18 @@ class ParticipantRecorderWrapper:
                     # Try to log stats to debug missing dimensions
                     if hasattr(video_track, 'get_stats'):
                          try:
-                             logger.info(f"[{self.mint_id}] Video track stats: {video_track.get_stats()}")
+                             # Handle both async and sync get_stats
+                             stats = video_track.get_stats()
+                             if asyncio.iscoroutine(stats):
+                                 stats = await stats
+                             logger.info(f"[{self.mint_id}] Video track stats: {stats}")
+                             
+                             # Try to update detected_fps from these stats if we missed it before
+                             if detected_fps is None and stats and hasattr(stats, 'frames_per_second'):
+                                 fps = stats.frames_per_second
+                                 if fps and fps > 0 and math.isfinite(fps):
+                                     detected_fps = fps
+                                     logger.info(f"[{self.mint_id}] updated detected_fps from track stats: {detected_fps}")
                          except Exception as e:
                              logger.warning(f"Could not get stats for debug: {e}")
 
@@ -970,6 +966,11 @@ class ParticipantRecorderWrapper:
                 f"[{self.mint_id}] Calling recorder.stop_recording()... "
                 f"(recording duration: {recording_duration:.1f}s, timeout: {stop_timeout:.1f}s)"
             )
+            
+            # Force garbage collection before stopping to help clean up any stale resources
+            import gc
+            gc.collect()
+            
             try:
                 if self.output_path:
                     original_path = str(self.output_path)

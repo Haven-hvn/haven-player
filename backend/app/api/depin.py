@@ -20,7 +20,7 @@ async def depin_tick():
     Logic:
     1. Fetch the most popular live stream from Pump Fun.
     2. Check if we are currently recording it.
-    3. If not recording or if recording duration > 5 minutes:
+    3. If not recording or if recording duration > 30 seconds:
        - Stop current recording (if any).
        - Start recording the new top stream.
     
@@ -74,10 +74,10 @@ async def depin_tick():
                 should_stop_current = True
                 should_start_new = True
                 reason = f"Swapping to more popular stream (Current: {current_mint_id}, New: {top_mint_id})"
-            elif duration > 300: # 5 minutes
+            elif duration > 30: # 30 seconds
                 should_stop_current = True
                 should_start_new = True
-                reason = "Recording duration exceeded 5 minutes (chunking)"
+                reason = "Recording duration exceeded 30 seconds (chunking)"
             else:
                 return {
                     "success": True, 

@@ -77,6 +77,7 @@ const DePinDashboard: React.FC = () => {
   const [dailyStreak, setDailyStreak] = useState(4);
   const [bonusAvailable, setBonusAvailable] = useState(180);
   const [archivedMinutesAwarded, setArchivedMinutesAwarded] = useState(0);
+  const [archivedChunksAwarded, setArchivedChunksAwarded] = useState(0);
   const [missionStates, setMissionStates] = useState({
     archiveStream: true,
     uploadChunk: false,
@@ -152,6 +153,7 @@ const DePinDashboard: React.FC = () => {
   useEffect(() => {
     if (!currentRecording) {
       setArchivedMinutesAwarded(0);
+      setArchivedChunksAwarded(0);
       return;
     }
 
@@ -160,13 +162,17 @@ const DePinDashboard: React.FC = () => {
       const delta = minutesRecorded - archivedMinutesAwarded;
       setArchivedMinutesAwarded(minutesRecorded);
       setPoints((prev) => prev + delta * 25);
-
-      if (minutesRecorded % 5 === 0) {
-        setArchivedStreams((prev) => prev + 1);
-        setMissionStates((prev) => ({ ...prev, archiveStream: true, uploadChunk: true }));
-      }
     }
-  }, [currentRecording?.duration, archivedMinutesAwarded]);
+
+    // Award archived stream every 30 seconds
+    const chunksRecorded = Math.floor(currentRecording.duration / 30);
+    if (chunksRecorded > archivedChunksAwarded) {
+      const delta = chunksRecorded - archivedChunksAwarded;
+      setArchivedChunksAwarded(chunksRecorded);
+      setArchivedStreams((prev) => prev + delta);
+      setMissionStates((prev) => ({ ...prev, archiveStream: true, uploadChunk: true }));
+    }
+  }, [currentRecording?.duration, archivedMinutesAwarded, archivedChunksAwarded]);
 
   // Load Filecoin config and restore state on mount
   useEffect(() => {
@@ -868,7 +874,7 @@ const DePinDashboard: React.FC = () => {
               </Typography>
               {[
                 {
-                  label: 'Archive 1 livestream (5 min chunk)',
+                  label: 'Archive 1 livestream (30 sec chunk)',
                   reward: '+150 pts',
                   complete: missionStates.archiveStream,
                 },

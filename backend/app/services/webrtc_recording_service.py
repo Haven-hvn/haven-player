@@ -77,6 +77,45 @@ except ImportError:
         """Raised when WebM encoder (PyAV) not available."""
         pass
 
+if PARTICIPANT_RECORDER_AVAILABLE:
+    logger.info("🔧 Initializing SafeParticipantRecorder monkey-patch...")
+    
+    # Save original class just in case
+    _OriginalParticipantRecorder = ParticipantRecorder
+    
+    class SafeParticipantRecorder(_OriginalParticipantRecorder):
+        """
+        Subclass of ParticipantRecorder with memory-safe queue limits and bitrate caps.
+        Reduces buffer size to prevent OOM on high-resolution streams.
+        """
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            
+            # CRITICAL FIX: Override default queues which are too large (30s buffer)
+            # Default was ~900 frames for 30fps. At 1440p (5.5MB/frame), that's ~5GB RAM!
+            # We limit to 100 frames (~3.3s buffer), capping memory at ~550MB for 1440p.
+            # This forces backpressure on the capture loops if encoding is slow.
+            self._video_queue = asyncio.Queue(maxsize=100)
+            self._audio_queue = asyncio.Queue(maxsize=1000)
+            logger.info(f"SafeParticipantRecorder initialized: Queues restricted to v=100, a=1000 to prevent OOM")
+
+        def _calculate_bitrate(self, width: int, height: int) -> int:
+            # Call original calculation
+            bitrate = super()._calculate_bitrate(width, height)
+            
+            # Cap bitrate to prevent insane values (e.g. 60Mbps for 1440p)
+            # 15 Mbps is plenty for high quality distribution
+            MAX_BITRATE = 15_000_000 
+            if bitrate > MAX_BITRATE:
+                logger.info(f"Capping calculated bitrate {bitrate/1000000:.2f}Mbps to {MAX_BITRATE/1000000:.2f}Mbps")
+                return MAX_BITRATE
+            return bitrate
+
+    # Monkey-patch the class globally so all usages get the safe version
+    ParticipantRecorder = SafeParticipantRecorder
+    logger.info("✅ Applied SafeParticipantRecorder monkey-patch globally")
+
+
 class RecordingState(Enum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting" 

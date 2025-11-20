@@ -633,7 +633,10 @@ class ParticipantRecorderWrapper:
 
             # Validate video track properties to prevent PyAV division-by-zero crashes
             detected_fps: Optional[float] = None
+            auto_bitrate = False  # Initialize default
+            
             if video_track and has_video:
+                safe_mode_enforced = False
                 try:
                     # Debug logging for video track
                     logger.info(f"[{self.mint_id}] 🔍 Inspecting video track: {video_track}")

@@ -957,8 +957,8 @@ const DePinDashboard: React.FC = () => {
       </Box>
 
       {/* Activity Log */}
-      <Paper sx={{ flexGrow: 1, p: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+      <Paper sx={{ flexGrow: 1, p: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 200 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexShrink: 0 }}>
           <ScheduleIcon color="action" fontSize="small" />
           <Typography variant="subtitle2">
             Node Activity Log
@@ -969,7 +969,8 @@ const DePinDashboard: React.FC = () => {
             </Typography>
           )}
         </Box>
-        <List sx={{ flexGrow: 1, overflow: 'auto', bgcolor: '#f8f9fa', borderRadius: 2, p: 1 }}>
+        <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <List sx={{ flex: 1, overflow: 'auto', bgcolor: '#f8f9fa', borderRadius: 2, p: 1, minHeight: 0 }}>
           {logs.length === 0 && (
             <Box sx={{ p: 4, textAlign: 'center', opacity: 0.6 }}>
               <Typography variant="body2">No activity recorded this session.</Typography>
@@ -991,6 +992,7 @@ const DePinDashboard: React.FC = () => {
             </ListItem>
           ))}
         </List>
+        </Box>
       </Paper>
     </Box>
   );

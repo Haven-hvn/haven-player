@@ -429,7 +429,7 @@ export const useBulkRecording = (): UseBulkRecordingReturn => {
     }
 
     try {
-      const STOP_TIMEOUT_MS = 300000; // 5 minutes
+      const STOP_TIMEOUT_MS = 120000; // 2 minutes (sufficient for 30-second chunk encoding)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), STOP_TIMEOUT_MS);
 

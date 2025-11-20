@@ -1129,9 +1129,10 @@ class ParticipantRecorderWrapper:
             if self.start_time:
                 recording_duration = (datetime.now(timezone.utc) - self.start_time).total_seconds()
             
-            # Minimum 60s, maximum 300s (5 minutes) timeout
-            # Formula: max(60, min(300, duration * 2 + 30))
-            stop_timeout = max(60.0, min(300.0, recording_duration * 2 + 30.0))
+            # Minimum 60s, maximum 120s (2 minutes) timeout for 30-second chunks
+            # Formula: max(60, min(120, duration * 2 + 30))
+            # Since chunks are 30 seconds max, encoding should complete well within 2 minutes
+            stop_timeout = max(60.0, min(120.0, recording_duration * 2 + 30.0))
             
             logger.info(
                 f"[{self.mint_id}] Calling recorder.stop_recording()... "

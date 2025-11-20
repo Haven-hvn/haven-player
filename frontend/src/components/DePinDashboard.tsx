@@ -308,7 +308,7 @@ const DePinDashboard: React.FC = () => {
 
   // Tick Loop (Backend Agent)
   useEffect(() => {
-    let intervalId: NodeJS.Timeout;
+    let intervalId: NodeJS.Timeout | undefined;
 
     if (isActive) {
       const tick = async () => {
@@ -381,7 +381,11 @@ const DePinDashboard: React.FC = () => {
       intervalId = setInterval(tick, 60000); // Every 1 minute
     }
 
-    return () => clearInterval(intervalId);
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
   }, [isActive]);
 
   // Update current recording duration periodically

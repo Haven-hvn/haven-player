@@ -195,8 +195,8 @@ describe('useLiveKitRecording', () => {
     // Simulate time passing
     act(() => {
       // Manually trigger duration update (in real implementation this would be automatic)
-      result.current.status.duration = 150; // 2.5 minutes
-      result.current.status.progress = Math.min(100, (150 / 300) * 100); // Should be 50%
+      result.current.status.duration = 15; // 15 seconds
+      result.current.status.progress = Math.min(100, (15 / 30) * 100); // Should be 50%
     });
 
     expect(result.current.status.progress).toBe(50);

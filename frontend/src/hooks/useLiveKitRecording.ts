@@ -40,9 +40,9 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
   const startTimeRef = useRef<number | null>(null);
   const statusCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Calculate progress based on duration (assuming 5 minutes max for 100%)
+  // Calculate progress based on duration (assuming 30 seconds max for 100%)
   const calculateProgress = useCallback((duration: number): number => {
-    return Math.min(100, (duration / 300) * 100); // 5 minutes = 300 seconds
+    return Math.min(100, (duration / 30) * 100); // 30 seconds = 100%
   }, []);
 
   // Update duration and progress
@@ -345,9 +345,9 @@ export const useLiveKitRecording = (mintId: string): UseLiveKitRecordingReturn =
       
       // Call backend recording API to stop with timeout
       // Backend timeout is dynamic (60-300s based on recording duration)
-      // Use 300 seconds (5 minutes) to match backend maximum
+      // Use 120 seconds (2 minutes) as safety limit for 30-second chunks
       console.log(`📡 Sending stop request to backend for ${mintId}...`);
-      const STOP_TIMEOUT_MS = 300000; // 5 minutes to match backend maximum
+      const STOP_TIMEOUT_MS = 120000; // 2 minutes (sufficient for 30-second chunk encoding)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), STOP_TIMEOUT_MS);
       

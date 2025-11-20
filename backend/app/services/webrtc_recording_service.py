@@ -874,6 +874,13 @@ class ParticipantRecorderWrapper:
                     video_bitrate = 0 # Ignored when auto_bitrate is True
                     video_codec = "vp9"
                     video_quality = "best"
+                    
+                    # CRITICAL: Also cap FPS to safe default if not detected or extremely high
+                    # High FPS + Auto Bitrate + Unknown Dimensions can still crash PyAV
+                    if not detected_fps or detected_fps <= 0 or detected_fps > 30:
+                        logger.info(f"[{self.mint_id}] Safe mode: Forcing FPS to 30 (was {detected_fps})")
+                        video_fps = 30
+                    
                 else:
                     auto_bitrate = False
                     
@@ -903,6 +910,11 @@ class ParticipantRecorderWrapper:
                 if audio_bitrate <= 0:
                     raise ValueError(f"Invalid audio_bitrate: {audio_bitrate} (must be > 0)")
                 
+                # CRITICAL: Ensure FPS is an integer to prevent floating point issues in PyAV timebase
+                if isinstance(video_fps, float):
+                    video_fps = int(round(video_fps))
+                    logger.info(f"[{self.mint_id}] Rounded FPS to integer: {video_fps}")
+
                 # Debug logging for PyAV/FFmpeg environment
                 try:
                     import av

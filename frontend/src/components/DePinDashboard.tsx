@@ -511,7 +511,7 @@ const DePinDashboard: React.FC = () => {
   }, [isActive, filecoinConfig, videos, refreshVideos, uploadVideo]);
 
   return (
-    <Box sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column', gap: 3 }}>
+    <Box sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column', gap: 3, overflowY: 'auto', minHeight: 0 }}>
       
       {/* Rewards Dashboard Header */}
       <Paper 
@@ -957,7 +957,7 @@ const DePinDashboard: React.FC = () => {
       </Box>
 
       {/* Activity Log */}
-      <Paper sx={{ flexGrow: 1, p: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <Paper sx={{ flexGrow: 1, p: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
           <ScheduleIcon color="action" fontSize="small" />
           <Typography variant="subtitle2">

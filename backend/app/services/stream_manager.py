@@ -140,32 +140,43 @@ class StreamManager:
                         # This handles cases where we join an existing room but don't know who to record yet
                         if not stream_info or mint_id not in self.active_streams:
                             logger.info(f"[{mint_id}] Scanning existing room for valid streamer...")
+                            found_candidate = None
+                            
                             for p in existing_room.remote_participants.values():
                                 if len(p.track_publications) > 0:
-                                    logger.info(f"[{mint_id}] Found new streamer in existing room: {p.sid} ({p.identity})")
-                                    
-                                    # Update stream info with new participant
-                                    # We need to fetch fresh PumpFun info to be safe, or reuse existing if available
-                                    base_stream_data = stream_info.stream_data if stream_info else (await self.pumpfun_service.get_stream_info(mint_id) or {})
-                                    
-                                    new_stream_info = StreamInfo(
-                                        mint_id=mint_id,
-                                        room_name=existing_room.name,
-                                        participant_sid=p.sid,
-                                        stream_url=self.config.livekit_url,
-                                        token=token, # Reuse the fresh token we just got
-                                        stream_data=base_stream_data
-                                    )
-                                    self.active_streams[mint_id] = new_stream_info
-                                    self.active_websockets[mint_id] = self.active_websockets.get(mint_id, set())
-                                    
-                                    return {
-                                        "success": True,
-                                        "mint_id": mint_id,
-                                        "room_name": existing_room.name,
-                                        "participant_sid": p.sid,
-                                        "stream_info": self.pumpfun_service.format_stream_for_ui(base_stream_data)
-                                    }
+                                    is_viewer = "viewer" in (p.identity or "").lower()
+                                    if not is_viewer:
+                                        found_candidate = p
+                                        break
+                                    if found_candidate is None:
+                                        found_candidate = p
+                            
+                            if found_candidate:
+                                p = found_candidate
+                                logger.info(f"[{mint_id}] Found new streamer in existing room: {p.sid} ({p.identity})")
+                                
+                                # Update stream info with new participant
+                                # We need to fetch fresh PumpFun info to be safe, or reuse existing if available
+                                base_stream_data = stream_info.stream_data if stream_info else (await self.pumpfun_service.get_stream_info(mint_id) or {})
+                                
+                                new_stream_info = StreamInfo(
+                                    mint_id=mint_id,
+                                    room_name=existing_room.name,
+                                    participant_sid=p.sid,
+                                    stream_url=self.config.livekit_url,
+                                    token=token, # Reuse the fresh token we just got
+                                    stream_data=base_stream_data
+                                )
+                                self.active_streams[mint_id] = new_stream_info
+                                self.active_websockets[mint_id] = self.active_websockets.get(mint_id, set())
+                                
+                                return {
+                                    "success": True,
+                                    "mint_id": mint_id,
+                                    "room_name": existing_room.name,
+                                    "participant_sid": p.sid,
+                                    "stream_info": self.pumpfun_service.format_stream_for_ui(base_stream_data)
+                                }
                             logger.warning(f"[{mint_id}] No streamer found in existing room despite scan.")
 
                 except Exception as e:
@@ -221,21 +232,31 @@ class StreamManager:
             def on_participant_connected(participant: rtc.RemoteParticipant) -> None:
                 nonlocal found_participant, participant_sid
                 # Find participant with tracks (the actual streamer, not viewers)
+                # CRITICAL: Ignore participants with 'viewer' in identity unless they are the only option
                 if len(participant.track_publications) > 0:
-                    found_participant = participant
-                    participant_sid = participant.sid
-                    if not participant_event.is_set():
-                        participant_event.set()
+                    is_viewer = "viewer" in (participant.identity or "").lower()
+                    if not is_viewer or found_participant is None:
+                        found_participant = participant
+                        participant_sid = participant.sid
+                        if not participant_event.is_set():
+                            participant_event.set()
             
             room.on("participant_connected", on_participant_connected)
             
             # Check if participant already exists
             for participant in room.remote_participants.values():
                 if len(participant.track_publications) > 0:
-                    found_participant = participant
-                    participant_sid = participant.sid
-                    participant_event.set()
-                    break
+                    is_viewer = "viewer" in (participant.identity or "").lower()
+                    # Prefer non-viewer participants
+                    if not is_viewer:
+                        found_participant = participant
+                        participant_sid = participant.sid
+                        participant_event.set()
+                        break
+                    # But track potential viewers just in case no one else is found
+                    if found_participant is None:
+                        found_participant = participant
+                        participant_sid = participant.sid
             
             # Wait for participant if not already found (matching integration test pattern)
             if found_participant is None:
@@ -247,9 +268,15 @@ class StreamManager:
                     await asyncio.sleep(2.0)
                     for participant in room.remote_participants.values():
                         if len(participant.track_publications) > 0:
-                            found_participant = participant
-                            participant_sid = participant.sid
-                            break
+                            is_viewer = "viewer" in (participant.identity or "").lower()
+                            # Prefer non-viewer participants
+                            if not is_viewer:
+                                found_participant = participant
+                                participant_sid = participant.sid
+                                break
+                            if found_participant is None:
+                                found_participant = participant
+                                participant_sid = participant.sid
             
             if not participant_sid or not found_participant:
                 return {"success": False, "error": "No participants with published tracks found in room"}

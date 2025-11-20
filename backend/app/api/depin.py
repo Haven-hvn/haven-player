@@ -104,11 +104,6 @@ async def depin_tick():
             result_data["actions"].append(f"Stopped {current_mint_id}")
             if not stop_result.get("success"):
                 logger.error(f"Failed to stop recording {current_mint_id}: {stop_result.get('error')}")
-            
-            # Wait briefly to allow resources to clean up (prevent avformat crashes on immediate restart)
-            import asyncio
-            logger.info(f"Waiting 3s for cleanup before starting new recording...")
-            await asyncio.sleep(3.0)
         
         if should_start_new:
             logger.info(f"DePin Action: Starting {top_mint_id} - {reason}")

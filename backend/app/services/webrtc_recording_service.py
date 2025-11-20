@@ -169,21 +169,10 @@ class ParticipantRecorderWrapper:
                 
                 # Check if room is still connected
                 # ConnectionState enum values vary by version, so check string representation
-                # 0=disconnected, 1=connecting, 2=connected, 3=reconnecting
-                connection_state = self.room.connection_state
-                connection_state_str = str(connection_state).lower()
-                
-                # Check for explicit disconnected states or "0" (disconnected)
-                is_disconnected = (
-                    "disconnected" in connection_state_str or 
-                    "failed" in connection_state_str or
-                    connection_state_str == "0" or
-                    (isinstance(connection_state, int) and connection_state == 0)
-                )
-                
-                if is_disconnected:
+                connection_state_str = str(self.room.connection_state)
+                if "disconnected" in connection_state_str.lower() or "failed" in connection_state_str.lower():
                     logger.error(
-                        f"[{self.mint_id}] ❌ Room connection lost! State: {connection_state} ({connection_state_str})"
+                        f"[{self.mint_id}] ❌ Room connection lost! State: {connection_state_str}"
                     )
                     self.state = RecordingState.STOPPED
                     break
@@ -335,64 +324,85 @@ class ParticipantRecorderWrapper:
             )
             return (has_video, has_audio)
         
-            # Wait for tracks to be published AND subscribed
-            # Also wait for data flow (packets > 0)
-            logger.info(
-                f"[{self.mint_id}] Waiting for tracks to be published and subscribed (timeout: {timeout}s)..."
-            )
+        # Wait for tracks to be published AND subscribed
+        logger.info(
+            f"[{self.mint_id}] Waiting for tracks to be published and subscribed (timeout: {timeout}s)..."
+        )
+        logger.info(
+            f"[{self.mint_id}] Current state - Video published: {any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())}, "
+            f"Audio published: {any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())}"
+        )
+        
+        # Ensure tracks are subscribed if they're published but not subscribed
+        # This is needed when auto_subscribe=False
+        for publication in participant.track_publications.values():
+            if publication.track is None and publication.subscribed:
+                # Track is published and marked for subscription but not yet subscribed
+                # Try to set subscribed to True to trigger subscription
+                try:
+                    publication.set_subscribed(True)
+                    logger.info(
+                        f"[{self.mint_id}] Manually triggered subscription for {publication.kind} track"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.mint_id}] Could not manually subscribe {publication.kind} track: {e}"
+                    )
+            elif not publication.subscribed:
+                # Track is published but not subscribed - subscribe to it
+                try:
+                    publication.set_subscribed(True)
+                    logger.info(
+                        f"[{self.mint_id}] Manually subscribed to {publication.kind} track"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.mint_id}] Could not subscribe to {publication.kind} track: {e}"
+                    )
+        
+        while time.time() - start_time < timeout:
+            has_video, has_audio = check_tracks_subscribed()
             
-            # Helper to check subscription
-            def check_tracks_ready():
-                has_video, has_audio = check_tracks_subscribed()
-                return has_video, has_audio
-
-            while time.time() - start_time < timeout:
-                has_video, has_audio = check_tracks_ready()
-                
-                # If we have video and audio, we are subscribed.
-                if has_video and has_audio:
-                    # Basic subscription satisfied
-                    # Wait for stats to confirm packets are flowing?
-                    # For now just break, as we rely on ParticipantRecorder
-                    logger.info(
-                        f"[{self.mint_id}] ✅ Both tracks subscribed - Video: {has_video}, Audio: {has_audio}"
-                    )
-                    break
-                
-                # If tracks are published but not subscribed, try subscribing again
-                if not has_video or not has_audio:
-                    for publication in participant.track_publications.values():
-                        if publication.track is None:
-                            if publication.kind == rtc.TrackKind.KIND_VIDEO and not has_video:
-                                try:
-                                    publication.set_subscribed(True)
-                                except Exception:
-                                    pass
-                            elif publication.kind == rtc.TrackKind.KIND_AUDIO and not has_audio:
-                                try:
-                                    publication.set_subscribed(True)
-                                except Exception:
-                                    pass
-                
-                # Log progress every 2 seconds
-                elapsed = time.time() - start_time
-                if int(elapsed) % 2 == 0 and elapsed > 0:
-                    video_pub = any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())
-                    audio_pub = any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())
-                    video_sub = any(
-                        p.kind == rtc.TrackKind.KIND_VIDEO and p.track is not None 
-                        for p in participant.track_publications.values()
-                    )
-                    audio_sub = any(
-                        p.kind == rtc.TrackKind.KIND_AUDIO and p.track is not None 
-                        for p in participant.track_publications.values()
-                    )
-                    logger.info(
-                        f"[{self.mint_id}] Waiting... Video: pub={video_pub}, sub={video_sub}; "
-                        f"Audio: pub={audio_pub}, sub={audio_sub}"
-                    )
-                
-                await asyncio.sleep(0.2)  # Check more frequently
+            if has_video and has_audio:
+                logger.info(
+                    f"[{self.mint_id}] ✅ Both tracks subscribed - Video: {has_video}, Audio: {has_audio}"
+                )
+                break
+            
+            # If tracks are published but not subscribed, try subscribing again
+            if not has_video or not has_audio:
+                for publication in participant.track_publications.values():
+                    if publication.track is None:
+                        if publication.kind == rtc.TrackKind.KIND_VIDEO and not has_video:
+                            try:
+                                publication.set_subscribed(True)
+                            except Exception:
+                                pass
+                        elif publication.kind == rtc.TrackKind.KIND_AUDIO and not has_audio:
+                            try:
+                                publication.set_subscribed(True)
+                            except Exception:
+                                pass
+            
+            # Log progress every 2 seconds
+            elapsed = time.time() - start_time
+            if int(elapsed) % 2 == 0 and elapsed > 0:
+                video_pub = any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())
+                audio_pub = any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())
+                video_sub = any(
+                    p.kind == rtc.TrackKind.KIND_VIDEO and p.track is not None 
+                    for p in participant.track_publications.values()
+                )
+                audio_sub = any(
+                    p.kind == rtc.TrackKind.KIND_AUDIO and p.track is not None 
+                    for p in participant.track_publications.values()
+                )
+                logger.info(
+                    f"[{self.mint_id}] Waiting... Video: pub={video_pub}, sub={video_sub}; "
+                    f"Audio: pub={audio_pub}, sub={audio_sub}"
+                )
+            
+            await asyncio.sleep(0.2)  # Check more frequently
         
         # Final check
         has_video, has_audio = check_tracks_subscribed()
@@ -563,25 +573,27 @@ class ParticipantRecorderWrapper:
             
             self.participant_identity = participant_identity
             
-            # Map quality presets to ParticipantRecorder options
+            # Map quality presets to ParticipantRecorder options - Maximum quality
             video_codec = self.config.get("video_codec", "vp9")
-            # Ensure VP9
-            if video_codec not in ["vp9", "vp8"]:
+            # Always use VP9 for maximum quality (better compression than VP8)
+            if video_codec in ["vp9", "libvpx-vp9"]:
                 video_codec = "vp9"
+            else:
+                video_codec = "vp9"  # Default to VP9 for maximum quality
             
-            video_quality_str = self.config.get("video_quality", "medium")
-            # Map to ParticipantRecorder quality levels - avoid "best" to prevent crashes/slow encoding
+            video_quality_str = self.config.get("video_quality", "best")
+            # Map to ParticipantRecorder quality levels - favor highest quality
             quality_map = {
-                "low": "low",    
-                "medium": "medium",   
-                "high": "medium",     # Map high to medium to be safe
-                "best": "medium"      # Map best to medium to avoid 'deadline=best' issues
+                "low": "high",      # Even low maps to high quality
+                "medium": "high",   # Medium maps to high quality
+                "high": "best",     # High maps to best quality
+                "best": "best"      # Best is maximum
             }
-            video_quality = quality_map.get(video_quality_str, "medium")
+            video_quality = quality_map.get(video_quality_str, "best")
             
-            # Parse bitrates - defaults
-            video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "2500000"))
-            audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "128000"))
+            # Parse bitrates - use high defaults for maximum quality
+            video_bitrate = self._parse_bitrate(self.config.get("video_bitrate", "8M"))
+            audio_bitrate = self._parse_bitrate(self.config.get("audio_bitrate", "256k"))
             
             # Use detected FPS if available, otherwise use config FPS
             # This prevents encoder crashes from frame rate mismatches
@@ -681,31 +693,12 @@ class ParticipantRecorderWrapper:
                     # Assume potentially problematic stream and cap bitrate for safety
                     logger.warning(
                         f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
-                        f"Switching to safe mode (VP9, 2.5Mbps) to prevent buffer overflows."
+                        f"Switching to safe mode (VP9, 1.5Mbps) to prevent buffer overflows."
                     )
-                    
-                    # Try to log stats to debug missing dimensions
-                    if hasattr(video_track, 'get_stats'):
-                         try:
-                             # Handle both async and sync get_stats
-                             stats = video_track.get_stats()
-                             if asyncio.iscoroutine(stats):
-                                 stats = await stats
-                             logger.info(f"[{self.mint_id}] Video track stats: {stats}")
-                             
-                             # Try to update detected_fps from these stats if we missed it before
-                             if detected_fps is None and stats and hasattr(stats, 'frames_per_second'):
-                                 fps = stats.frames_per_second
-                                 if fps and fps > 0 and math.isfinite(fps):
-                                     detected_fps = fps
-                                     logger.info(f"[{self.mint_id}] updated detected_fps from track stats: {detected_fps}")
-                         except Exception as e:
-                             logger.warning(f"Could not get stats for debug: {e}")
-
-                    # Force safe settings - increase bitrate slightly for 1080p compatibility
-                    video_bitrate = 2500000  # 2.5 Mbps (better for 1080p)
-                    video_codec = "vp9"      # VP9
-                    video_quality = "medium" # Safe quality
+                    # Force safe settings
+                    video_bitrate = 1500000
+                    video_codec = "vp9"
+                    video_quality = "best"
                     logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
             
             logger.info(
@@ -960,11 +953,6 @@ class ParticipantRecorderWrapper:
                 f"[{self.mint_id}] Calling recorder.stop_recording()... "
                 f"(recording duration: {recording_duration:.1f}s, timeout: {stop_timeout:.1f}s)"
             )
-            
-            # Force garbage collection before stopping to help clean up any stale resources
-            import gc
-            gc.collect()
-            
             try:
                 if self.output_path:
                     original_path = str(self.output_path)
@@ -1170,15 +1158,15 @@ class WebRTCRecordingService:
         # Active recordings - use ParticipantRecorderWrapper
         self.active_recordings: Dict[str, ParticipantRecorderWrapper] = {}
 
-        # Default recording configuration for ParticipantRecorder - Balanced quality
+        # Default recording configuration for ParticipantRecorder - Maximum quality
         self.default_config = {
-            "video_codec": "vp9",  # VP9 is standard for WebM
+            "video_codec": "vp9",  # VP9 for best quality (better compression than VP8)
             "audio_codec": "opus",  # Always Opus for WebM
-            "video_bitrate": "2500000",  # 2.5 Mbps (good for 720p)
-            "audio_bitrate": "128000",  # 128 kbps (standard opus)
+            "video_bitrate": "8M",  # High bitrate for maximum quality
+            "audio_bitrate": "256k",  # High audio bitrate for maximum quality
             "format": "webm",  # ParticipantRecorder only supports WebM
             "fps": 30,
-            "video_quality": "medium",  # Safe default
+            "video_quality": "best",  # Maximum quality setting for ParticipantRecorder
             "auto_bitrate": True,  # Auto-adjust bitrate based on resolution
         }
 
@@ -1325,14 +1313,7 @@ class WebRTCRecordingService:
                 return {"success": False, "error": f"No active recording for {mint_id}"}
             
             recorder = self.active_recordings[mint_id]
-            
-            try:
-                result = await recorder.stop()
-            finally:
-                # Ensure we remove from active_recordings even if stop() fails
-                # This prevents "zombie" recordings that block new ones from starting
-                if mint_id in self.active_recordings:
-                    del self.active_recordings[mint_id]
+            result = await recorder.stop()
             
             # Update database - mark recording as completed
             try:
@@ -1357,8 +1338,8 @@ class WebRTCRecordingService:
                 logger.warning(f"⚠️ Failed to update recording session in database: {e}")
                 # Don't fail if DB update fails
             
-            # Remove from active recordings - handled in finally block above
-            # del self.active_recordings[mint_id]
+            # Remove from active recordings
+            del self.active_recordings[mint_id]
             
             # Disconnect the stream connection after recording stops
             # Note: ParticipantRecorder.stop_recording() now automatically unsubscribes from tracks,

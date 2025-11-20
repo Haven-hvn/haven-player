@@ -250,10 +250,20 @@ class StreamManager:
         """
         try:
             # Check if there's an active recording (unless forcing)
-            # Note: We can't easily check active_recordings here because WebRTCRecordingService isn't a singleton
-            # and instantiating a new one gives us an empty list. 
-            # We rely on WebRTCRecordingService calling stop_stream() only when it's safe.
-            # If called directly, we assume the caller knows what they are doing.
+            if not force:
+                try:
+                    from app.services.webrtc_recording_service import WebRTCRecordingService
+                    recording_service = WebRTCRecordingService()
+                    # Check if recording is active for this mint_id
+                    if hasattr(recording_service, 'active_recordings') and mint_id in recording_service.active_recordings:
+                        logger.warning(f"Cannot disconnect stream for {mint_id}: active recording in progress")
+                        return {
+                            "success": False, 
+                            "error": f"Cannot disconnect: active recording in progress for {mint_id}. Stop recording first."
+                        }
+                except Exception as e:
+                    logger.warning(f"Could not check for active recordings: {e}")
+                    # Continue anyway if we can't check
             
             if mint_id in self.active_streams:
                 del self.active_streams[mint_id]

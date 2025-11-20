@@ -336,32 +336,21 @@ class ParticipantRecorderWrapper:
             return (has_video, has_audio)
         
             # Wait for tracks to be published AND subscribed
-            # Also wait for video dimensions to be available to prevent 0x0 crashes
             logger.info(
-                f"[{self.mint_id}] Waiting for tracks to be published, subscribed, and have valid dimensions (timeout: {timeout}s)..."
+                f"[{self.mint_id}] Waiting for tracks to be published and subscribed (timeout: {timeout}s)..."
             )
             
-            # Helper to check dimensions
-            def has_valid_dimensions(p):
-                for pub in p.track_publications.values():
-                    if pub.kind == rtc.TrackKind.KIND_VIDEO and pub.track:
-                        if hasattr(pub.track, 'dimensions'):
-                            w, h = pub.track.dimensions
-                            if w > 0 and h > 0:
-                                return True
-                return False # No video track or no dimensions
-            
-            while time.time() - start_time < timeout:
+            # Helper to check subscription
+            def check_tracks_ready():
                 has_video, has_audio = check_tracks_subscribed()
+                return has_video, has_audio
+
+            while time.time() - start_time < timeout:
+                has_video, has_audio = check_tracks_ready()
                 
-                # If we have video, ensure we have dimensions
-                dimensions_ok = True
-                if has_video:
-                    dimensions_ok = has_valid_dimensions(participant)
-                
-                if has_video and has_audio and dimensions_ok:
+                if has_video and has_audio:
                     logger.info(
-                        f"[{self.mint_id}] ✅ Both tracks subscribed and ready - Video: {has_video} (Dims OK), Audio: {has_audio}"
+                        f"[{self.mint_id}] ✅ Both tracks subscribed - Video: {has_video}, Audio: {has_audio}"
                     )
                     break
                 
@@ -687,7 +676,7 @@ class ParticipantRecorderWrapper:
                     # Assume potentially problematic stream and cap bitrate for safety
                     logger.warning(
                         f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
-                        f"Switching to safe mode (VP9, 1.5Mbps) to prevent buffer overflows."
+                        f"Switching to safe mode (VP9, 2.5Mbps) to prevent buffer overflows."
                     )
                     
                     # Try to log stats to debug missing dimensions
@@ -708,8 +697,8 @@ class ParticipantRecorderWrapper:
                          except Exception as e:
                              logger.warning(f"Could not get stats for debug: {e}")
 
-                    # Force safe settings
-                    video_bitrate = 1500000  # 1.5 Mbps
+                    # Force safe settings - increase bitrate slightly for 1080p compatibility
+                    video_bitrate = 2500000  # 2.5 Mbps (better for 1080p)
                     video_codec = "vp9"      # VP9
                     video_quality = "medium" # Safe quality
                     logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")

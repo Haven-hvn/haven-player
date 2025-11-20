@@ -504,20 +504,57 @@ class ParticipantRecorderWrapper:
             )
             
             # Poll for video dimensions if not immediately available
+            # CRITICAL: We cannot start recording without valid dimensions.
+            # Passing 0x0 dimensions to PyAV/FFmpeg often results in divide-by-zero crashes (0xc0000094).
             if video_track and video_still_subscribed:
-                for i in range(5):
+                logger.info(f"[{self.mint_id}] Polling for video dimensions (max 15s)...")
+                
+                # Try for up to 15 seconds (30 attempts * 0.5s)
+                for i in range(30):
+                    # Method 1: Direct track dimensions
+                    if hasattr(video_track, 'dimensions'):
+                        dims = video_track.dimensions
+                        if dims and dims[0] > 0 and dims[1] > 0:
+                            logger.info(f"[{self.mint_id}] ✅ Video dimensions verified: {dims[0]}x{dims[1]}")
+                            break
+                    
+                    # Method 2: Source dimensions (sometimes available before track dimensions)
+                    # Only check source if direct dimensions failed
                     try:
-                        if hasattr(video_track, 'dimensions'):
-                            dims = video_track.dimensions
-                            if dims and dims[0] > 0 and dims[1] > 0:
-                                logger.info(f"[{self.mint_id}] Video dimensions verified: {dims[0]}x{dims[1]}")
-                                break
+                        if hasattr(video_track, 'source'):
+                            # source might be a property or method depending on SDK version
+                            source = video_track.source
+                            if source and hasattr(source, 'dimensions'):
+                                dims = source.dimensions
+                                if dims and dims[0] > 0 and dims[1] > 0:
+                                    logger.info(f"[{self.mint_id}] ✅ Video dimensions verified via source: {dims[0]}x{dims[1]}")
+                                    break
                     except Exception:
                         pass
+
+                    # Log status every 2 seconds (every 4th iteration)
+                    if i % 4 == 0:
+                        logger.info(f"[{self.mint_id}] Waiting for video dimensions... ({i+1}/30)")
                     
-                    if i < 4: # Don't sleep on last iteration
-                        logger.info(f"[{self.mint_id}] Waiting for video dimensions... ({i+1}/5)")
-                        await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.5)
+                else:
+                    # Loop finished without breaking - dimensions are still unknown
+                    # CRITICAL: We must abort here to prevent crash
+                    logger.error(
+                        f"[{self.mint_id}] ❌ CRITICAL: Timed out waiting for video dimensions. "
+                        f"Cannot start recording safely."
+                    )
+                    
+                    # Log diagnostics before failing
+                    try:
+                         if hasattr(video_track, '_info'):
+                             logger.info(f"[{self.mint_id}] Final track info: {video_track._info}")
+                    except: pass
+                    
+                    raise RecordingError(
+                        f"Failed to resolve video dimensions after 15 seconds. "
+                        f"Stream may be unstable or audio-only."
+                    )
 
             # Validate video track properties to prevent PyAV division-by-zero crashes
             detected_fps: Optional[float] = None
@@ -726,16 +763,22 @@ class ParticipantRecorderWrapper:
                         logger.warning(f"[{self.mint_id}] ⚠️ Could not adjust bitrate based on resolution: {e}")
                 else:
                     # Dimensions not available (likely PyAV track or older SDK)
-                    # Assume potentially problematic stream and cap bitrate for safety
-                    logger.warning(
-                        f"[{self.mint_id}] ⚠️ Video track dimensions not available (dir: {dir(video_track)}). "
-                        f"Switching to safe mode (VP9, 1.5Mbps) to prevent buffer overflows."
+                    # CRITICAL: If we reached here, it means the dimension check loop above passed (shouldn't happen if dimensions are 0)
+                    # OR the track doesn't have a 'dimensions' attribute at all.
+                    # In either case, if we can't confirm dimensions, we should probably abort to be safe,
+                    # but if the user insists on "Safe Mode", we must ensure we don't crash.
+                    # Given the recent crashes, "Safe Mode" with unknown dimensions is DANGEROUS.
+                    
+                    logger.error(
+                        f"[{self.mint_id}] ❌ CRITICAL: Video track dimensions missing in validation phase "
+                        f"(dir: {dir(video_track)}). Aborting to prevent crash."
                     )
-                    # Force safe settings
-                    video_bitrate = 1500000
-                    video_codec = "vp9"
-                    video_quality = "best"
-                    logger.info(f"[{self.mint_id}] Enforcing safe mode due to unknown dimensions")
+                    raise RecordingError("Video track dimensions cannot be determined. Aborting to prevent encoder crash.")
+                    
+                    # The old "Safe Mode" code is removed because it led to crashes
+                    # video_bitrate = 1500000
+                    # video_codec = "vp9"
+                    # ...
             
             logger.info(
                 f"[{self.mint_id}] Validated recording parameters: "

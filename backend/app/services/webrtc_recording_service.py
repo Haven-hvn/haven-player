@@ -336,6 +336,7 @@ class ParticipantRecorderWrapper:
             return (has_video, has_audio)
         
             # Wait for tracks to be published AND subscribed
+            # Also wait for data flow (packets > 0)
             logger.info(
                 f"[{self.mint_id}] Waiting for tracks to be published and subscribed (timeout: {timeout}s)..."
             )
@@ -348,46 +349,50 @@ class ParticipantRecorderWrapper:
             while time.time() - start_time < timeout:
                 has_video, has_audio = check_tracks_ready()
                 
+                # If we have video and audio, we are subscribed.
                 if has_video and has_audio:
+                    # Basic subscription satisfied
+                    # Wait for stats to confirm packets are flowing?
+                    # For now just break, as we rely on ParticipantRecorder
                     logger.info(
                         f"[{self.mint_id}] ✅ Both tracks subscribed - Video: {has_video}, Audio: {has_audio}"
                     )
                     break
                 
                 # If tracks are published but not subscribed, try subscribing again
-            if not has_video or not has_audio:
-                for publication in participant.track_publications.values():
-                    if publication.track is None:
-                        if publication.kind == rtc.TrackKind.KIND_VIDEO and not has_video:
-                            try:
-                                publication.set_subscribed(True)
-                            except Exception:
-                                pass
-                        elif publication.kind == rtc.TrackKind.KIND_AUDIO and not has_audio:
-                            try:
-                                publication.set_subscribed(True)
-                            except Exception:
-                                pass
-            
-            # Log progress every 2 seconds
-            elapsed = time.time() - start_time
-            if int(elapsed) % 2 == 0 and elapsed > 0:
-                video_pub = any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())
-                audio_pub = any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())
-                video_sub = any(
-                    p.kind == rtc.TrackKind.KIND_VIDEO and p.track is not None 
-                    for p in participant.track_publications.values()
-                )
-                audio_sub = any(
-                    p.kind == rtc.TrackKind.KIND_AUDIO and p.track is not None 
-                    for p in participant.track_publications.values()
-                )
-                logger.info(
-                    f"[{self.mint_id}] Waiting... Video: pub={video_pub}, sub={video_sub}; "
-                    f"Audio: pub={audio_pub}, sub={audio_sub}"
-                )
-            
-            await asyncio.sleep(0.2)  # Check more frequently
+                if not has_video or not has_audio:
+                    for publication in participant.track_publications.values():
+                        if publication.track is None:
+                            if publication.kind == rtc.TrackKind.KIND_VIDEO and not has_video:
+                                try:
+                                    publication.set_subscribed(True)
+                                except Exception:
+                                    pass
+                            elif publication.kind == rtc.TrackKind.KIND_AUDIO and not has_audio:
+                                try:
+                                    publication.set_subscribed(True)
+                                except Exception:
+                                    pass
+                
+                # Log progress every 2 seconds
+                elapsed = time.time() - start_time
+                if int(elapsed) % 2 == 0 and elapsed > 0:
+                    video_pub = any(p.kind == rtc.TrackKind.KIND_VIDEO for p in participant.track_publications.values())
+                    audio_pub = any(p.kind == rtc.TrackKind.KIND_AUDIO for p in participant.track_publications.values())
+                    video_sub = any(
+                        p.kind == rtc.TrackKind.KIND_VIDEO and p.track is not None 
+                        for p in participant.track_publications.values()
+                    )
+                    audio_sub = any(
+                        p.kind == rtc.TrackKind.KIND_AUDIO and p.track is not None 
+                        for p in participant.track_publications.values()
+                    )
+                    logger.info(
+                        f"[{self.mint_id}] Waiting... Video: pub={video_pub}, sub={video_sub}; "
+                        f"Audio: pub={audio_pub}, sub={audio_sub}"
+                    )
+                
+                await asyncio.sleep(0.2)  # Check more frequently
         
         # Final check
         has_video, has_audio = check_tracks_subscribed()

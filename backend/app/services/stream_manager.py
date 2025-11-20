@@ -110,15 +110,64 @@ class StreamManager:
                         # Room exists and might be connected - check if we can reuse
                         stream_info = self.active_streams.get(mint_id)
                         if stream_info:
-                            # We already have stream info, return it without reconnecting
-                            logger.info(f"Reusing existing connection for {mint_id}")
-                            return {
-                                "success": True,
-                                "mint_id": mint_id,
-                                "room_name": stream_info.room_name,
-                                "participant_sid": stream_info.participant_sid,
-                                "stream_info": self.pumpfun_service.format_stream_for_ui(stream_info.stream_data)
-                            }
+                            # Validate participant is still in room
+                            participant_exists = False
+                            participant_has_tracks = False
+                            
+                            for p in existing_room.remote_participants.values():
+                                if p.sid == stream_info.participant_sid:
+                                    participant_exists = True
+                                    if len(p.track_publications) > 0:
+                                        participant_has_tracks = True
+                                    break
+                            
+                            if participant_exists and participant_has_tracks:
+                                # We already have stream info, return it without reconnecting
+                                logger.info(f"Reusing existing connection for {mint_id}")
+                                return {
+                                    "success": True,
+                                    "mint_id": mint_id,
+                                    "room_name": stream_info.room_name,
+                                    "participant_sid": stream_info.participant_sid,
+                                    "stream_info": self.pumpfun_service.format_stream_for_ui(stream_info.stream_data)
+                                }
+                            else:
+                                logger.warning(f"[{mint_id}] ⚠️ Cached participant {stream_info.participant_sid} not valid (exists={participant_exists}, has_tracks={participant_has_tracks}). Refreshing.")
+                                if mint_id in self.active_streams:
+                                    del self.active_streams[mint_id]
+                        
+                        # If stream_info is missing or invalid, but room is connected, scan for ANY valid streamer
+                        # This handles cases where we join an existing room but don't know who to record yet
+                        if not stream_info or mint_id not in self.active_streams:
+                            logger.info(f"[{mint_id}] Scanning existing room for valid streamer...")
+                            for p in existing_room.remote_participants.values():
+                                if len(p.track_publications) > 0:
+                                    logger.info(f"[{mint_id}] Found new streamer in existing room: {p.sid} ({p.identity})")
+                                    
+                                    # Update stream info with new participant
+                                    # We need to fetch fresh PumpFun info to be safe, or reuse existing if available
+                                    base_stream_data = stream_info.stream_data if stream_info else (await self.pumpfun_service.get_stream_info(mint_id) or {})
+                                    
+                                    new_stream_info = StreamInfo(
+                                        mint_id=mint_id,
+                                        room_name=existing_room.name,
+                                        participant_sid=p.sid,
+                                        stream_url=self.config.livekit_url,
+                                        token=token, # Reuse the fresh token we just got
+                                        stream_data=base_stream_data
+                                    )
+                                    self.active_streams[mint_id] = new_stream_info
+                                    self.active_websockets[mint_id] = self.active_websockets.get(mint_id, set())
+                                    
+                                    return {
+                                        "success": True,
+                                        "mint_id": mint_id,
+                                        "room_name": existing_room.name,
+                                        "participant_sid": p.sid,
+                                        "stream_info": self.pumpfun_service.format_stream_for_ui(base_stream_data)
+                                    }
+                            logger.warning(f"[{mint_id}] No streamer found in existing room despite scan.")
+
                 except Exception as e:
                     logger.warning(f"Error checking existing room for {mint_id}: {e}")
                 
@@ -132,7 +181,7 @@ class StreamManager:
 
             # Create new room for this mint_id
             room = rtc.Room()
-            await self._setup_room_handlers(room)
+            await self._setup_room_handlers(room, mint_id)
             self.rooms[mint_id] = room
 
             # Connect to room with DISABLED auto-subscribe to prevent buffering
@@ -319,30 +368,28 @@ class StreamManager:
         return self.rooms.get(mint_id)
 
 
-    async def _setup_room_handlers(self, room: rtc.Room) -> None:
+    async def _setup_room_handlers(self, room: rtc.Room, mint_id: str) -> None:
         """Set up room-level event handlers for a specific room."""
 
         @room.on("participant_connected")
         def on_participant_connected(participant: rtc.RemoteParticipant):
-            print(f"Participant connected: {participant.sid} ({participant.identity})")
+            logger.info(f"[{mint_id}] Participant connected: {participant.sid} ({participant.identity})")
 
         @room.on("participant_disconnected")
         def on_participant_disconnected(participant: rtc.RemoteParticipant):
-            print(f"Participant disconnected: {participant.sid} ({participant.identity})")
+            logger.info(f"[{mint_id}] Participant disconnected: {participant.sid} ({participant.identity})")
+            
+            # Check if this was the streamer we were tracking
+            if mint_id in self.active_streams:
+                stream_info = self.active_streams[mint_id]
+                if stream_info.participant_sid == participant.sid:
+                    logger.warning(f"[{mint_id}] ⚠️ Streamer participant disconnected! Invalidating stream info to force refresh.")
+                    # Remove from active streams so next start_stream/get_stream_info forces a fresh lookup
+                    del self.active_streams[mint_id]
 
         @room.on("track_subscribed")
         def on_track_subscribed(track: rtc.RemoteTrack, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
-            print(f"Track subscribed: {track.kind} from {participant.sid}")
-
-            # Find mint_id for this participant
-            mint_id = None
-            for mid, stream_info in self.active_streams.items():
-                if stream_info.participant_sid == participant.sid:
-                    mint_id = mid
-                    break
-
-            if not mint_id:
-                return
+            logger.info(f"[{mint_id}] Track subscribed: {track.kind} from {participant.sid}")
 
             # Set up track handlers - LiveKit tracks don't support event decorators
             # Recording will work through MediaRecorder's direct track subscription
@@ -359,27 +406,25 @@ class StreamManager:
                     # MediaRecorder will handle track recording directly
 
             except Exception as e:
-                print(f"Error setting up track handlers: {e}")
+                logger.error(f"Error setting up track handlers: {e}")
                 # Continue without frame handlers - recording will still work
 
         @room.on("disconnected")
         def on_disconnected():
-            print("Room disconnected")
-            # Find which mint_id this room corresponds to and clean it up
-            for mint_id, room_obj in list(self.rooms.items()):
-                if room_obj == room:
-                    # Clean up this specific stream
-                    if mint_id in self.active_streams:
-                        del self.active_streams[mint_id]
-                    if mint_id in self.active_websockets:
-                        del self.active_websockets[mint_id]
-                    if mint_id in self.video_frame_handlers:
-                        del self.video_frame_handlers[mint_id]
-                    if mint_id in self.audio_frame_handlers:
-                        del self.audio_frame_handlers[mint_id]
-                    # Remove the room
-                    del self.rooms[mint_id]
-                    break
+            logger.info(f"[{mint_id}] Room disconnected")
+            # Clean up this specific stream
+            if mint_id in self.active_streams:
+                del self.active_streams[mint_id]
+            if mint_id in self.active_websockets:
+                del self.active_websockets[mint_id]
+            if mint_id in self.video_frame_handlers:
+                del self.video_frame_handlers[mint_id]
+            if mint_id in self.audio_frame_handlers:
+                del self.audio_frame_handlers[mint_id]
+            
+            # Only remove from rooms if it's the same room object (safety check)
+            if mint_id in self.rooms and self.rooms[mint_id] == room:
+                del self.rooms[mint_id]
 
     async def add_websocket(self, mint_id: str, websocket) -> None:
         """Add a WebSocket connection for streaming."""

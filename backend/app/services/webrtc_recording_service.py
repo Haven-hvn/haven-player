@@ -781,12 +781,7 @@ class ParticipantRecorderWrapper:
             
             # Validate parameters to prevent PyAV division-by-zero crashes
             # These validations are critical - invalid values cause crashes in FFmpeg encoder
-            if video_bitrate <= 0:
-                logger.warning(f"[{self.mint_id}] ⚠️ Invalid video_bitrate: {video_bitrate}, using default 8000000")
-                video_bitrate = 8000000
-            if audio_bitrate <= 0:
-                logger.warning(f"[{self.mint_id}] ⚠️ Invalid audio_bitrate: {audio_bitrate}, using default 256000")
-                audio_bitrate = 256000
+            # Moved inside if/else above for better handling of safe_mode
             
             # CRITICAL: video_fps must be > 0 and finite to prevent division by zero in encoder timebase calculations
             # Also ensure it's a reasonable value to prevent encoder crashes
@@ -871,15 +866,30 @@ class ParticipantRecorderWrapper:
                 if safe_mode_enforced:
                     logger.warning(
                         f"[{self.mint_id}] ⚠️ Video track dimensions unavailable even after stats probe. "
-                        f"Enforcing safe mode (vp9, 1.5Mbps) to avoid encoder instability."
+                        f"Enforcing safe mode (vp9, auto-bitrate) to avoid encoder instability."
                     )
-                    video_bitrate = min(video_bitrate, 1_500_000)
+                    # Use auto_bitrate=True for safe mode to let SDK handle bitrate dynamics
+                    # This might prevent 0xc0000094 crashes related to invalid fixed bitrates on unknown streams
+                    auto_bitrate = True
+                    video_bitrate = 0 # Ignored when auto_bitrate is True
                     video_codec = "vp9"
                     video_quality = "best"
+                else:
+                    auto_bitrate = False
+                    
+                    # Validate parameters to prevent PyAV division-by-zero crashes
+                    if video_bitrate <= 0:
+                        logger.warning(f"[{self.mint_id}] ⚠️ Invalid video_bitrate: {video_bitrate}, using default 8000000")
+                        video_bitrate = 8000000
+                    if audio_bitrate <= 0:
+                        logger.warning(f"[{self.mint_id}] ⚠️ Invalid audio_bitrate: {audio_bitrate}, using default 256000")
+                        audio_bitrate = 256000
             
             logger.info(
                 f"[{self.mint_id}] Validated recording parameters: "
-                f"video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, fps={video_fps} (type: {type(video_fps)}), codec={video_codec}"
+                f"video_bitrate={video_bitrate if not auto_bitrate else 'AUTO'}, "
+                f"audio_bitrate={audio_bitrate}, fps={video_fps} (type: {type(video_fps)}), "
+                f"codec={video_codec}, auto_bitrate={auto_bitrate}"
             )
             
             # Create ParticipantRecorder with configuration
@@ -888,7 +898,7 @@ class ParticipantRecorderWrapper:
                 # Double-check all parameters before creating recorder to prevent crashes
                 if video_fps <= 0:
                     raise ValueError(f"Invalid video_fps: {video_fps} (must be > 0)")
-                if video_bitrate <= 0:
+                if not auto_bitrate and video_bitrate <= 0:
                     raise ValueError(f"Invalid video_bitrate: {video_bitrate} (must be > 0)")
                 if audio_bitrate <= 0:
                     raise ValueError(f"Invalid audio_bitrate: {audio_bitrate} (must be > 0)")
@@ -902,16 +912,17 @@ class ParticipantRecorderWrapper:
 
                 logger.info(
                     f"[{self.mint_id}] Creating ParticipantRecorder with validated parameters: "
-                    f"fps={video_fps}, video_bitrate={video_bitrate}, audio_bitrate={audio_bitrate}, "
-                    f"auto_bitrate=False, codec={video_codec}"
+                    f"fps={video_fps}, video_bitrate={video_bitrate if not auto_bitrate else 'AUTO'}, "
+                    f"audio_bitrate={audio_bitrate}, "
+                    f"auto_bitrate={auto_bitrate}, codec={video_codec}"
                 )
                 
                 self.recorder = ParticipantRecorder(
                     self.room,
                     video_codec=video_codec,
                     video_quality=video_quality,
-                    auto_bitrate=False,  # Disable auto_bitrate as we are providing manual bitrates
-                    video_bitrate=video_bitrate,
+                    auto_bitrate=auto_bitrate,
+                    video_bitrate=video_bitrate if not auto_bitrate else 0,
                     audio_bitrate=audio_bitrate,
                     video_fps=video_fps
                 )

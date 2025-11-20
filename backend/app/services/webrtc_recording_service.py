@@ -504,57 +504,63 @@ class ParticipantRecorderWrapper:
             )
             
             # Poll for video dimensions if not immediately available
-            # CRITICAL: We cannot start recording without valid dimensions.
-            # Passing 0x0 dimensions to PyAV/FFmpeg often results in divide-by-zero crashes (0xc0000094).
             if video_track and video_still_subscribed:
-                logger.info(f"[{self.mint_id}] Polling for video dimensions (max 15s)...")
+                # First check if we can even read dimensions from this SDK version
+                has_dim_prop = hasattr(video_track, 'dimensions')
+                has_source_prop = hasattr(video_track, 'source')
                 
-                # Try for up to 15 seconds (30 attempts * 0.5s)
-                for i in range(30):
-                    # Method 1: Direct track dimensions
-                    if hasattr(video_track, 'dimensions'):
-                        dims = video_track.dimensions
-                        if dims and dims[0] > 0 and dims[1] > 0:
-                            logger.info(f"[{self.mint_id}] ✅ Video dimensions verified: {dims[0]}x{dims[1]}")
-                            break
-                    
-                    # Method 2: Source dimensions (sometimes available before track dimensions)
-                    # Only check source if direct dimensions failed
-                    try:
-                        if hasattr(video_track, 'source'):
-                            # source might be a property or method depending on SDK version
-                            source = video_track.source
-                            if source and hasattr(source, 'dimensions'):
-                                dims = source.dimensions
-                                if dims and dims[0] > 0 and dims[1] > 0:
-                                    logger.info(f"[{self.mint_id}] ✅ Video dimensions verified via source: {dims[0]}x{dims[1]}")
-                                    break
-                    except Exception:
-                        pass
-
-                    # Log status every 2 seconds (every 4th iteration)
-                    if i % 4 == 0:
-                        logger.info(f"[{self.mint_id}] Waiting for video dimensions... ({i+1}/30)")
-                    
-                    await asyncio.sleep(0.5)
-                else:
-                    # Loop finished without breaking - dimensions are still unknown
-                    # CRITICAL: We must abort here to prevent crash
-                    logger.error(
-                        f"[{self.mint_id}] ❌ CRITICAL: Timed out waiting for video dimensions. "
-                        f"Cannot start recording safely."
+                if not has_dim_prop and not has_source_prop:
+                    logger.warning(
+                        f"[{self.mint_id}] ⚠️ Video track object missing 'dimensions' and 'source' attributes. "
+                        f"Cannot verify resolution. Proceeding without validation (crash risk if 0x0)."
                     )
-                    
-                    # Log diagnostics before failing
+                    # Try to inspect stats for debug purposes
                     try:
-                         if hasattr(video_track, '_info'):
-                             logger.info(f"[{self.mint_id}] Final track info: {video_track._info}")
+                        if hasattr(video_track, 'get_stats'):
+                            # Just log that we have stats, don't block on async calls
+                            logger.info(f"[{self.mint_id}] Track has get_stats method")
                     except: pass
                     
-                    raise RecordingError(
-                        f"Failed to resolve video dimensions after 15 seconds. "
-                        f"Stream may be unstable or audio-only."
-                    )
+                else:
+                    logger.info(f"[{self.mint_id}] Polling for video dimensions (max 15s)...")
+                    
+                    # Try for up to 15 seconds (30 attempts * 0.5s)
+                    dimensions_found = False
+                    for i in range(30):
+                        # Method 1: Direct track dimensions
+                        if hasattr(video_track, 'dimensions'):
+                            dims = video_track.dimensions
+                            if dims and dims[0] > 0 and dims[1] > 0:
+                                logger.info(f"[{self.mint_id}] ✅ Video dimensions verified: {dims[0]}x{dims[1]}")
+                                dimensions_found = True
+                                break
+                        
+                        # Method 2: Source dimensions
+                        try:
+                            if hasattr(video_track, 'source'):
+                                source = video_track.source
+                                if source and hasattr(source, 'dimensions'):
+                                    dims = source.dimensions
+                                    if dims and dims[0] > 0 and dims[1] > 0:
+                                        logger.info(f"[{self.mint_id}] ✅ Video dimensions verified via source: {dims[0]}x{dims[1]}")
+                                        dimensions_found = True
+                                        break
+                        except Exception:
+                            pass
+
+                        # Log status every 2 seconds
+                        if i % 4 == 0:
+                            logger.info(f"[{self.mint_id}] Waiting for video dimensions... ({i+1}/30)")
+                        
+                        await asyncio.sleep(0.5)
+                    
+                    if not dimensions_found:
+                        logger.error(
+                            f"[{self.mint_id}] ❌ Timed out waiting for video dimensions. "
+                            f"Proceeding anyway to attempt recording (high risk of encoder crash)."
+                        )
+                        # We do NOT raise exception here anymore, to allow other streams to work
+                        # even if dimension reporting is broken.
 
             # Validate video track properties to prevent PyAV division-by-zero crashes
             detected_fps: Optional[float] = None

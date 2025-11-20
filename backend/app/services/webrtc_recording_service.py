@@ -273,6 +273,50 @@ class ParticipantRecorderWrapper:
         )
         return None
     
+    def _extract_dimensions_from_stats(
+        self,
+        stats_obj: Any
+    ) -> Optional[tuple[int, int]]:
+        """
+        Attempt to extract (width, height) from LiveKit stats payloads.
+
+        Stats objects differ by SDK version, so we defensively probe common fields.
+        """
+        if not stats_obj:
+            return None
+
+        candidates = (
+            stats_obj
+            if isinstance(stats_obj, (list, tuple, set))
+            else [stats_obj]
+        )
+
+        for stat in candidates:
+            try:
+                # Direct tuple (width, height)
+                if hasattr(stat, "dimensions"):
+                    dims = stat.dimensions
+                    if dims and dims[0] > 0 and dims[1] > 0:
+                        return (int(dims[0]), int(dims[1]))
+
+                # Individual attributes
+                width = (
+                    getattr(stat, "width", None)
+                    or getattr(stat, "frame_width", None)
+                    or getattr(stat, "video_width", None)
+                )
+                height = (
+                    getattr(stat, "height", None)
+                    or getattr(stat, "frame_height", None)
+                    or getattr(stat, "video_height", None)
+                )
+                if width and height and width > 0 and height > 0:
+                    return (int(width), int(height))
+            except Exception:
+                continue
+
+        return None
+
     async def _wait_for_tracks(
         self,
         participant: rtc.RemoteParticipant,
@@ -504,6 +548,7 @@ class ParticipantRecorderWrapper:
             )
             
             # Poll for video dimensions if not immediately available
+            resolved_dimensions: Optional[tuple[int, int]] = None
             if video_track and video_still_subscribed:
                 # First check if we can even read dimensions from this SDK version
                 has_dim_prop = hasattr(video_track, 'dimensions')
@@ -517,22 +562,32 @@ class ParticipantRecorderWrapper:
                     # Try to inspect stats for debug purposes
                     try:
                         if hasattr(video_track, 'get_stats'):
-                            # Just log that we have stats, don't block on async calls
-                            logger.info(f"[{self.mint_id}] Track has get_stats method")
-                    except: pass
+                            logger.info(f"[{self.mint_id}] Track has get_stats method - attempting to pull dimensions")
+                            stats_obj = video_track.get_stats()
+                            if asyncio.iscoroutine(stats_obj):
+                                stats_obj = await stats_obj
+                            dims = self._extract_dimensions_from_stats(stats_obj)
+                            if dims:
+                                resolved_dimensions = dims
+                                logger.info(
+                                    f"[{self.mint_id}] ✅ Video dimensions resolved via get_stats(): {dims[0]}x{dims[1]}"
+                                )
+                    except Exception as stats_exc:
+                        logger.warning(
+                            f"[{self.mint_id}] Could not read stats-based dimensions: {stats_exc}"
+                        )
                     
                 else:
                     logger.info(f"[{self.mint_id}] Polling for video dimensions (max 15s)...")
                     
                     # Try for up to 15 seconds (30 attempts * 0.5s)
-                    dimensions_found = False
                     for i in range(30):
                         # Method 1: Direct track dimensions
                         if hasattr(video_track, 'dimensions'):
                             dims = video_track.dimensions
                             if dims and dims[0] > 0 and dims[1] > 0:
                                 logger.info(f"[{self.mint_id}] ✅ Video dimensions verified: {dims[0]}x{dims[1]}")
-                                dimensions_found = True
+                                resolved_dimensions = (dims[0], dims[1])
                                 break
                         
                         # Method 2: Source dimensions
@@ -543,10 +598,26 @@ class ParticipantRecorderWrapper:
                                     dims = source.dimensions
                                     if dims and dims[0] > 0 and dims[1] > 0:
                                         logger.info(f"[{self.mint_id}] ✅ Video dimensions verified via source: {dims[0]}x{dims[1]}")
-                                        dimensions_found = True
+                                        resolved_dimensions = (dims[0], dims[1])
                                         break
                         except Exception:
                             pass
+
+                        # Method 3: Track stats
+                        try:
+                            if hasattr(video_track, 'get_stats'):
+                                stats_obj = video_track.get_stats()
+                                if asyncio.iscoroutine(stats_obj):
+                                    stats_obj = await stats_obj
+                                dims = self._extract_dimensions_from_stats(stats_obj)
+                                if dims:
+                                    logger.info(
+                                        f"[{self.mint_id}] ✅ Video dimensions verified via stats: {dims[0]}x{dims[1]}"
+                                    )
+                                    resolved_dimensions = dims
+                                    break
+                        except Exception as stats_exc:
+                            logger.debug(f"[{self.mint_id}] get_stats() dimension probe failed: {stats_exc}")
 
                         # Log status every 2 seconds
                         if i % 4 == 0:
@@ -554,13 +625,11 @@ class ParticipantRecorderWrapper:
                         
                         await asyncio.sleep(0.5)
                     
-                    if not dimensions_found:
+                    if not resolved_dimensions:
                         logger.error(
-                            f"[{self.mint_id}] ❌ Timed out waiting for video dimensions. "
-                            f"Proceeding anyway to attempt recording (high risk of encoder crash)."
+                            f"[{self.mint_id}] ❌ Timed out waiting for video dimensions after 15s. "
+                            f"Proceeding with safe-mode defaults (1.5Mbps, VP9)."
                         )
-                        # We do NOT raise exception here anymore, to allow other streams to work
-                        # even if dimension reporting is broken.
 
             # Validate video track properties to prevent PyAV division-by-zero crashes
             detected_fps: Optional[float] = None
@@ -585,20 +654,43 @@ class ParticipantRecorderWrapper:
                     except Exception as e:
                          logger.warning(f"[{self.mint_id}] Could not get room stats: {e}")
 
-                    # Check if track has valid dimensions (prevent division by zero in encoder)
-                    # LiveKit tracks may not expose dimensions directly, but we can check track state
-                    if hasattr(video_track, 'dimensions'):
-                        width, height = video_track.dimensions
-                        if width <= 0 or height <= 0:
-                            logger.error(
-                                f"[{self.mint_id}] ❌ Invalid video dimensions: {width}x{height}. "
-                                f"This will cause encoder crashes. Skipping video track."
-                            )
-                            has_video = False
-                        else:
-                            logger.info(
-                                f"[{self.mint_id}] Video track dimensions: {width}x{height}"
-                            )
+                    # Determine dimensions using best-known source
+                    width: Optional[int] = None
+                    height: Optional[int] = None
+                    dimension_source = None
+
+                    if resolved_dimensions:
+                        width, height = resolved_dimensions
+                        dimension_source = "pre-check polling"
+                    elif hasattr(video_track, 'dimensions'):
+                        dims = video_track.dimensions
+                        if dims and len(dims) == 2:
+                            width, height = dims
+                            dimension_source = "track.dimensions"
+
+                    if (not width or width <= 0 or not height or height <= 0) and hasattr(video_track, 'get_stats'):
+                        try:
+                            stats_obj = video_track.get_stats()
+                            if asyncio.iscoroutine(stats_obj):
+                                stats_obj = await stats_obj
+                            dims = self._extract_dimensions_from_stats(stats_obj)
+                            if dims:
+                                width, height = dims
+                                dimension_source = "track.get_stats()"
+                        except Exception as stats_exc:
+                            logger.debug(f"[{self.mint_id}] Dimension stats probe failed: {stats_exc}")
+
+                    if width and height and width > 0 and height > 0:
+                        logger.info(
+                            f"[{self.mint_id}] Video track dimensions ({dimension_source}): {width}x{height}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[{self.mint_id}] ⚠️ Video dimensions still unknown after probes. "
+                            f"Enabling conservative safe-mode settings."
+                        )
+                        width = height = None
+                        dimension_source = "unknown"
                     
                     # Try to detect actual frame rate from video track to prevent encoder crashes
                     # This is critical - using wrong FPS can cause division-by-zero in encoder timebase
@@ -732,59 +824,58 @@ class ParticipantRecorderWrapper:
             # Adjust bitrate based on resolution to prevent excessive bitrates for small resolutions
             # 8Mbps for 262p (480x262) is too high and might cause muxer issues
             if has_video and video_track:
-                if hasattr(video_track, 'dimensions'):
-                    try:
-                        width, height = video_track.dimensions
-                        if width > 0 and height > 0:
-                            pixel_count = width * height
-                            # Reference: 1080p (1920x1080) is ~2MP. 8Mbps is good for 1080p.
-                            # 262p (480x262) is ~0.12MP.
-                            
-                            if pixel_count < 640 * 480:  # < 480p
-                                # Limit to 1 Mbps max for < 480p and force VP8 for safety
-                                max_bitrate = 1000000
-                                
-                                # Force safe settings for very low resolutions
-                                # Use VP9 but with very low bitrate to avoid buffer overflows
-                                video_codec = "vp9"
-                                video_quality = "best" 
-                                max_bitrate = 1000000 # 1 Mbps
-                                
-                                if video_bitrate > max_bitrate:
-                                    logger.warning(
-                                        f"[{self.mint_id}] ⚠️ Low resolution detected ({width}x{height}). "
-                                        f"Clamping bitrate to {max_bitrate}"
-                                    )
-                                    video_bitrate = max_bitrate
-                            elif pixel_count < 1280 * 720:  # < 720p
-                                # Limit to 4 Mbps max for < 720p
-                                max_bitrate = 4000000
-                                if video_bitrate > max_bitrate:
-                                    logger.warning(
-                                        f"[{self.mint_id}] ⚠️ Reducing video_bitrate from {video_bitrate} to {max_bitrate} "
-                                        f"for medium resolution {width}x{height}"
-                                    )
-                                    video_bitrate = max_bitrate
-                    except Exception as e:
-                        logger.warning(f"[{self.mint_id}] ⚠️ Could not adjust bitrate based on resolution: {e}")
-                else:
-                    # Dimensions not available (likely PyAV track or older SDK)
-                    # CRITICAL: If we reached here, it means the dimension check loop above passed (shouldn't happen if dimensions are 0)
-                    # OR the track doesn't have a 'dimensions' attribute at all.
-                    # In either case, if we can't confirm dimensions, we should probably abort to be safe,
-                    # but if the user insists on "Safe Mode", we must ensure we don't crash.
-                    # Given the recent crashes, "Safe Mode" with unknown dimensions is DANGEROUS.
-                    
-                    logger.error(
-                        f"[{self.mint_id}] ❌ CRITICAL: Video track dimensions missing in validation phase "
-                        f"(dir: {dir(video_track)}). Aborting to prevent crash."
+                safe_mode_enforced = False
+                try:
+                    width = height = None
+                    if resolved_dimensions:
+                        width, height = resolved_dimensions
+                    elif hasattr(video_track, 'dimensions'):
+                        dims = video_track.dimensions
+                        if dims and len(dims) == 2:
+                            width, height = dims
+
+                    if (not width or width <= 0 or not height or height <= 0) and hasattr(video_track, 'get_stats'):
+                        stats_obj = video_track.get_stats()
+                        if asyncio.iscoroutine(stats_obj):
+                            stats_obj = await stats_obj
+                        dims = self._extract_dimensions_from_stats(stats_obj)
+                        if dims:
+                            width, height = dims
+
+                    if width and height and width > 0 and height > 0:
+                        pixel_count = width * height
+                        if pixel_count < 640 * 480:  # < 480p
+                            max_bitrate = 1_000_000
+                            video_codec = "vp9"
+                            video_quality = "best"
+                            if video_bitrate > max_bitrate:
+                                logger.warning(
+                                    f"[{self.mint_id}] ⚠️ Low resolution detected ({width}x{height}). "
+                                    f"Clamping bitrate to {max_bitrate}"
+                                )
+                                video_bitrate = max_bitrate
+                        elif pixel_count < 1280 * 720:  # < 720p
+                            max_bitrate = 4_000_000
+                            if video_bitrate > max_bitrate:
+                                logger.warning(
+                                    f"[{self.mint_id}] ⚠️ Reducing video_bitrate from {video_bitrate} to {max_bitrate} "
+                                    f"for medium resolution {width}x{height}"
+                                )
+                                video_bitrate = max_bitrate
+                    else:
+                        safe_mode_enforced = True
+                except Exception as e:
+                    safe_mode_enforced = True
+                    logger.warning(f"[{self.mint_id}] ⚠️ Could not adjust bitrate based on resolution: {e}")
+
+                if safe_mode_enforced:
+                    logger.warning(
+                        f"[{self.mint_id}] ⚠️ Video track dimensions unavailable even after stats probe. "
+                        f"Enforcing safe mode (vp9, 1.5Mbps) to avoid encoder instability."
                     )
-                    raise RecordingError("Video track dimensions cannot be determined. Aborting to prevent encoder crash.")
-                    
-                    # The old "Safe Mode" code is removed because it led to crashes
-                    # video_bitrate = 1500000
-                    # video_codec = "vp9"
-                    # ...
+                    video_bitrate = min(video_bitrate, 1_500_000)
+                    video_codec = "vp9"
+                    video_quality = "best"
             
             logger.info(
                 f"[{self.mint_id}] Validated recording parameters: "

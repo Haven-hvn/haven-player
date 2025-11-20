@@ -1409,6 +1409,8 @@ class WebRTCRecordingService:
     """WebRTC recording service using ParticipantRecorder."""
 
     _instance_count = 0
+    _active_recordings: Dict[str, ParticipantRecorderWrapper] = {}
+    _service_lock: Optional[asyncio.Lock] = None
 
     def __init__(self, output_dir: str = "recordings"):
         WebRTCRecordingService._instance_count += 1
@@ -1417,9 +1419,8 @@ class WebRTCRecordingService:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Active recordings - use ParticipantRecorderWrapper
-        self.active_recordings: Dict[str, ParticipantRecorderWrapper] = {}
-
+        # Note: self.active_recordings is now a property accessing the shared class-level dict
+        
         # Default recording configuration for ParticipantRecorder - Maximum quality
         self.default_config = {
             "video_codec": "vp9",  # VP9 for best quality (better compression than VP8)
@@ -1437,6 +1438,16 @@ class WebRTCRecordingService:
         self.stream_manager = StreamManager()
 
         logger.info(f"🎬 WebRTCRecordingService instance #{self._instance_id} created")
+
+    @property
+    def active_recordings(self) -> Dict[str, ParticipantRecorderWrapper]:
+        return WebRTCRecordingService._active_recordings
+
+    @classmethod
+    def _get_lock(cls) -> asyncio.Lock:
+        if cls._service_lock is None:
+            cls._service_lock = asyncio.Lock()
+        return cls._service_lock
     
     def _log_memory_usage(self, context: str = ""):
         """Log current memory usage for debugging."""
@@ -1454,7 +1465,17 @@ class WebRTCRecordingService:
         output_format: str = "webm", 
         video_quality: str = "high"
     ) -> Dict[str, Any]:
-        """Start recording using ParticipantRecorder."""
+        """Start recording using ParticipantRecorder (thread-safe)."""
+        async with self._get_lock():
+            return await self._start_recording_impl(mint_id, output_format, video_quality)
+
+    async def _start_recording_impl(
+        self, 
+        mint_id: str, 
+        output_format: str = "webm", 
+        video_quality: str = "high"
+    ) -> Dict[str, Any]:
+        """Internal implementation of start_recording."""
         try:
             logger.info(f"📹 Starting ParticipantRecorder recording for mint_id: {mint_id}")
             
@@ -1578,7 +1599,12 @@ class WebRTCRecordingService:
             return {"success": False, "error": str(e)}
 
     async def stop_recording(self, mint_id: str) -> Dict[str, Any]:
-        """Stop recording."""
+        """Stop recording (thread-safe)."""
+        async with self._get_lock():
+            return await self._stop_recording_impl(mint_id)
+
+    async def _stop_recording_impl(self, mint_id: str) -> Dict[str, Any]:
+        """Internal implementation of stop_recording."""
         try:
             if mint_id not in self.active_recordings:
                 return {"success": False, "error": f"No active recording for {mint_id}"}

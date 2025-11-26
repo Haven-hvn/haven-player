@@ -12,10 +12,14 @@ import {
   CircularProgress,
   IconButton,
   FormHelperText,
+  Switch,
+  FormControlLabel,
+  Divider,
 } from "@mui/material";
 import {
   Close as CloseIcon,
   CloudUpload as CloudUploadIcon,
+  Lock as LockIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig } from "@/types/filecoin";
 
@@ -39,6 +43,7 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
     privateKey: "",
     rpcUrl: "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
     dataSetId: undefined,
+    encryptionEnabled: false,
   });
 
   useEffect(() => {
@@ -57,6 +62,7 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
           privateKey: savedConfig.privateKey || "",
           rpcUrl: savedConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
           dataSetId: savedConfig.dataSetId,
+          encryptionEnabled: savedConfig.encryptionEnabled ?? false,
         });
       }
     } catch (err) {
@@ -81,6 +87,7 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
         privateKey: config.privateKey,
         rpcUrl: config.rpcUrl,
         dataSetId: config.dataSetId,
+        encryptionEnabled: config.encryptionEnabled,
       });
 
       await onSave(config);
@@ -304,6 +311,75 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
               }}
             />
 
+            <Divider sx={{ my: 1 }} />
+
+            {/* Lit Protocol Encryption Toggle */}
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 1,
+                p: 2,
+                backgroundColor: config.encryptionEnabled ? "#E8F5E9" : "#FAFAFA",
+                borderRadius: "8px",
+                border: config.encryptionEnabled ? "1px solid #4CAF50" : "1px solid #E0E0E0",
+                transition: "all 0.2s ease-in-out",
+              }}
+            >
+              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                <LockIcon
+                  sx={{
+                    color: config.encryptionEnabled ? "#4CAF50" : "#9E9E9E",
+                    fontSize: 20,
+                  }}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={config.encryptionEnabled}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          encryptionEnabled: e.target.checked,
+                        }))
+                      }
+                      sx={{
+                        "& .MuiSwitch-switchBase.Mui-checked": {
+                          color: "#4CAF50",
+                        },
+                        "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+                          backgroundColor: "#4CAF50",
+                        },
+                      }}
+                    />
+                  }
+                  label={
+                    <Typography
+                      sx={{
+                        fontWeight: 500,
+                        fontSize: "14px",
+                        color: "#000000",
+                      }}
+                    >
+                      Encrypt videos before upload
+                    </Typography>
+                  }
+                  sx={{ margin: 0 }}
+                />
+              </Box>
+              <Typography
+                sx={{
+                  fontSize: "12px",
+                  color: "#6B6B6B",
+                  ml: 4.5,
+                }}
+              >
+                {config.encryptionEnabled
+                  ? "Videos will be encrypted with Lit Protocol before uploading to Filecoin. Only your wallet can decrypt them."
+                  : "Videos will be uploaded to Filecoin without encryption."}
+              </Typography>
+            </Box>
+
             <Alert
               severity="info"
               sx={{
@@ -323,6 +399,9 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
                 }}
               >
                 <strong>Note:</strong> This uses Filecoin Calibration testnet. You'll need test FIL for gas and test USDFC for storage payments. Private keys are encrypted and stored securely on your device.
+                {config.encryptionEnabled && (
+                  <> Lit Protocol encryption uses the Datil-dev network (free, no payment needed).</>
+                )}
               </Typography>
             </Alert>
           </Box>

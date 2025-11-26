@@ -7,12 +7,14 @@ export interface FilecoinUploadStatus {
   pieceId?: number;
   dataSetId?: string;
   transactionHash?: string;
+  isEncrypted?: boolean;
 }
 
 export interface FilecoinConfig {
   privateKey: string;
   rpcUrl?: string;
   dataSetId?: number;
+  encryptionEnabled: boolean;
 }
 
 export interface FilecoinUploadResult {
@@ -24,6 +26,29 @@ export interface FilecoinUploadResult {
   providerInfo?: {
     name?: string;
     serviceProvider?: string;
+  };
+  isEncrypted?: boolean;
+  encryptionMetadata?: string; // JSON-serialized LitEncryptionMetadata
+}
+
+// Lit Protocol encryption metadata stored with encrypted videos
+export interface LitEncryptionMetadata {
+  ciphertext: string;
+  dataToEncryptHash: string;
+  accessControlConditions: AccessControlCondition[];
+  chain: string;
+}
+
+// Access control condition for Lit Protocol
+export interface AccessControlCondition {
+  contractAddress: string;
+  standardContractType: string;
+  chain: string;
+  method: string;
+  parameters: string[];
+  returnValueTest: {
+    comparator: string;
+    value: string;
   };
 }
 

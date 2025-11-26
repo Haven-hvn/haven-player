@@ -77,10 +77,11 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
             pieceId: result.pieceId,
             dataSetId: result.dataSetId,
             transactionHash: result.transactionHash,
+            isEncrypted: result.isEncrypted,
           },
         }));
 
-        // Save Filecoin metadata to backend
+        // Save Filecoin metadata to backend (including encryption metadata if present)
         try {
           await videoService.updateFilecoinMetadata(videoPath, {
             root_cid: result.rootCid,
@@ -88,8 +89,10 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
             piece_id: result.pieceId,
             data_set_id: result.dataSetId,
             transaction_hash: result.transactionHash,
+            is_encrypted: result.isEncrypted ?? false,
+            lit_encryption_metadata: result.encryptionMetadata,
           });
-          console.log(`✅ Saved Filecoin metadata for ${videoPath}`);
+          console.log(`✅ Saved Filecoin metadata for ${videoPath}${result.isEncrypted ? ' (encrypted)' : ''}`);
         } catch (error) {
           console.error(`❌ Failed to save Filecoin metadata for ${videoPath}:`, error);
           // Don't throw - upload was successful, just metadata save failed

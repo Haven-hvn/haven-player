@@ -72,6 +72,8 @@ export const videoService = {
       piece_id?: number;
       data_set_id: string;
       transaction_hash?: string;
+      is_encrypted?: boolean;
+      lit_encryption_metadata?: string;
     }
   ): Promise<Video> => {
     const response = await api.put<Video>(

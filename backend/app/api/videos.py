@@ -51,6 +51,9 @@ class VideoResponse(BaseModel):
     filecoin_piece_id: Optional[int] = None
     filecoin_data_set_id: Optional[str] = None
     filecoin_uploaded_at: Optional[datetime] = None
+    # Lit Protocol encryption metadata
+    is_encrypted: bool = False
+    lit_encryption_metadata: Optional[str] = None
 
 class TimestampResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -334,6 +337,9 @@ class FilecoinMetadataUpdate(BaseModel):
     piece_id: Optional[int] = None
     data_set_id: str
     transaction_hash: Optional[str] = None
+    # Lit Protocol encryption metadata
+    is_encrypted: bool = False
+    lit_encryption_metadata: Optional[str] = None
 
 @router.put("/{video_path:path}/filecoin-metadata", response_model=VideoResponse)
 def update_filecoin_metadata(
@@ -343,6 +349,7 @@ def update_filecoin_metadata(
 ) -> Video:
     """
     Update Filecoin storage metadata for a video after successful upload.
+    Includes optional Lit Protocol encryption metadata.
     """
     video = db.query(Video).filter(Video.path == video_path).first()
     if not video:
@@ -353,6 +360,11 @@ def update_filecoin_metadata(
     video.filecoin_piece_id = metadata.piece_id
     video.filecoin_data_set_id = metadata.data_set_id
     video.filecoin_uploaded_at = datetime.now(timezone.utc)
+    
+    # Update Lit Protocol encryption metadata if provided
+    video.is_encrypted = metadata.is_encrypted
+    if metadata.lit_encryption_metadata:
+        video.lit_encryption_metadata = metadata.lit_encryption_metadata
     
     db.commit()
     db.refresh(video)

@@ -14,6 +14,11 @@ import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 // Use CID from multiformats - type assertion needed due to version mismatch
 import type { CID } from 'multiformats/cid';
 import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
+import { 
+  encryptFileForStorage, 
+  serializeEncryptionMetadata,
+  type LitEncryptionMetadata,
+} from '@/services/litService';
 
 // Simple logger for browser environment that matches filecoin-pin's Logger interface
 // LogFn expects (msg: string, ...args: unknown[]) signature
@@ -59,7 +64,7 @@ const createLogger = () => {
 };
 
 export interface UploadProgress {
-  stage: 'preparing' | 'creating-car' | 'checking-payments' | 'uploading' | 'validating' | 'completed';
+  stage: 'preparing' | 'encrypting' | 'creating-car' | 'checking-payments' | 'uploading' | 'validating' | 'completed';
   progress: number; // 0-100
   message: string;
 }
@@ -202,22 +207,87 @@ async function initializeSynapseSDK(
 
 /**
  * Upload a video file to Filecoin
+ * If encryption is enabled, the video will be encrypted using Lit Protocol before upload
  */
 export async function uploadVideoToFilecoin(
   options: UploadOptions
 ): Promise<FilecoinUploadResult> {
   const logger = createLogger();
   const { file, config, onProgress } = options;
+  
+  // Track encryption metadata if encryption is enabled
+  let encryptionMetadata: LitEncryptionMetadata | undefined;
+  let isEncrypted = false;
 
   try {
-    // Step 1: Create CAR file
+    // Step 1: Prepare file (encrypt if enabled)
     onProgress?.({
       stage: 'preparing',
       progress: 5,
       message: 'Preparing video for upload...',
     });
 
-    const { carBytes, rootCid } = await createCarFromVideo(file, onProgress);
+    let fileToUpload: File = file;
+    
+    // Step 1a: Encrypt if encryption is enabled
+    if (config.encryptionEnabled) {
+      logger.info('Encryption enabled, encrypting video with Lit Protocol...');
+      isEncrypted = true;
+      
+      onProgress?.({
+        stage: 'encrypting',
+        progress: 10,
+        message: 'Encrypting video with Lit Protocol...',
+      });
+      
+      try {
+        // Read file as ArrayBuffer
+        const fileBuffer = await file.arrayBuffer();
+        
+        // Encrypt the file
+        const encryptResult = await encryptFileForStorage(
+          fileBuffer,
+          config.privateKey,
+          (message: string) => {
+            onProgress?.({
+              stage: 'encrypting',
+              progress: 20,
+              message,
+            });
+          }
+        );
+        
+        encryptionMetadata = encryptResult.metadata;
+        
+        // Create a new File from the encrypted data
+        const encryptedBlob = new Blob([encryptResult.encryptedData], {
+          type: 'application/octet-stream',
+        });
+        fileToUpload = new File([encryptedBlob], `${file.name}.encrypted`, {
+          type: 'application/octet-stream',
+        });
+        
+        logger.info('Video encrypted successfully', {
+          originalSize: file.size,
+          encryptedSize: fileToUpload.size,
+        });
+        
+        onProgress?.({
+          stage: 'encrypting',
+          progress: 35,
+          message: 'Encryption complete',
+        });
+      } catch (encryptError) {
+        const errorMessage = encryptError instanceof Error 
+          ? encryptError.message 
+          : 'Unknown encryption error';
+        logger.error('Encryption failed', { error: errorMessage });
+        throw new Error(`Lit Protocol encryption failed: ${errorMessage}`);
+      }
+    }
+
+    // Step 2: Create CAR file (from encrypted or original file)
+    const { carBytes, rootCid } = await createCarFromVideo(fileToUpload, onProgress);
 
     onProgress?.({
       stage: 'checking-payments',
@@ -412,7 +482,9 @@ export async function uploadVideoToFilecoin(
     onProgress?.({
       stage: 'completed',
       progress: 100,
-      message: 'Upload completed successfully!',
+      message: isEncrypted 
+        ? 'Upload completed successfully! Video is encrypted.' 
+        : 'Upload completed successfully!',
     });
 
     return {
@@ -422,6 +494,10 @@ export async function uploadVideoToFilecoin(
       dataSetId: uploadResult.dataSetId,
       transactionHash: uploadResult.transactionHash,
       providerInfo: uploadResult.providerInfo,
+      isEncrypted,
+      encryptionMetadata: encryptionMetadata 
+        ? serializeEncryptionMetadata(encryptionMetadata) 
+        : undefined,
     };
   } catch (error) {
     // Extract detailed error information

@@ -47,9 +47,13 @@
   "dependencies": {
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
+    "@lit-protocol/constants": "^6.11.3",
+    "@lit-protocol/lit-node-client": "^6.11.3",
+    "@lit-protocol/types": "^6.11.3",
     "@mui/icons-material": "7.3.5",
     "@mui/material": "7.3.5",
     "axios": "1.13.2",
+    "ethers": "^6.13.4",
     "filecoin-pin": "0.13.0",
     "livekit-client": "2.15.16",
     "multiformats": "13.4.1",

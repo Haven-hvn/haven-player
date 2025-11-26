@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, List, TYPE_CHECKING
-from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime, Text
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.models.base import Base
 
@@ -29,6 +29,10 @@ class Video(Base):
     filecoin_piece_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     filecoin_data_set_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     filecoin_uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # Lit Protocol encryption metadata
+    is_encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    lit_encryption_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     timestamps: Mapped[List['Timestamp']] = relationship('Timestamp', back_populates='video', cascade='all, delete-orphan')
     analysis_jobs: Mapped[List['AnalysisJob']] = relationship('AnalysisJob', back_populates='video', cascade='all, delete-orphan')
@@ -49,7 +53,9 @@ class Video(Base):
             'filecoin_piece_cid': self.filecoin_piece_cid,
             'filecoin_piece_id': self.filecoin_piece_id,
             'filecoin_data_set_id': self.filecoin_data_set_id,
-            'filecoin_uploaded_at': self.filecoin_uploaded_at.isoformat() if self.filecoin_uploaded_at else None
+            'filecoin_uploaded_at': self.filecoin_uploaded_at.isoformat() if self.filecoin_uploaded_at else None,
+            'is_encrypted': self.is_encrypted,
+            'lit_encryption_metadata': self.lit_encryption_metadata,
         }
 
 class Timestamp(Base):

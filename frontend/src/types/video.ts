@@ -13,6 +13,9 @@ export interface Video {
   filecoin_piece_id?: number | null;
   filecoin_data_set_id?: string | null;
   filecoin_uploaded_at?: string | null;
+  // Lit Protocol encryption metadata
+  is_encrypted?: boolean;
+  lit_encryption_metadata?: string | null; // JSON-serialized LitEncryptionMetadata
 }
 
 export interface Timestamp {

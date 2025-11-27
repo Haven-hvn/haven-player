@@ -1,21 +1,30 @@
 import { LitNodeClient } from '@lit-protocol/lit-node-client';
-import { LIT_NETWORK } from '@lit-protocol/constants';
-import { LitAbility, LitAccessControlConditionResource } from '@lit-protocol/auth-helpers';
+import { LIT_NETWORK, LIT_ABILITY } from '@lit-protocol/constants';
+import { LitAccessControlConditionResource } from '@lit-protocol/auth-helpers';
 import type {
-  AccessControlConditions,
   SessionSigsMap,
   AuthSig,
 } from '@lit-protocol/types';
 import { ethers } from 'ethers';
 
-// Network type for Lit Protocol
-type LitNetworkType = (typeof LIT_NETWORK)[keyof typeof LIT_NETWORK];
+// Define our own AccessControlCondition type to avoid version conflicts
+interface EvmBasicAccessControlCondition {
+  contractAddress: string;
+  standardContractType: string;
+  chain: string;
+  method: string;
+  parameters: string[];
+  returnValueTest: {
+    comparator: string;
+    value: string;
+  };
+}
 
 // Lit encryption metadata stored alongside the encrypted file
 export interface LitEncryptionMetadata {
   ciphertext: string;
   dataToEncryptHash: string;
-  accessControlConditions: AccessControlConditions;
+  accessControlConditions: EvmBasicAccessControlCondition[];
   chain: string;
 }
 
@@ -49,23 +58,6 @@ export function getWalletAddressFromPrivateKey(privateKey: string): string {
 }
 
 /**
- * Get the appropriate network for Lit Protocol
- * Uses datil-dev for development (free network)
- */
-function getLitNetwork(): LitNetworkType {
-  // Check available networks and use datil-dev if available, otherwise fallback
-  if ('DatilDev' in LIT_NETWORK) {
-    return LIT_NETWORK.DatilDev as LitNetworkType;
-  }
-  // Fallback for different versions
-  if ('datilDev' in LIT_NETWORK) {
-    return (LIT_NETWORK as Record<string, LitNetworkType>).datilDev;
-  }
-  // Last resort - use string literal
-  return 'datil-dev' as LitNetworkType;
-}
-
-/**
  * Initialize or get existing Lit Node client
  * Uses Datil-dev network (free development network)
  */
@@ -74,10 +66,13 @@ export async function initLitClient(): Promise<LitNodeClient> {
     return litNodeClient;
   }
 
-  const network = getLitNetwork();
-  
+  // Use DatilDev network - cast to any to avoid type conflicts between versions
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const network = (LIT_NETWORK as any).DatilDev || 'datil-dev';
+
   litNodeClient = new LitNodeClient({
-    litNetwork: network,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    litNetwork: network as any,
     debug: false,
   });
 
@@ -104,7 +99,7 @@ export async function disconnectLitClient(): Promise<void> {
  */
 function createOwnerOnlyAccessControlConditions(
   walletAddress: string
-): AccessControlConditions {
+): EvmBasicAccessControlCondition[] {
   return [
     {
       contractAddress: '',
@@ -165,12 +160,17 @@ async function getSessionSigs(
   // Create the resource for access control condition decryption
   const litResource = new LitAccessControlConditionResource('*');
   
+  // Use LIT_ABILITY from constants - cast to avoid type conflicts between versions
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const decryptionAbility = (LIT_ABILITY as any).AccessControlConditionDecryption;
+  
   const sessionSigs = await client.getSessionSigs({
     chain: 'ethereum',
     resourceAbilityRequests: [
       {
-        resource: litResource,
-        ability: LitAbility.AccessControlConditionDecryption,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        resource: litResource as any,
+        ability: decryptionAbility,
       },
     ],
     authNeededCallback: async () => {
@@ -182,14 +182,12 @@ async function getSessionSigs(
 }
 
 /**
- * Convert Uint8Array to a format compatible with Blob constructor
- * Handles TypeScript strict type checking for ArrayBuffer compatibility
+ * Convert Uint8Array to ArrayBuffer safely for Blob constructor
  */
-function uint8ArrayToBuffer(data: Uint8Array): ArrayBuffer {
-  // Create a new ArrayBuffer and copy the data
-  const buffer = new ArrayBuffer(data.length);
-  const view = new Uint8Array(buffer);
-  view.set(data);
+function toArrayBuffer(data: Uint8Array): ArrayBuffer {
+  // Create a new ArrayBuffer and copy the data to avoid SharedArrayBuffer issues
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
   return buffer;
 }
 
@@ -217,16 +215,16 @@ export async function encryptVideo(
   const fileBuffer = await file.arrayBuffer();
   const fileUint8Array = new Uint8Array(fileBuffer);
   
-  // Encrypt the file
+  // Encrypt the file - cast accessControlConditions to avoid version type conflicts
   const encryptResponse = await client.encrypt({
-    accessControlConditions,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accessControlConditions: accessControlConditions as any,
     dataToEncrypt: fileUint8Array,
   });
 
   onProgress?.('Encryption complete');
   
   // Create blob from ciphertext for storage
-  // The ciphertext is base64 encoded, we store it as-is
   const encryptedBlob = new Blob([encryptResponse.ciphertext], {
     type: 'application/octet-stream',
   });
@@ -270,9 +268,10 @@ export async function decryptVideo(
     ? encryptedData 
     : metadata.ciphertext;
 
-  // Decrypt the file
+  // Decrypt the file - cast accessControlConditions to avoid version type conflicts
   const decryptResponse = await client.decrypt({
-    accessControlConditions: metadata.accessControlConditions,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accessControlConditions: metadata.accessControlConditions as any,
     chain: metadata.chain,
     ciphertext,
     dataToEncryptHash: metadata.dataToEncryptHash,
@@ -281,8 +280,8 @@ export async function decryptVideo(
 
   onProgress?.('Decryption complete');
   
-  // Convert decrypted data to blob using compatible buffer conversion
-  const decryptedBuffer = uint8ArrayToBuffer(decryptResponse.decryptedData);
+  // Convert decrypted data to blob using safe buffer conversion
+  const decryptedBuffer = toArrayBuffer(decryptResponse.decryptedData);
   const decryptedBlob = new Blob([decryptedBuffer], {
     type: 'video/mp4',
   });
@@ -315,9 +314,10 @@ export async function encryptFileForStorage(
   
   const fileUint8Array = new Uint8Array(fileBuffer);
   
-  // Encrypt the file
+  // Encrypt the file - cast accessControlConditions to avoid version type conflicts
   const encryptResponse = await client.encrypt({
-    accessControlConditions,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accessControlConditions: accessControlConditions as any,
     dataToEncrypt: fileUint8Array,
   });
 
@@ -361,9 +361,10 @@ export async function decryptFileFromStorage(
 
   onProgress?.('Decrypting file...');
   
-  // Decrypt the file using metadata's ciphertext
+  // Decrypt the file using metadata's ciphertext - cast to avoid version type conflicts
   const decryptResponse = await client.decrypt({
-    accessControlConditions: metadata.accessControlConditions,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accessControlConditions: metadata.accessControlConditions as any,
     chain: metadata.chain,
     ciphertext: metadata.ciphertext,
     dataToEncryptHash: metadata.dataToEncryptHash,
@@ -372,8 +373,8 @@ export async function decryptFileFromStorage(
 
   onProgress?.('Decryption complete');
   
-  // Convert decrypted data to blob using compatible buffer conversion
-  const decryptedBuffer = uint8ArrayToBuffer(decryptResponse.decryptedData);
+  // Convert decrypted data to blob using safe buffer conversion
+  const decryptedBuffer = toArrayBuffer(decryptResponse.decryptedData);
   const decryptedBlob = new Blob([decryptedBuffer], {
     type: mimeType,
   });

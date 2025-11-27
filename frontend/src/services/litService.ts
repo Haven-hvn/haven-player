@@ -1,5 +1,5 @@
 import { LitNodeClient } from '@lit-protocol/lit-node-client';
-import { LIT_NETWORK, LIT_RPC } from '@lit-protocol/constants';
+import { LIT_NETWORK } from '@lit-protocol/constants';
 import { LitAbility, LitAccessControlConditionResource } from '@lit-protocol/auth-helpers';
 import type {
   AccessControlConditions,
@@ -7,6 +7,9 @@ import type {
   AuthSig,
 } from '@lit-protocol/types';
 import { ethers } from 'ethers';
+
+// Network type for Lit Protocol
+type LitNetworkType = (typeof LIT_NETWORK)[keyof typeof LIT_NETWORK];
 
 // Lit encryption metadata stored alongside the encrypted file
 export interface LitEncryptionMetadata {
@@ -46,6 +49,23 @@ export function getWalletAddressFromPrivateKey(privateKey: string): string {
 }
 
 /**
+ * Get the appropriate network for Lit Protocol
+ * Uses datil-dev for development (free network)
+ */
+function getLitNetwork(): LitNetworkType {
+  // Check available networks and use datil-dev if available, otherwise fallback
+  if ('DatilDev' in LIT_NETWORK) {
+    return LIT_NETWORK.DatilDev as LitNetworkType;
+  }
+  // Fallback for different versions
+  if ('datilDev' in LIT_NETWORK) {
+    return (LIT_NETWORK as Record<string, LitNetworkType>).datilDev;
+  }
+  // Last resort - use string literal
+  return 'datil-dev' as LitNetworkType;
+}
+
+/**
  * Initialize or get existing Lit Node client
  * Uses Datil-dev network (free development network)
  */
@@ -54,13 +74,15 @@ export async function initLitClient(): Promise<LitNodeClient> {
     return litNodeClient;
   }
 
+  const network = getLitNetwork();
+  
   litNodeClient = new LitNodeClient({
-    litNetwork: LIT_NETWORK.DatilDev as 'datil-dev',
+    litNetwork: network,
     debug: false,
   });
 
   await litNodeClient.connect();
-  console.log('[Lit] Connected to Lit network (Datil-dev)');
+  console.log(`[Lit] Connected to Lit network (${network})`);
 
   return litNodeClient;
 }

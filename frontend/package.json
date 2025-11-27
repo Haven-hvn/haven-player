@@ -9,8 +9,8 @@
     "make": "npm run build && electron-forge make",
     "dev": "concurrently \"npm run watch\" \"npm run start:dev\"",
     "start:dev": "cross-env NODE_ENV=development electron-forge start",
-    "watch": "webpack --config webpack.config.js --watch",
-    "build": "webpack --config webpack.config.js",
+    "watch": "cross-env NODE_OPTIONS=--max-old-space-size=8192 webpack --config webpack.config.js --watch",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=8192 webpack --config webpack.config.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
@@ -62,5 +62,8 @@
     "react-dom": "19.2.0",
     "react-player": "3.4.0",
     "react-router-dom": "7.9.6"
+  },
+  "overrides": {
+    "use-sync-external-store": "^1.4.0"
   }
 }

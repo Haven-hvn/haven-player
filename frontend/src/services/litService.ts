@@ -1,8 +1,8 @@
 import { LitNodeClient } from '@lit-protocol/lit-node-client';
-import { LIT_NETWORK, LIT_ABILITY } from '@lit-protocol/constants';
+import { LIT_NETWORK, LIT_RPC } from '@lit-protocol/constants';
+import { LitAbility, LitAccessControlConditionResource } from '@lit-protocol/auth-helpers';
 import type {
   AccessControlConditions,
-  EncryptResponse,
   SessionSigsMap,
   AuthSig,
 } from '@lit-protocol/types';
@@ -55,7 +55,7 @@ export async function initLitClient(): Promise<LitNodeClient> {
   }
 
   litNodeClient = new LitNodeClient({
-    litNetwork: LIT_NETWORK.DatilDev,
+    litNetwork: LIT_NETWORK.DatilDev as 'datil-dev',
     debug: false,
   });
 
@@ -136,20 +136,39 @@ Issued At: ${new Date().toISOString()}`;
  */
 async function getSessionSigs(
   client: LitNodeClient,
-  privateKey: string,
-  resourceAbilityRequests: { resource: { resource: string; resourcePrefix: string }; ability: string }[]
+  privateKey: string
 ): Promise<SessionSigsMap> {
   const authSig = await createAuthSigFromPrivateKey(privateKey);
   
+  // Create the resource for access control condition decryption
+  const litResource = new LitAccessControlConditionResource('*');
+  
   const sessionSigs = await client.getSessionSigs({
     chain: 'ethereum',
-    resourceAbilityRequests,
+    resourceAbilityRequests: [
+      {
+        resource: litResource,
+        ability: LitAbility.AccessControlConditionDecryption,
+      },
+    ],
     authNeededCallback: async () => {
       return authSig;
     },
   });
 
   return sessionSigs;
+}
+
+/**
+ * Convert Uint8Array to a format compatible with Blob constructor
+ * Handles TypeScript strict type checking for ArrayBuffer compatibility
+ */
+function uint8ArrayToBuffer(data: Uint8Array): ArrayBuffer {
+  // Create a new ArrayBuffer and copy the data
+  const buffer = new ArrayBuffer(data.length);
+  const view = new Uint8Array(buffer);
+  view.set(data);
+  return buffer;
 }
 
 /**
@@ -177,7 +196,7 @@ export async function encryptVideo(
   const fileUint8Array = new Uint8Array(fileBuffer);
   
   // Encrypt the file
-  const encryptResponse: EncryptResponse = await client.encrypt({
+  const encryptResponse = await client.encrypt({
     accessControlConditions,
     dataToEncrypt: fileUint8Array,
   });
@@ -220,15 +239,7 @@ export async function decryptVideo(
   onProgress?.('Authenticating wallet...');
   
   // Get session signatures for decryption
-  const sessionSigs = await getSessionSigs(client, privateKey, [
-    {
-      resource: {
-        resource: '*',
-        resourcePrefix: 'lit-accesscontrolcondition',
-      },
-      ability: LIT_ABILITY.AccessControlConditionDecryption,
-    },
-  ]);
+  const sessionSigs = await getSessionSigs(client, privateKey);
 
   onProgress?.('Decrypting video...');
   
@@ -248,8 +259,9 @@ export async function decryptVideo(
 
   onProgress?.('Decryption complete');
   
-  // Convert decrypted data to blob
-  const decryptedBlob = new Blob([decryptResponse.decryptedData], {
+  // Convert decrypted data to blob using compatible buffer conversion
+  const decryptedBuffer = uint8ArrayToBuffer(decryptResponse.decryptedData);
+  const decryptedBlob = new Blob([decryptedBuffer], {
     type: 'video/mp4',
   });
 
@@ -282,7 +294,7 @@ export async function encryptFileForStorage(
   const fileUint8Array = new Uint8Array(fileBuffer);
   
   // Encrypt the file
-  const encryptResponse: EncryptResponse = await client.encrypt({
+  const encryptResponse = await client.encrypt({
     accessControlConditions,
     dataToEncrypt: fileUint8Array,
   });
@@ -323,15 +335,7 @@ export async function decryptFileFromStorage(
   onProgress?.('Authenticating wallet...');
   
   // Get session signatures for decryption
-  const sessionSigs = await getSessionSigs(client, privateKey, [
-    {
-      resource: {
-        resource: '*',
-        resourcePrefix: 'lit-accesscontrolcondition',
-      },
-      ability: LIT_ABILITY.AccessControlConditionDecryption,
-    },
-  ]);
+  const sessionSigs = await getSessionSigs(client, privateKey);
 
   onProgress?.('Decrypting file...');
   
@@ -346,8 +350,9 @@ export async function decryptFileFromStorage(
 
   onProgress?.('Decryption complete');
   
-  // Convert decrypted data to blob
-  const decryptedBlob = new Blob([decryptResponse.decryptedData], {
+  // Convert decrypted data to blob using compatible buffer conversion
+  const decryptedBuffer = uint8ArrayToBuffer(decryptResponse.decryptedData);
+  const decryptedBlob = new Blob([decryptedBuffer], {
     type: mimeType,
   });
 
@@ -374,4 +379,3 @@ export function serializeEncryptionMetadata(metadata: LitEncryptionMetadata): st
 export function deserializeEncryptionMetadata(metadataJson: string): LitEncryptionMetadata {
   return JSON.parse(metadataJson) as LitEncryptionMetadata;
 }
-

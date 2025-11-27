@@ -260,7 +260,12 @@ export async function uploadVideoToFilecoin(
         encryptionMetadata = encryptResult.metadata;
         
         // Create a new File from the encrypted data
-        const encryptedBlob = new Blob([encryptResult.encryptedData], {
+        // Convert Uint8Array to ArrayBuffer for Blob compatibility
+        const encryptedBuffer = encryptResult.encryptedData.buffer.slice(
+          encryptResult.encryptedData.byteOffset,
+          encryptResult.encryptedData.byteOffset + encryptResult.encryptedData.byteLength
+        );
+        const encryptedBlob = new Blob([encryptedBuffer], {
           type: 'application/octet-stream',
         });
         fileToUpload = new File([encryptedBlob], `${file.name}.encrypted`, {

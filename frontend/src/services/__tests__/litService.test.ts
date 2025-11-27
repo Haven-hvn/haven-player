@@ -27,9 +27,18 @@ jest.mock('@lit-protocol/constants', () => ({
   LIT_NETWORK: {
     DatilDev: 'datil-dev',
   },
-  LIT_ABILITY: {
+  LIT_RPC: {},
+}));
+
+jest.mock('@lit-protocol/auth-helpers', () => ({
+  LitAbility: {
     AccessControlConditionDecryption: 'access-control-condition-decryption',
   },
+  LitAccessControlConditionResource: jest.fn().mockImplementation((resource: string) => ({
+    resource,
+    getResourceKey: jest.fn().mockReturnValue(resource),
+    isValidLitAbility: jest.fn().mockReturnValue(true),
+  })),
 }));
 
 describe('litService', () => {

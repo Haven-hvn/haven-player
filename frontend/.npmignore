@@ -1,0 +1,30 @@
+# NPM ignore file
+# This file controls what gets published to npm (if ever)
+
+# Source files
+src/
+
+# Test files
+**/__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# Config files
+tsconfig.json
+webpack.config.js
+jest.config.js
+.eslintrc*
+.prettierrc*
+
+# Development files
+.env*
+*.log
+coverage/
+
+# Build artifacts handled separately
+dist/
+node_modules/
+
+

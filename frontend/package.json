@@ -53,6 +53,7 @@
     "@lit-protocol/types": "8.0.2",
     "@mui/icons-material": "7.3.6",
     "@mui/material": "7.3.6",
+    "@walletconnect/modal": "2.6.2",
     "axios": "1.13.2",
     "ethers": "6.16.0",
     "filecoin-pin": "0.13.0",

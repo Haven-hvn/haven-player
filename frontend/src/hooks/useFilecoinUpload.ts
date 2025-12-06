@@ -114,6 +114,13 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           errorMessage = errorMessage.substring('Filecoin upload failed: '.length);
         }
         
+        // Ensure errors surface in logs for debugging instead of failing silently in the renderer.
+        // eslint-disable-next-line no-console
+        console.error('[Filecoin Upload] Upload failed', {
+          videoPath,
+          error: error instanceof Error ? { message: error.message, stack: error.stack, name: error.name } : error,
+        });
+
         setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
           ...prev,
           [videoPath]: {

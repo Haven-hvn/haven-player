@@ -1,8 +1,8 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-expect-error - createCarFromFile may not be properly exported from filecoin-pin/core
 import { createCarFromFile } from 'filecoin-pin/core';
-import { 
-  initializeSynapse as initSynapse, 
+import {
+  initializeSynapse as initSynapse,
   createStorageContext,
   cleanupSynapseService,
   type SynapseService,
@@ -164,17 +164,19 @@ async function initializeSynapseSDK(
       },
     };
 
-    // Try calling initSynapse with logger first
+    const initParams: { config: typeof initConfig; logger?: ReturnType<typeof createLogger> } = {
+      config: initConfig,
+      logger,
+    };
+
+    // Try calling initSynapse with logger first (new single-object signature)
     let initPromise: Promise<unknown>;
     try {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
-      initPromise = initSynapse(initConfig, logger);
+      initPromise = initSynapse(initParams);
     } catch (syncError) {
-      // If synchronous error (e.g., wrong parameter format), try without logger
+      // If synchronous error (e.g., logger rejected), retry without logger
       logger.warn('initSynapse failed with logger, trying without logger', { error: syncError });
-      // @ts-expect-error - Logger might be optional
-      initPromise = initSynapse(initConfig);
+      initPromise = initSynapse({ config: initConfig });
     }
 
     logger.info('Waiting for initSynapse to resolve...');

@@ -7,12 +7,12 @@ jest.mock('filecoin-pin/core', () => ({
   })),
 }));
 
-const initSynapseMock = jest.fn(async () => ({ synapse: 'synapse-instance' }));
-const createStorageContextMock = jest.fn(async () => ({
+const initSynapseMock = jest.fn(async (..._args: unknown[]) => ({ synapse: 'synapse-instance' }));
+const createStorageContextMock = jest.fn(async (..._args: unknown[]) => ({
   storage: 'storage-context',
   providerInfo: {},
 }));
-const cleanupSynapseServiceMock = jest.fn(async () => undefined);
+const cleanupSynapseServiceMock = jest.fn(async (..._args: unknown[]) => undefined);
 
 jest.mock('filecoin-pin/core/synapse', () => ({
   initializeSynapse: (...args: unknown[]) => initSynapseMock(...args),
@@ -20,12 +20,12 @@ jest.mock('filecoin-pin/core/synapse', () => ({
   cleanupSynapseService: (...args: unknown[]) => cleanupSynapseServiceMock(...args),
 }));
 
-const checkUploadReadinessMock = jest.fn(async () => ({
+const checkUploadReadinessMock = jest.fn(async (..._args: unknown[]) => ({
   status: 'ready',
   validation: {},
   suggestions: [],
 }));
-const executeUploadMock = jest.fn(async () => ({
+const executeUploadMock = jest.fn(async (..._args: unknown[]) => ({
   pieceCid: 'pieceCid',
   pieceId: 42,
   dataSetId: 'dataSet',
@@ -70,7 +70,7 @@ describe('filecoinService initializeSynapseSDK', () => {
     });
 
     expect(initSynapseMock).toHaveBeenCalledTimes(1);
-    const callArg = initSynapseMock.mock.calls[0][0] as { config: { privateKey: string; rpcUrl: string } };
+    const callArg = initSynapseMock.mock.calls[0][0] as { config: { privateKey: string; rpcUrl: string }; logger?: unknown };
     expect(callArg.config.privateKey).toBe(`0x${'a'.repeat(64)}`);
     expect(callArg.config.rpcUrl).toBe('http://localhost:8545');
     expect(callArg.logger).toBeDefined();

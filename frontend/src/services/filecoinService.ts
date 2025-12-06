@@ -169,14 +169,20 @@ async function initializeSynapseSDK(
       logger,
     };
 
+    // Cast to the new single-object signature to satisfy TS typings from filecoin-pin.
+    const initSynapseFn = initSynapse as unknown as (params: {
+      config: typeof initConfig;
+      logger?: ReturnType<typeof createLogger>;
+    }) => Promise<unknown>;
+
     // Try calling initSynapse with logger first (new single-object signature)
     let initPromise: Promise<unknown>;
     try {
-      initPromise = initSynapse(initParams);
+      initPromise = initSynapseFn(initParams);
     } catch (syncError) {
       // If synchronous error (e.g., logger rejected), retry without logger
       logger.warn('initSynapse failed with logger, trying without logger', { error: syncError });
-      initPromise = initSynapse({ config: initConfig });
+      initPromise = initSynapseFn({ config: initConfig });
     }
 
     logger.info('Waiting for initSynapse to resolve...');

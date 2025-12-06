@@ -169,21 +169,33 @@ async function initializeSynapseSDK(
       logger,
     };
 
-    // Cast to the new single-object signature to satisfy TS typings from filecoin-pin.
-    const initSynapseFn = initSynapse as unknown as (params: {
-      config: typeof initConfig;
-      logger?: ReturnType<typeof createLogger>;
-    }) => Promise<unknown>;
+    // Helper to normalize initSynapse invocation across versions/signatures.
+    const callInitSynapse = (): Promise<unknown> => {
+      const initAsAny = initSynapse as unknown as (...args: unknown[]) => Promise<unknown>;
 
-    // Try calling initSynapse with logger first (new single-object signature)
-    let initPromise: Promise<unknown>;
-    try {
-      initPromise = initSynapseFn(initParams);
-    } catch (syncError) {
-      // If synchronous error (e.g., logger rejected), retry without logger
-      logger.warn('initSynapse failed with logger, trying without logger', { error: syncError });
-      initPromise = initSynapseFn({ config: initConfig });
-    }
+      // 1) Try new single-object signature
+      try {
+        return initAsAny(initParams);
+      } catch (newSigError) {
+        logger.warn('initSynapse (new signature) failed, falling back to legacy', {
+          error: newSigError instanceof Error ? newSigError.message : newSigError,
+        });
+      }
+
+      // 2) Try legacy (config, logger)
+      try {
+        return initAsAny(initConfig, logger);
+      } catch (legacyErrorWithLogger) {
+        logger.warn('initSynapse (legacy with logger) failed, retrying without logger', {
+          error: legacyErrorWithLogger instanceof Error ? legacyErrorWithLogger.message : legacyErrorWithLogger,
+        });
+      }
+
+      // 3) Final fallback: legacy (config)
+      return initAsAny(initConfig);
+    };
+
+    const initPromise = callInitSynapse();
 
     logger.info('Waiting for initSynapse to resolve...');
     

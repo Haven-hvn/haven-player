@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { registerRenderCrashLogger } from './utils/registerRenderCrashLogger';
 
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
@@ -17,6 +18,8 @@ function createWindow() {
       // TODO: Improve security later with preload script
     },
   });
+
+  registerRenderCrashLogger(mainWindow.webContents);
 
   // Always load from local files unless explicitly in dev mode with --dev flag
   const indexPath = path.join(__dirname, 'index.html');

@@ -81,7 +81,7 @@ describe('filecoinService initializeSynapseSDK', () => {
       .mockImplementationOnce(() => {
         throw new Error('new signature fail');
       })
-      .mockImplementationOnce(async (config: unknown, logger: unknown) => ({ config, logger }))
+      .mockImplementationOnce(async (..._args: unknown[]) => ({ synapse: 'legacy-instance' }))
       .mockImplementation(async (..._args: unknown[]) => ({ synapse: 'synapse-instance' }));
 
     const file = new File([new Uint8Array([1, 2])], 'video.mp4', { type: 'video/mp4' });

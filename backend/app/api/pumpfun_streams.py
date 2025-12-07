@@ -204,6 +204,7 @@ async def get_stream_connection_details(mint_id: str):
             "room_name": stream_info.room_name,
             "participant_sid": stream_info.participant_sid,
             "livekit_url": stream_info.stream_url,
+            "ingest_url": stream_info.ingest_url,
             "token": token,
             "role": "viewer",
             "stream_data": stream_info.stream_data,

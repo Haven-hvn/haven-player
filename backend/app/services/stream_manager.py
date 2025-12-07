@@ -25,6 +25,7 @@ class StreamInfo:
     room_name: str
     participant_sid: str
     stream_url: str
+    ingest_url: Optional[str]
     token: str
     stream_data: Dict[str, Any]
 
@@ -95,6 +96,8 @@ class StreamManager:
             if not stream_info:
                 return {"success": False, "error": f"No stream found for mint_id: {mint_id}"}
 
+            ingest_url = self._extract_ingest_url(stream_info)
+
             # Get LiveKit token
             token = await self.pumpfun_service.get_livestream_token(mint_id)
             if not token:
@@ -164,6 +167,7 @@ class StreamManager:
                                     room_name=existing_room.name,
                                     participant_sid=p.sid,
                                     stream_url=self.config.livekit_url,
+                                    ingest_url=self._extract_ingest_url(base_stream_data),
                                     token=token, # Reuse the fresh token we just got
                                     stream_data=base_stream_data
                                 )
@@ -292,6 +296,7 @@ class StreamManager:
                 room_name=room.name,
                 participant_sid=participant_sid,
                 stream_url=livekit_url,
+                ingest_url=ingest_url,
                 token=token,
                 stream_data=stream_info
             )
@@ -473,7 +478,31 @@ class StreamManager:
                 "mint_id": stream_info.mint_id,
                 "room_name": stream_info.room_name,
                 "participant_sid": stream_info.participant_sid,
-                "stream_data": stream_info.stream_data
+                "stream_data": stream_info.stream_data,
+                "ingest_url": stream_info.ingest_url
             }
             for mint_id, stream_info in self.active_streams.items()
         }
+
+    def _extract_ingest_url(self, stream_data: Optional[Dict[str, Any]]) -> Optional[str]:
+        """
+        Select a pull-friendly ingest URL from pump.fun stream metadata.
+        Deterministic priority: VOD/master playlist → live playlists → MP4 fallback.
+        """
+        if not stream_data:
+            return None
+
+        candidate_keys = [
+            "vod_playlist_url",
+            "playlist_url_high",
+            "playlist_url",
+            "playlist_url_low",
+            "video_uri",
+        ]
+
+        for key in candidate_keys:
+            value = stream_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        return None

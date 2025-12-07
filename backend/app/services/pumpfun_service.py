@@ -280,6 +280,19 @@ class PumpFunService:
         Returns:
             Formatted stream data
         """
+        # Prefer VOD/master playlists, then live playlists, then MP4 fallback
+        ingest_candidates = [
+            stream.get("vod_playlist_url"),
+            stream.get("playlist_url_high"),
+            stream.get("playlist_url"),
+            stream.get("playlist_url_low"),
+            stream.get("video_uri"),
+        ]
+        ingest_url = next(
+            (url for url in ingest_candidates if isinstance(url, str) and url.strip()),
+            None,
+        )
+
         return {
             "mint_id": stream.get("mint"),
             "name": stream.get("name"),
@@ -297,5 +310,6 @@ class PumpFunService:
             "nsfw": stream.get("nsfw", False),
             "website": stream.get("website"),
             "twitter": stream.get("twitter"),
-            "telegram": stream.get("telegram")
+            "telegram": stream.get("telegram"),
+            "ingest_url": ingest_url.strip() if ingest_url else None,
         }

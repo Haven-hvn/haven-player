@@ -118,6 +118,22 @@ async function derivePieceCid(
     return undefined;
   }
 
+  // Discover keys across prototype chain (own + non-enumerable)
+  const protoKeys: string[] = [];
+  const maxDepth = 5;
+  let current: unknown = storageObj;
+  for (let depth = 0; depth < maxDepth && current && typeof current === 'object'; depth += 1) {
+    try {
+      const keys = Reflect.ownKeys(current)
+        .map((k) => (typeof k === 'string' ? k : k.toString()))
+        .filter((k) => k !== '__proto__');
+      protoKeys.push(...keys);
+    } catch {
+      // ignore
+    }
+    current = Object.getPrototypeOf(current);
+  }
+
   const candidates: Array<{ name: string; argType: 'path' | 'bytes' }> = [];
   const seen = new Set<string>();
   const addCandidate = (name: string, argType: 'path' | 'bytes') => {
@@ -162,8 +178,8 @@ async function derivePieceCid(
   ].forEach(({ name, argType }) => addCandidate(name, argType));
 
   // Dynamically discover any piece/comm/cid helpers exposed by storage
-  const dynamicKeys = Object.keys(storageObj).filter((key) => {
-    const val = storageObj[key];
+  const dynamicKeys = Array.from(new Set(protoKeys)).filter((key) => {
+    const val = (storageObj as Record<string, unknown>)[key];
     return typeof val === 'function' && /(piece|cid|comm)/i.test(key);
   });
   dynamicKeys.forEach((name) => {
@@ -199,6 +215,7 @@ async function derivePieceCid(
   logger.warn('Unable to derive PieceCID from storage helpers; proceeding without one', {
     attemptedMethods: Array.from(new Set(attempted)).slice(0, 50),
     discoveredMethods: dynamicKeys.slice(0, 50),
+    discoveredPrototypeKeys: protoKeys.slice(0, 50),
   });
   return undefined;
 }

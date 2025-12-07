@@ -107,6 +107,68 @@ const SOURCE_TMP_PREFIX = 'haven-filecoin-src-';
 
 const unixfsCarBuilder = createUnixfsCarBuilder();
 
+async function derivePieceCid(
+  storage: unknown,
+  carPath: string,
+  carBytes: Uint8Array,
+  logger: Logger
+): Promise<string | undefined> {
+  const candidates: Array<{ name: string; argType: 'path' | 'bytes' }> = [
+    { name: 'generatePieceCidFromFile', argType: 'path' },
+    { name: 'generatePieceCIDFromFile', argType: 'path' },
+    { name: 'generatePieceCidFromCAR', argType: 'path' },
+    { name: 'generatePieceCIDFromCAR', argType: 'path' },
+    { name: 'calculatePieceCidFromCAR', argType: 'path' },
+    { name: 'calculatePieceCIDFromCAR', argType: 'path' },
+    { name: 'calculatePieceCid', argType: 'path' },
+    { name: 'calculatePieceCID', argType: 'path' },
+    { name: 'getPieceCidFromFile', argType: 'path' },
+    { name: 'getPieceCIDFromFile', argType: 'path' },
+    { name: 'getPieceCidFromCAR', argType: 'path' },
+    { name: 'getPieceCIDFromCAR', argType: 'path' },
+    { name: 'pieceCidFromFile', argType: 'path' },
+    { name: 'pieceCIDFromFile', argType: 'path' },
+    { name: 'pieceCidFromCAR', argType: 'path' },
+    { name: 'pieceCIDFromCAR', argType: 'path' },
+    { name: 'pieceCid', argType: 'path' },
+    { name: 'pieceCID', argType: 'path' },
+    { name: 'calculatePieceCidFromBytes', argType: 'bytes' },
+    { name: 'calculatePieceCIDFromBytes', argType: 'bytes' },
+    { name: 'generatePieceCidFromBytes', argType: 'bytes' },
+    { name: 'generatePieceCIDFromBytes', argType: 'bytes' },
+  ];
+
+  const storageObj = storage as Record<string, unknown> | undefined;
+  if (!storageObj) {
+    return undefined;
+  }
+
+  for (const candidate of candidates) {
+    const maybeFn = storageObj[candidate.name];
+    if (typeof maybeFn !== 'function') {
+      continue;
+    }
+
+    try {
+      const arg = candidate.argType === 'path' ? carPath : carBytes;
+      const result = await (maybeFn as (input: unknown) => unknown).call(storageObj, arg);
+      if (result) {
+        const pieceCid = `${result}`;
+        logger.info('Derived PieceCID from storage helper', { pieceCid, method: candidate.name });
+        return pieceCid;
+      }
+    } catch (error) {
+      logger.warn('PieceCID derivation attempt failed', {
+        method: candidate.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  logger.warn('Unable to derive PieceCID from storage helpers; proceeding without one');
+  return undefined;
+}
+
 async function runCleanup(cleanups: CleanupCallback[], logger: ReturnType<typeof createLogger>, context: string): Promise<void> {
   // Run in reverse order to unwind resources
   const tasks = [...cleanups].reverse();
@@ -560,6 +622,9 @@ export async function uploadVideoToFilecoin(
       providerInfo 
     };
 
+    // Derive PieceCID if the storage helper provides one (required by PDP upload)
+    const pieceCid = await derivePieceCid(storage, carPath, carBytes, logger);
+
     onProgress?.({
       stage: 'uploading',
       progress: 80,
@@ -573,6 +638,7 @@ export async function uploadVideoToFilecoin(
       logger,
       contextId: file.name,
       carPath,
+      pieceCid,
       onProgress: (event: { type: string; data?: { retryCount?: number } }) => {
         switch (event.type) {
           case 'onUploadComplete': {

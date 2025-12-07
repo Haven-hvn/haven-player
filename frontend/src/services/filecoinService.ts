@@ -1,4 +1,8 @@
-import { createCarFromFile } from 'filecoin-pin/core';
+import {
+  createUnixfsCarBuilder,
+  type CarBuildResult,
+  type CreateCarOptions,
+} from 'filecoin-pin/core/unixfs';
 import {
   initializeSynapse as initSynapse,
   createStorageContext,
@@ -13,15 +17,16 @@ type SynapseServiceShape = {
   providerInfo: unknown;
 };
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
 import { 
   encryptFileForStorage, 
   serializeEncryptionMetadata,
   type LitEncryptionMetadata,
 } from '@/services/litService';
+import { Buffer } from 'buffer';
+import { mkdtemp, readFile as readFileFromFs, rm, writeFile } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 // Simple logger for browser environment that matches filecoin-pin's Logger interface
 // LogFn expects (msg: string, ...args: unknown[]) signature
@@ -79,6 +84,65 @@ export interface UploadOptions {
   onProgress?: (progress: UploadProgress) => void;
 }
 
+type CleanupCallback = () => Promise<void>;
+
+interface PreparedSourcePath {
+  sourcePath: string;
+  cleanup?: CleanupCallback;
+}
+
+interface CarCreationResult {
+  carBytes: Uint8Array;
+  rootCid: string;
+  carPath: string;
+  carSize?: number;
+  cleanupTasks: CleanupCallback[];
+}
+
+const SOURCE_TMP_PREFIX = 'haven-filecoin-src-';
+
+const unixfsCarBuilder = createUnixfsCarBuilder();
+
+async function runCleanup(cleanups: CleanupCallback[], logger: ReturnType<typeof createLogger>, context: string): Promise<void> {
+  // Run in reverse order to unwind resources
+  const tasks = [...cleanups].reverse();
+  for (const cleanup of tasks) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      logger.warn(`Cleanup warning during ${context}`, { error: message });
+    }
+  }
+}
+
+async function persistFileToTempPath(
+  file: File,
+  logger: ReturnType<typeof createLogger>,
+  reason: 'encrypted' | 'missing-file-path'
+): Promise<PreparedSourcePath> {
+  const tempDir = await mkdtemp(join(tmpdir(), SOURCE_TMP_PREFIX));
+  const safeName = file.name && file.name.trim() ? file.name : 'upload.bin';
+  const tempFilePath = join(tempDir, safeName);
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await writeFile(tempFilePath, buffer);
+
+  logger.info('Persisted upload file to temporary path for CAR creation', {
+    tempFilePath,
+    reason,
+    size: buffer.byteLength,
+  });
+
+  return {
+    sourcePath: tempFilePath,
+    cleanup: async () => {
+      await rm(tempDir, { recursive: true, force: true });
+      logger.debug('Cleaned up temporary upload file', { tempDir });
+    },
+  };
+}
+
 /**
  * Normalize private key by ensuring it has 0x prefix
  * MetaMask exports private keys without 0x, but filecoin-pin expects it
@@ -98,34 +162,70 @@ async function createCarFromVideo(
   file: File,
   onProgress?: (progress: UploadProgress) => void,
   isEncrypted: boolean = false,
-  logger?: ReturnType<typeof createLogger>
-): Promise<{ carBytes: Uint8Array; rootCid: string; pieceCid?: string; carPath?: string }> {
-  onProgress?.({
-    stage: 'creating-car',
-    progress: 0,
-    message: 'Creating CAR file from video...',
-  });
+  logger?: ReturnType<typeof createLogger>,
+  providedFilePath?: string
+): Promise<CarCreationResult> {
+  if (!logger) {
+    throw new Error('Logger is required for CAR creation');
+  }
 
-    const result = await (createCarFromFile as unknown as (f: File, opts: { onProgress?: (processed: number, total: number) => void }) => Promise<{ carBytes: Uint8Array; rootCid: unknown; pieceCid?: unknown; carPath?: string }>)(file, {
-    onProgress: (bytesProcessed: number, totalBytes: number) => {
-      const carProgress = Math.round((bytesProcessed / totalBytes) * 100);
-      onProgress?.({
-        stage: 'creating-car',
-        progress: carProgress,
-        message: `Creating CAR file... ${carProgress}%`,
-      });
-    },
-  });
+  const cleanupTasks: CleanupCallback[] = [];
 
-  const rootCid = result.rootCid ? `${result.rootCid}` : '';
-  const pieceCid = result.pieceCid ? `${result.pieceCid}` : undefined;
+  const needsTempSource = isEncrypted || !providedFilePath;
+  const preparedSource = needsTempSource
+    ? await persistFileToTempPath(file, logger, isEncrypted ? 'encrypted' : 'missing-file-path')
+    : { sourcePath: providedFilePath };
 
-  return {
-    carBytes: result.carBytes,
-    rootCid,
-    pieceCid,
-    carPath: result.carPath,
-  };
+  if (preparedSource.cleanup) {
+    cleanupTasks.push(preparedSource.cleanup);
+  }
+
+  const createCarOptions: CreateCarOptions = { logger };
+
+  try {
+    onProgress?.({
+      stage: 'creating-car',
+      progress: 0,
+      message: 'Creating CAR file from video...',
+    });
+
+    const carBuildResult: CarBuildResult = await unixfsCarBuilder.buildCar(
+      preparedSource.sourcePath,
+      createCarOptions
+    );
+
+    cleanupTasks.push(async () => {
+      await unixfsCarBuilder.cleanup(carBuildResult.carPath, logger);
+    });
+
+    onProgress?.({
+      stage: 'creating-car',
+      progress: 50,
+      message: 'CAR file created. Reading contents...',
+    });
+
+    const carBytesBuffer = await readFileFromFs(carBuildResult.carPath);
+    const carBytes = new Uint8Array(carBytesBuffer);
+
+    onProgress?.({
+      stage: 'creating-car',
+      progress: 100,
+      message: 'CAR file ready',
+    });
+
+    const rootCid = `${carBuildResult.rootCid}`;
+
+    return {
+      carBytes,
+      rootCid,
+      carPath: carBuildResult.carPath,
+      carSize: carBuildResult.size,
+      cleanupTasks,
+    };
+  } catch (error) {
+    await runCleanup(cleanupTasks, logger, 'CAR creation');
+    throw error;
+  }
 }
 
 /**
@@ -243,7 +343,8 @@ export async function uploadVideoToFilecoin(
   options: UploadOptions
 ): Promise<FilecoinUploadResult> {
   const logger = createLogger();
-  const { file, config, onProgress } = options;
+  const { file, config, onProgress, filePath } = options;
+  const cleanupTasks: CleanupCallback[] = [];
   
   // Track encryption metadata if encryption is enabled
   let encryptionMetadata: LitEncryptionMetadata | undefined;
@@ -320,18 +421,26 @@ export async function uploadVideoToFilecoin(
     }
 
     // Step 2: Create CAR file (from encrypted or original file)
-    const { carBytes, rootCid, pieceCid, carPath } = await createCarFromVideo(
+    const {
+      carBytes,
+      rootCid,
+      carPath,
+      carSize,
+      cleanupTasks: carCleanupTasks,
+    } = await createCarFromVideo(
       fileToUpload,
       onProgress,
       isEncrypted,
-      logger
+      logger,
+      isEncrypted ? undefined : filePath
     );
+
+    cleanupTasks.push(...carCleanupTasks);
 
     // Log CAR creation result for debugging
     logger.info('CAR created', {
-      carSize: carBytes.length,
+      carSizeBytes: carSize ?? carBytes.length,
       rootCid,
-      pieceCid: pieceCid ?? 'not provided',
       carPath,
     });
 
@@ -563,8 +672,8 @@ export async function uploadVideoToFilecoin(
     
     throw new Error(`Filecoin upload failed: ${errorMessage}`);
   } finally {
-    // Always cleanup WebSocket providers to allow process termination (filecoin-pin pattern)
-    // This matches the cleanup pattern from filecoin-pin/src/add/add.ts line 217
+    // Always cleanup temporary artifacts then WebSocket providers to allow process termination (filecoin-pin pattern)
+    await runCleanup(cleanupTasks, logger, 'upload');
     try {
       await cleanupSynapseService();
     } catch (cleanupError) {

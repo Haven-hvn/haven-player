@@ -97,7 +97,7 @@ async function createCarFromVideo(
   onProgress?: (progress: UploadProgress) => void,
   filePath?: string,
   isEncrypted: boolean = false
-): Promise<{ carBytes: Uint8Array; rootCid: CID }> {
+): Promise<{ carBytes: Uint8Array; rootCid: CID; pieceCid?: CID | string }> {
   onProgress?.({
     stage: 'creating-car',
     progress: 0,
@@ -109,7 +109,16 @@ async function createCarFromVideo(
     const result = await (createCarFromPath as unknown as (p: string) => Promise<Record<string, unknown>>)(
       pathToUse
     );
+    
+    // Log what we got for debugging
+    logger.info('createCarFromPath result', {
+      keys: Object.keys(result),
+      hasRootCid: !!(result as { rootCid?: CID }).rootCid,
+      hasPieceCid: !!(result as { pieceCid?: CID | string }).pieceCid,
+    });
+    
     const rootCid = (result as { rootCid?: CID }).rootCid;
+    const pieceCid = (result as { pieceCid?: CID | string }).pieceCid;
     const rawCar =
       (result as { carBytes?: Uint8Array }).carBytes ??
       (result as { car?: Uint8Array | string }).car ??
@@ -125,15 +134,17 @@ async function createCarFromVideo(
     }
 
     if (!carBytes || !rootCid) {
-      // eslint-disable-next-line no-console
-      console.error('[Filecoin] createCarFromPath returned unexpected shape', {
+      logger.error('[Filecoin] createCarFromPath returned unexpected shape', {
         keys: Object.keys(result),
-        rootCid,
+        rootCid: !!rootCid,
+        hasCarBytes: !!carBytes,
+        rawCarType: typeof rawCar,
       });
-      throw new Error('Failed to build CAR: missing car bytes');
+      throw new Error('Failed to build CAR: missing car bytes or rootCid');
     }
 
-    return { carBytes, rootCid };
+    // Return pieceCid if available (some versions compute it)
+    return { carBytes, rootCid, pieceCid };
   };
 
   // If not encrypted and we have the original file path, prefer the path-based CAR builder.
@@ -348,12 +359,19 @@ export async function uploadVideoToFilecoin(
     }
 
     // Step 2: Create CAR file (from encrypted or original file)
-    const { carBytes, rootCid } = await createCarFromVideo(
+    const { carBytes, rootCid, pieceCid } = await createCarFromVideo(
       fileToUpload,
       onProgress,
       options.filePath,
       isEncrypted
     );
+    
+    // Log CAR creation result for debugging
+    logger.info('CAR created', {
+      carSize: carBytes.length,
+      rootCid: rootCid.toString(),
+      pieceCid: pieceCid ? (typeof pieceCid === 'string' ? pieceCid : pieceCid.toString()) : 'not provided',
+    });
 
     onProgress?.({
       stage: 'checking-payments',

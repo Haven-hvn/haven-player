@@ -62,6 +62,7 @@ module.exports = [
       alias: {
         '@': path.resolve(__dirname, 'src'),
         'process/browser': require.resolve('process/browser.js'),
+        'pino-pretty': false,
       },
       fallback: {
         "buffer": require.resolve("buffer"),

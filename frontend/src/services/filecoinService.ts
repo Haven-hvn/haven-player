@@ -516,8 +516,12 @@ export async function uploadVideoToFilecoin(
       // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
       logger,
       contextId: file.name,
-      // Pass through pieceCid/carPath if the CAR builder provided them
+      // Pass through pieceCid/carPath; include casing variants for compatibility
       pieceCid: pieceCidString,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pieceCID: pieceCidString as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      piece_cid: pieceCidString as any,
       carPath,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error - ProgressEventHandler expects specific event types, but our handler works with all event types at runtime

@@ -104,19 +104,21 @@ async function createCarFromVideo(
     message: 'Creating CAR file from video...',
   });
 
+  const buildCarFromPath = async (pathToUse: string) => {
+    // Some versions return { car }, others { carBytes }; normalize to carBytes.
+    const result = await (createCarFromPath as unknown as (p: string) => Promise<{ car?: Uint8Array; carBytes?: Uint8Array; rootCid: CID }>)(
+      pathToUse
+    );
+    const carBytes = result.carBytes ?? result.car;
+    if (!carBytes) {
+      throw new Error('Failed to build CAR: missing car bytes');
+    }
+    return { carBytes, rootCid: result.rootCid };
+  };
+
   // If not encrypted and we have the original file path, prefer the path-based CAR builder.
   if (!isEncrypted && filePath) {
-    const result = await createCarFromPath(filePath, {
-      onProgress: (bytesProcessed: number, totalBytes: number) => {
-        const carProgress = Math.round((bytesProcessed / totalBytes) * 100);
-        onProgress?.({
-          stage: 'creating-car',
-          progress: carProgress,
-          message: `Creating CAR file... ${carProgress}%`,
-        });
-      },
-    });
-    return { carBytes: result.carBytes, rootCid: result.rootCid as CID };
+    return buildCarFromPath(filePath);
   }
 
   // Fallback: write the File to a temp path and build CAR from path (works for encrypted blobs too)
@@ -124,19 +126,7 @@ async function createCarFromVideo(
   try {
     const fileBuffer = new Uint8Array(await file.arrayBuffer());
     fs.writeFileSync(tempPath, fileBuffer);
-
-    const result = await createCarFromPath(tempPath, {
-      onProgress: (bytesProcessed: number, totalBytes: number) => {
-        const carProgress = Math.round((bytesProcessed / totalBytes) * 100);
-        onProgress?.({
-          stage: 'creating-car',
-          progress: carProgress,
-          message: `Creating CAR file... ${carProgress}%`,
-        });
-      },
-    });
-
-    return { carBytes: result.carBytes, rootCid: result.rootCid as CID };
+    return await buildCarFromPath(tempPath);
   } finally {
     try {
       fs.unlinkSync(tempPath);

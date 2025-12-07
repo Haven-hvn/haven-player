@@ -177,6 +177,7 @@ ipcMain.handle(
     const result = await uploadVideoToFilecoin({
       file,
       config,
+      filePath: videoPath,
       onProgress: (progress) => {
         mainWindow?.webContents.send('filecoin-upload-progress', {
           videoPath,

@@ -1,6 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error - createCarFromFile may not be properly exported from filecoin-pin/core
-import { createCarFromFile } from 'filecoin-pin/core';
+import { createCarFromPath } from 'filecoin-pin/core';
 import {
   initializeSynapse as initSynapse,
   createStorageContext,
@@ -13,6 +11,9 @@ type Synapse = Awaited<ReturnType<typeof initSynapse>>;
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 // Use CID from multiformats - type assertion needed due to version mismatch
 import type { CID } from 'multiformats/cid';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
 import { 
   encryptFileForStorage, 
@@ -72,6 +73,7 @@ export interface UploadProgress {
 export interface UploadOptions {
   file: File;
   config: FilecoinConfig;
+  filePath?: string; // optional original path when available (used for CAR creation when not encrypted)
   onProgress?: (progress: UploadProgress) => void;
 }
 
@@ -92,7 +94,9 @@ function normalizePrivateKey(privateKey: string): string {
  */
 async function createCarFromVideo(
   file: File,
-  onProgress?: (progress: UploadProgress) => void
+  onProgress?: (progress: UploadProgress) => void,
+  filePath?: string,
+  isEncrypted: boolean = false
 ): Promise<{ carBytes: Uint8Array; rootCid: CID }> {
   onProgress?.({
     stage: 'creating-car',
@@ -100,22 +104,46 @@ async function createCarFromVideo(
     message: 'Creating CAR file from video...',
   });
 
-  let carProgress = 0;
-  const result = await createCarFromFile(file, {
-    onProgress: (bytesProcessed: number, totalBytes: number) => {
-      carProgress = Math.round((bytesProcessed / totalBytes) * 100);
-      onProgress?.({
-        stage: 'creating-car',
-        progress: carProgress,
-        message: `Creating CAR file... ${carProgress}%`,
-      });
-    },
-  });
+  // If not encrypted and we have the original file path, prefer the path-based CAR builder.
+  if (!isEncrypted && filePath) {
+    const result = await createCarFromPath(filePath, {
+      onProgress: (bytesProcessed: number, totalBytes: number) => {
+        const carProgress = Math.round((bytesProcessed / totalBytes) * 100);
+        onProgress?.({
+          stage: 'creating-car',
+          progress: carProgress,
+          message: `Creating CAR file... ${carProgress}%`,
+        });
+      },
+    });
+    return { carBytes: result.carBytes, rootCid: result.rootCid as CID };
+  }
 
-  return {
-    carBytes: result.carBytes,
-    rootCid: result.rootCid,
-  };
+  // Fallback: write the File to a temp path and build CAR from path (works for encrypted blobs too)
+  const tempPath = path.join(os.tmpdir(), `haven-upload-${Date.now()}-${file.name}.car-source`);
+  try {
+    const fileBuffer = new Uint8Array(await file.arrayBuffer());
+    fs.writeFileSync(tempPath, fileBuffer);
+
+    const result = await createCarFromPath(tempPath, {
+      onProgress: (bytesProcessed: number, totalBytes: number) => {
+        const carProgress = Math.round((bytesProcessed / totalBytes) * 100);
+        onProgress?.({
+          stage: 'creating-car',
+          progress: carProgress,
+          message: `Creating CAR file... ${carProgress}%`,
+        });
+      },
+    });
+
+    return { carBytes: result.carBytes, rootCid: result.rootCid as CID };
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
 }
 
 /**
@@ -310,7 +338,12 @@ export async function uploadVideoToFilecoin(
     }
 
     // Step 2: Create CAR file (from encrypted or original file)
-    const { carBytes, rootCid } = await createCarFromVideo(fileToUpload, onProgress);
+    const { carBytes, rootCid } = await createCarFromVideo(
+      fileToUpload,
+      onProgress,
+      options.filePath,
+      isEncrypted
+    );
 
     onProgress?.({
       stage: 'checking-payments',

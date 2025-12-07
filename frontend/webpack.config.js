@@ -22,8 +22,14 @@ module.exports = [
       extensions: ['.ts', '.js'],
       alias: {
         '@': path.resolve(__dirname, 'src'),
+        bufferutil: false,
+        'utf-8-validate': false,
+        'pino-pretty': false,
       },
     },
+    ignoreWarnings: [
+      /Critical dependency: the request of a dependency is an expression/,
+    ],
     output: {
       filename: 'main.js',
       path: path.resolve(__dirname, 'dist'),

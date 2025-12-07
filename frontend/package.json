@@ -61,6 +61,8 @@
     "@opentelemetry/context-async-hooks": "1.29.0",
     "@opentelemetry/resources": "1.29.0",
     "@opentelemetry/sdk-trace-base": "1.29.0",
+    "bufferutil": "4.0.9",
+    "utf-8-validate": "6.0.4",
     "axios": "1.13.2",
     "ethers": "6.16.0",
     "filecoin-pin": "0.13.0",

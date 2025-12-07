@@ -22,14 +22,9 @@ module.exports = [
       extensions: ['.ts', '.js'],
       alias: {
         '@': path.resolve(__dirname, 'src'),
-        bufferutil: false,
-        'utf-8-validate': false,
-        'pino-pretty': false,
       },
     },
-    ignoreWarnings: [
-      /Critical dependency: the request of a dependency is an expression/,
-    ],
+    // Keep default warnings visible for main; we rely on runtime optional deps (ws).
     output: {
       filename: 'main.js',
       path: path.resolve(__dirname, 'dist'),

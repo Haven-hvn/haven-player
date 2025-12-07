@@ -6,4 +6,6 @@ declare module 'multiformats/cid';
 declare module 'fs';
 declare module 'os';
 declare module 'path';
+declare module '@chainsafe/fil-commp-hash';
+declare module '@chainsafe/piece-cid';
 

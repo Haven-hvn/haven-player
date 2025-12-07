@@ -14,6 +14,8 @@ type SynapseServiceShape = {
 };
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 import { Piece } from '@web3-storage/data-segment';
+import { createCommP } from '@chainsafe/fil-commp-hash';
+import { pieceCIDFromCommPAndPieceSize } from '@chainsafe/piece-cid';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -385,18 +387,10 @@ export async function uploadVideoToFilecoin(
 
     if (!pieceCidString) {
       try {
-        if (typeof (Piece as unknown as { fromPayload?: (payload: Uint8Array) => Promise<{ link?: { toString?: () => string } }> }).fromPayload === 'function') {
-          const piece = await (Piece as unknown as { fromPayload: (payload: Uint8Array) => Promise<{ link?: { toString?: () => string } }> }).fromPayload(carBytes);
-          const linkToString = piece.link && typeof piece.link.toString === 'function' ? piece.link.toString() : undefined;
-          if (linkToString) {
-            pieceCidString = linkToString;
-            logger.info('Computed piece CID from payload (Piece.fromPayload)', { pieceCid: pieceCidString });
-          } else {
-            throw new Error('Piece.fromPayload did not return a link');
-          }
-        } else {
-          throw new Error('Piece.fromPayload not available in @web3-storage/data-segment');
-        }
+        const { commp, paddedPieceSize } = await createCommP(carBytes);
+        const computedPieceCid = pieceCIDFromCommPAndPieceSize(commp, paddedPieceSize).toString();
+        pieceCidString = computedPieceCid;
+        logger.info('Computed piece CID from CAR (commP)', { pieceCid: pieceCidString, paddedPieceSize });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error('Failed to compute piece CID from CAR', { error: message });

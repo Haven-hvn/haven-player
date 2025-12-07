@@ -170,8 +170,8 @@ ipcMain.handle(
     const fileName = path.basename(videoPath);
     const mimeType = getMimeType(videoPath);
 
-    // Use Blob/File available in recent Electron/Node to keep compatibility with the existing upload pipeline.
-    const blob = new Blob([fileBuffer], { type: mimeType });
+    // Convert Buffer to Uint8Array before wrapping in Blob/File to satisfy TS/DOM typings.
+    const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
     const file = new File([blob], fileName, { type: mimeType });
 
     const result = await uploadVideoToFilecoin({

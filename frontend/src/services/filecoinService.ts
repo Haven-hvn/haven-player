@@ -2,6 +2,7 @@ import {
   createUnixfsCarBuilder,
   type CarBuildResult,
   type CreateCarOptions,
+  type Logger,
 } from 'filecoin-pin/core/unixfs';
 import {
   initializeSynapse as initSynapse,
@@ -18,7 +19,7 @@ type SynapseServiceShape = {
 };
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
-import { 
+import {
   encryptFileForStorage, 
   serializeEncryptionMetadata,
   type LitEncryptionMetadata,
@@ -31,7 +32,7 @@ import { tmpdir } from 'os';
 // Simple logger for browser environment that matches filecoin-pin's Logger interface
 // LogFn expects (msg: string, ...args: unknown[]) signature
 // But filecoin-pin may call it with objects, so we handle both cases
-const createLogger = () => {
+const createLogger = (): Logger => {
   const formatMessage = (msg: unknown, ...args: unknown[]): [string, ...unknown[]] => {
     if (typeof msg === 'string') {
       return [`[Filecoin] ${msg}`, ...args];
@@ -66,9 +67,12 @@ const createLogger = () => {
       const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
       console.trace(`[Filecoin]`, formattedMsg, ...formattedArgs);
     },
-    silent: false as const,
+    silent: (msg: unknown, ...args: unknown[]) => {
+      const [formattedMsg, ...formattedArgs] = formatMessage(msg, ...args);
+      console.log(formattedMsg, ...formattedArgs);
+    },
     msgPrefix: '[Filecoin]',
-  } as const;
+  } as unknown as Logger;
 };
 
 export interface UploadProgress {

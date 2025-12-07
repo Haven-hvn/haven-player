@@ -2,7 +2,17 @@ declare module 'filecoin-pin/core';
 declare module 'filecoin-pin/core/synapse';
 declare module 'filecoin-pin/core/upload';
 declare module 'filecoin-pin/core/unixfs' {
-  import type { Logger } from 'pino';
+  export interface Logger {
+    level?: string;
+    info(msg: unknown, ...args: unknown[]): void;
+    warn(msg: unknown, ...args: unknown[]): void;
+    error(msg: unknown, ...args: unknown[]): void;
+    debug(msg: unknown, ...args: unknown[]): void;
+    fatal(msg: unknown, ...args: unknown[]): void;
+    trace(msg: unknown, ...args: unknown[]): void;
+    silent(msg: unknown, ...args: unknown[]): void;
+    [key: string]: unknown;
+  }
 
   export type Spinner = {
     start(msg: string): void;

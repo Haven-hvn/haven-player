@@ -1,5 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { useFilecoinUpload } from '../useFilecoinUpload';
+import type { UploadProgress } from '@/services/filecoinService';
 
 const mockInvoke = jest.fn();
 const mockOn = jest.fn();
@@ -27,7 +28,7 @@ describe('useFilecoinUpload (IPC path)', () => {
   });
 
   it('delegates upload to main via IPC and handles progress', async () => {
-    const progressHandlers: Array<(event: unknown, payload: { videoPath: string; progress: { stage: string; progress: number } }) => void> = [];
+    const progressHandlers: Array<(event: unknown, payload: { videoPath: string; progress: UploadProgress }) => void> = [];
     mockOn.mockImplementation((channel: string, handler: (event: unknown, payload: unknown) => void) => {
       if (channel === 'filecoin-upload-progress') {
         progressHandlers.push(handler as never);

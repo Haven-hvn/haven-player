@@ -1,4 +1,4 @@
-import { createCarFromPath } from 'filecoin-pin/core';
+import { createCarFromFile } from 'filecoin-pin/core';
 import {
   initializeSynapse as initSynapse,
   createStorageContext,
@@ -13,9 +13,6 @@ type SynapseServiceShape = {
   providerInfo: unknown;
 };
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
-import { Piece } from '@web3-storage/data-segment';
-import { createCommP } from '@chainsafe/fil-commp-hash';
-import { pieceCIDFromCommPAndPieceSize } from '@chainsafe/piece-cid';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -100,7 +97,6 @@ function normalizePrivateKey(privateKey: string): string {
 async function createCarFromVideo(
   file: File,
   onProgress?: (progress: UploadProgress) => void,
-  filePath?: string,
   isEncrypted: boolean = false,
   logger?: ReturnType<typeof createLogger>
 ): Promise<{ carBytes: Uint8Array; rootCid: string; pieceCid?: string; carPath?: string }> {
@@ -110,75 +106,26 @@ async function createCarFromVideo(
     message: 'Creating CAR file from video...',
   });
 
-  const buildCarFromPath = async (pathToUse: string) => {
-    // Some versions return { car }, others { carBytes }, others write to disk and return a path.
-    const result = await (createCarFromPath as unknown as (p: string) => Promise<Record<string, unknown>>)(
-      pathToUse
-    );
-    
-    // Log what we got for debugging
-    logger?.info('createCarFromPath result', {
-      keys: Object.keys(result),
-      hasRootCid: !!(result as { rootCid?: unknown }).rootCid,
-      hasPieceCid: !!(result as { pieceCid?: unknown }).pieceCid,
-    });
-    
-    const rootCidRaw = (result as { rootCid?: unknown }).rootCid;
-    const rootCid = rootCidRaw ? `${rootCidRaw}` : undefined;
-    const pieceCidRaw =
-      (result as { pieceCid?: unknown }).pieceCid ??
-      (result as { pieceCID?: unknown }).pieceCID ??
-      (result as { piece_cid?: unknown }).piece_cid;
-    const pieceCid = pieceCidRaw ? `${pieceCidRaw}` : undefined;
-    const returnedCarPath =
-      (result as { carPath?: string }).carPath ||
-      (result as { carFilePath?: string }).carFilePath;
-    const rawCar =
-      (result as { carBytes?: Uint8Array }).carBytes ??
-      (result as { car?: Uint8Array | string }).car ??
-      (result as { carFile?: Uint8Array | string }).carFile ??
-      (result as { carPath?: string }).carPath ??
-      (result as { carFilePath?: string }).carFilePath;
-
-    let carBytes: Uint8Array | undefined;
-    if (rawCar instanceof Uint8Array) {
-      carBytes = rawCar;
-    } else if (typeof rawCar === 'string') {
-      carBytes = fs.readFileSync(rawCar);
-    }
-
-    if (!carBytes || !rootCid) {
-      logger?.error('[Filecoin] createCarFromPath returned unexpected shape', {
-        keys: Object.keys(result),
-        rootCid: !!rootCid,
-        hasCarBytes: !!carBytes,
-        rawCarType: typeof rawCar,
+    const result = await (createCarFromFile as unknown as (f: File, opts: { onProgress?: (processed: number, total: number) => void }) => Promise<{ carBytes: Uint8Array; rootCid: unknown; pieceCid?: unknown; carPath?: string }>)(file, {
+    onProgress: (bytesProcessed: number, totalBytes: number) => {
+      const carProgress = Math.round((bytesProcessed / totalBytes) * 100);
+      onProgress?.({
+        stage: 'creating-car',
+        progress: carProgress,
+        message: `Creating CAR file... ${carProgress}%`,
       });
-      throw new Error('Failed to build CAR: missing car bytes or rootCid');
-    }
+    },
+  });
 
-    // Return pieceCid if available (some versions compute it)
-    return { carBytes, rootCid, pieceCid, carPath: returnedCarPath };
+  const rootCid = result.rootCid ? `${result.rootCid}` : '';
+  const pieceCid = result.pieceCid ? `${result.pieceCid}` : undefined;
+
+  return {
+    carBytes: result.carBytes,
+    rootCid,
+    pieceCid,
+    carPath: result.carPath,
   };
-
-  // If not encrypted and we have the original file path, prefer the path-based CAR builder.
-  if (!isEncrypted && filePath) {
-    return buildCarFromPath(filePath);
-  }
-
-  // Fallback: write the File to a temp path and build CAR from path (works for encrypted blobs too)
-  const tempPath = path.join(os.tmpdir(), `haven-upload-${Date.now()}-${file.name}.car-source`);
-  try {
-    const fileBuffer = new Uint8Array(await file.arrayBuffer());
-    fs.writeFileSync(tempPath, fileBuffer);
-    return await buildCarFromPath(tempPath);
-  } finally {
-    try {
-      fs.unlinkSync(tempPath);
-    } catch {
-      // ignore cleanup errors
-    }
-  }
 }
 
 /**
@@ -376,39 +323,15 @@ export async function uploadVideoToFilecoin(
     const { carBytes, rootCid, pieceCid, carPath } = await createCarFromVideo(
       fileToUpload,
       onProgress,
-      options.filePath,
       isEncrypted,
       logger
     );
-
-    // Compute piece CID from CAR when the builder does not provide it
-    // Normalize any provided pieceCid to a string
-    let pieceCidString = pieceCid ? `${pieceCid}` : undefined;
-
-    if (!pieceCidString) {
-      try {
-        const { commp, paddedPieceSize } = await createCommP(carBytes);
-        const computedPieceCid = pieceCIDFromCommPAndPieceSize(commp, paddedPieceSize).toString();
-        pieceCidString = computedPieceCid;
-        logger.info('Computed piece CID from CAR (commP)', { pieceCid: pieceCidString, paddedPieceSize });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error('Failed to compute piece CID from CAR', { error: message });
-        throw new Error(`Failed to compute piece CID from CAR: ${message}`);
-      }
-    }
-
-    // Ensure we have a string; fail fast if still missing
-    pieceCidString = typeof pieceCidString === 'string' ? pieceCidString : pieceCidString ? `${pieceCidString}` : undefined;
-    if (!pieceCidString) {
-      throw new Error('Failed to compute piece CID from CAR: piece CID is empty');
-    }
 
     // Log CAR creation result for debugging
     logger.info('CAR created', {
       carSize: carBytes.length,
       rootCid,
-      pieceCid: pieceCidString ?? 'not provided',
+      pieceCid: pieceCid ?? 'not provided',
       carPath,
     });
 
@@ -536,10 +459,6 @@ export async function uploadVideoToFilecoin(
     const uploadResult = await executeUpload(synapseService, carBytes, rootCid, {
       logger,
       contextId: file.name,
-      // Pass through pieceCid/carPath; include casing variants for compatibility
-      pieceCid: pieceCidString,
-      pieceCID: pieceCidString,
-      piece_cid: pieceCidString,
       carPath,
       onProgress: (event: { type: string; data?: { retryCount?: number } }) => {
         switch (event.type) {

@@ -182,35 +182,35 @@ async function initializeSynapseSDK(
       },
     };
 
-    const initParams: { config: typeof initConfig; logger?: ReturnType<typeof createLogger> } = {
-      config: initConfig,
-      logger,
-    };
-
     // Helper to normalize initSynapse invocation across versions/signatures.
     const callInitSynapse = (): Promise<unknown> => {
       const initAsAny = initSynapse as unknown as (...args: unknown[]) => Promise<unknown>;
 
-      // 1) Try new single-object signature
-      try {
-        return initAsAny(initParams);
-      } catch (newSigError) {
-        logger.warn('initSynapse (new signature) failed, falling back to legacy', {
-          error: newSigError instanceof Error ? newSigError.message : newSigError,
-        });
-      }
-
-      // 2) Try legacy (config, logger)
+      // Prefer legacy signature first (config, logger) because the new signature crashes in our version.
       try {
         return initAsAny(initConfig, logger);
       } catch (legacyErrorWithLogger) {
-        logger.warn('initSynapse (legacy with logger) failed, retrying without logger', {
+        logger.warn('initSynapse (legacy with logger) failed, trying legacy without logger', {
           error: legacyErrorWithLogger instanceof Error ? legacyErrorWithLogger.message : legacyErrorWithLogger,
         });
       }
 
-      // 3) Final fallback: legacy (config)
-      return initAsAny(initConfig);
+      // Legacy without logger
+      try {
+        return initAsAny(initConfig);
+      } catch (legacyNoLoggerError) {
+        logger.warn('initSynapse (legacy without logger) failed, trying object signature', {
+          error: legacyNoLoggerError instanceof Error ? legacyNoLoggerError.message : legacyNoLoggerError,
+        });
+      }
+
+      // Final fallback: new single-object signature
+      const initParams: { config: typeof initConfig; logger?: ReturnType<typeof createLogger> } = {
+        config: initConfig,
+        logger,
+      };
+
+      return initAsAny(initParams);
     };
 
     const initPromise = callInitSynapse();

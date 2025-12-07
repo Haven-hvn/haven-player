@@ -374,12 +374,15 @@ export async function uploadVideoToFilecoin(
       logger
     );
     
-    // If pieceCid not provided by CAR builder, fall back to rootCid string to avoid undefined
-    // (some versions do not compute piece CID). This may still fail if the service requires
-    // a true piece CID, but it prevents undefined from being passed.
+    // If pieceCid not provided by CAR builder, fall back to rootCid to avoid undefined.
     const pieceCidToUse =
       pieceCid ??
       (typeof rootCid === 'string' ? rootCid : (rootCid as unknown as { toString(): string }).toString());
+
+    const pieceCidParsed =
+      typeof pieceCidToUse === 'string'
+        ? CID.parse(pieceCidToUse)
+        : pieceCidToUse;
 
     // Log CAR creation result for debugging
     logger.info('CAR created', {
@@ -519,7 +522,7 @@ export async function uploadVideoToFilecoin(
       contextId: file.name,
       // Pass through pieceCid/carPath if the CAR builder provided them
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pieceCid: pieceCidToUse as any,
+      pieceCid: pieceCidParsed as any,
       carPath,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error - ProgressEventHandler expects specific event types, but our handler works with all event types at runtime

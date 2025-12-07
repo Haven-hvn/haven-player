@@ -34,6 +34,7 @@ import {
 import { useVideos } from '@/hooks/useVideos';
 import { useFilecoinUpload } from '@/hooks/useFilecoinUpload';
 import { FilecoinConfig } from '@/types/filecoin';
+import { SettingsTab } from '@/context/SettingsNavigationContext';
 
 // Define local interface for the tick response
 interface TickResponse {
@@ -60,12 +61,17 @@ const POINT_TIERS: PointTier[] = [
   { name: 'Mythic Librarian', min: 10000, max: Infinity, color: '#FF9800', badge: 'Mythic' },
 ];
 
-const DePinDashboard: React.FC = () => {
+interface DePinDashboardProps {
+  filecoinConfig?: FilecoinConfig | null;
+  onRequireSettings?: (tab: SettingsTab) => void;
+}
+
+const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoinConfigProp = null, onRequireSettings }) => {
   const theme = useTheme();
   const [isActive, setIsActive] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [currentTask, setCurrentTask] = useState<string>('Idle');
-  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(filecoinConfigProp);
   const [lastTick, setLastTick] = useState<Date | null>(null);
   const [currentRecording, setCurrentRecording] = useState<{
     mintId: string;
@@ -234,9 +240,22 @@ const DePinDashboard: React.FC = () => {
       }
     };
     
-    loadConfig();
+    if (!filecoinConfigProp) {
+      loadConfig();
+    } else {
+      setFilecoinConfig(filecoinConfigProp);
+    }
     restoreState();
-  }, []);
+  }, [filecoinConfigProp]);
+  const handleToggleActive = (checked: boolean) => {
+    if (checked && !filecoinConfig) {
+      addLog('⚠️ Filecoin config missing. Opening settings.');
+      onRequireSettings?.('filecoin');
+      return;
+    }
+    setIsActive(checked);
+  };
+
 
   // Stop all active recordings when node is deactivated
   useEffect(() => {
@@ -607,7 +626,7 @@ const DePinDashboard: React.FC = () => {
               control={
                 <Switch
                   checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
+                  onChange={(e) => handleToggleActive(e.target.checked)}
                   color="success"
                   disabled={!filecoinConfig}
                   sx={{

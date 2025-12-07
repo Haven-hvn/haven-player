@@ -77,8 +77,5 @@
   },
   "overrides": {
     "use-sync-external-store": "1.6.0"
-  },
-  "optionalDependencies": {
-    "@web3-storage/piece": "1.0.0"
   }
 }

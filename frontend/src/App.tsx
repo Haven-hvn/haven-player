@@ -13,10 +13,9 @@ import Header from "@/components/Header";
 import VideoAnalysisList from "@/components/VideoAnalysisList";
 import VideoPlayer from "@/components/VideoPlayer";
 import ConfigurationModal from "@/components/ConfigurationModal";
-import FilecoinConfigModal from "@/components/FilecoinConfigModal";
 import { useVideos } from "@/hooks/useVideos";
 import { useFilecoinUpload } from "@/hooks/useFilecoinUpload";
-import { Video, Timestamp } from "@/types/video";
+import { Video } from "@/types/video";
 import type { FilecoinConfig, FilecoinUploadStatus } from "@/types/filecoin";
 import {
   videoService,
@@ -26,6 +25,15 @@ import {
 } from "@/services/api";
 import LivestreamRecorderPage from "@/components/LivestreamRecorder/LivestreamRecorderPage";
 import DePinDashboard from "@/components/DePinDashboard";
+import {
+  SettingsNavigationProvider,
+  useSettingsNavigation,
+} from "@/context/SettingsNavigationContext";
+import {
+  DEFAULT_AI_CONFIG,
+  isAiConfigDefault,
+  isFilecoinConfigured,
+} from "@/utils/settingsValidation";
 
 const modernTheme = createTheme({
   palette: {
@@ -182,6 +190,13 @@ const MainApp: React.FC = () => {
     refreshVideos,
     fetchTimestampsForVideo,
   } = useVideos();
+  const {
+    isOpen: settingsOpen,
+    activeTab: settingsActiveTab,
+    openSettings,
+    closeSettings,
+    setActiveTab,
+  } = useSettingsNavigation();
   const [analysisStatuses, setAnalysisStatuses] = useState<
     Record<string, "pending" | "analyzing" | "completed" | "error">
   >({});
@@ -190,12 +205,37 @@ const MainApp: React.FC = () => {
     {}
   );
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
-  const [configModalOpen, setConfigModalOpen] = useState(false);
-  const [filecoinConfigModalOpen, setFilecoinConfigModalOpen] = useState(false);
+  const [aiConfig, setAiConfig] = useState<typeof DEFAULT_AI_CONFIG | null>(
+    null
+  );
   const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
 
   // Filecoin upload hook
   const { uploadStatus, uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
+
+  const fetchBackendConfig = useCallback(async () => {
+    try {
+      const response = await fetch("http://localhost:8000/api/config/");
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+      setAiConfig({
+        analysis_tags: data.analysis_tags,
+        llm_base_url: data.llm_base_url,
+        llm_model: data.llm_model,
+        max_batch_size: data.max_batch_size,
+        livekit_url: data.livekit_url,
+      });
+    } catch (error) {
+      console.error("Failed to fetch backend config:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBackendConfig();
+  }, [fetchBackendConfig]);
 
   // Add search and view mode state
   const [searchQuery, setSearchQuery] = useState("");
@@ -378,6 +418,10 @@ const MainApp: React.FC = () => {
 
   const handleAnalyzeVideo = useCallback(
     async (video: Video) => {
+      if (!video.has_ai_data && !ensureAiSettings()) {
+        return;
+      }
+
       if (video.has_ai_data) {
         // Video already has AI data, just refresh timestamps
         await fetchTimestampsForVideo(video);
@@ -443,10 +487,13 @@ const MainApp: React.FC = () => {
         setAnalysisStatuses((prev) => ({ ...prev, [video.path]: "error" }));
       }
     },
-    [fetchTimestampsForVideo, refreshVideos]
+    [fetchTimestampsForVideo, refreshVideos, ensureAiSettings]
   );
 
   const handleAnalyzeAll = useCallback(async () => {
+    if (!ensureAiSettings()) {
+      return;
+    }
     setIsAnalyzingAll(true);
 
     const videosToAnalyze = visibleVideos.filter(
@@ -461,7 +508,7 @@ const MainApp: React.FC = () => {
     }
 
     setIsAnalyzingAll(false);
-  }, [visibleVideos, analysisStatuses, handleAnalyzeVideo]);
+  }, [visibleVideos, analysisStatuses, handleAnalyzeVideo, ensureAiSettings]);
 
   const handlePlayVideo = useCallback(
     (video: Video) => {
@@ -489,30 +536,34 @@ const MainApp: React.FC = () => {
   }, [refreshVideos]);
 
   const handleSettings = useCallback(() => {
-    setConfigModalOpen(true);
-  }, []);
+    openSettings("ai");
+  }, [openSettings]);
 
-  const handleConfigSave = useCallback(async (config: any) => {
-    try {
-      const response = await fetch("http://localhost:8000/api/config/", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(config),
-      });
+  const handleConfigSave = useCallback(
+    async (configToSave: typeof DEFAULT_AI_CONFIG) => {
+      try {
+        const response = await fetch("http://localhost:8000/api/config/", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(configToSave),
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to save configuration");
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || "Failed to save configuration");
+        }
+
+        setAiConfig(configToSave);
+        console.log("✅ Configuration saved successfully");
+      } catch (error) {
+        console.error("❌ Failed to save configuration:", error);
+        throw error;
       }
-
-      console.log("✅ Configuration saved successfully");
-    } catch (error) {
-      console.error("❌ Failed to save configuration:", error);
-      throw error;
-    }
-  }, []);
+    },
+    []
+  );
 
   // Load Filecoin config on mount
   useEffect(() => {
@@ -533,8 +584,10 @@ const MainApp: React.FC = () => {
   // Handle Filecoin upload
   const handleUploadToFilecoin = useCallback(
     async (video: Video) => {
+      if (!ensureFilecoinSettings()) {
+        return;
+      }
       if (!filecoinConfig) {
-        setFilecoinConfigModalOpen(true);
         return;
       }
 
@@ -548,7 +601,7 @@ const MainApp: React.FC = () => {
         // Error is already handled by the upload hook
       }
     },
-    [filecoinConfig, uploadVideoToFilecoin, refreshVideos]
+    [filecoinConfig, uploadVideoToFilecoin, refreshVideos, ensureFilecoinSettings]
   );
 
   // Handle Filecoin config save
@@ -556,6 +609,28 @@ const MainApp: React.FC = () => {
     setFilecoinConfig(config);
     console.log("✅ Filecoin configuration saved");
   }, []);
+
+  const ensureAiSettings = useCallback((): boolean => {
+    if (isAiConfigDefault(aiConfig)) {
+      openSettings("ai");
+      if (typeof window !== "undefined") {
+        window.alert("Please configure AI / LLM settings before analyzing.");
+      }
+      return false;
+    }
+    return true;
+  }, [aiConfig, openSettings]);
+
+  const ensureFilecoinSettings = useCallback((): boolean => {
+    if (!isFilecoinConfigured(filecoinConfig)) {
+      openSettings("filecoin");
+      if (typeof window !== "undefined") {
+        window.alert("Please configure Filecoin settings before uploading.");
+      }
+      return false;
+    }
+    return true;
+  }, [filecoinConfig, openSettings]);
 
   // Initialize analysis statuses for videos with AI data
   useEffect(() => {
@@ -653,16 +728,13 @@ const MainApp: React.FC = () => {
 
       {/* Configuration Modal */}
       <ConfigurationModal
-        open={configModalOpen}
-        onClose={() => setConfigModalOpen(false)}
+        open={settingsOpen}
+        activeTab={settingsActiveTab}
+        onTabChange={setActiveTab}
+        onClose={closeSettings}
         onSave={handleConfigSave}
-      />
-
-      {/* Filecoin Configuration Modal */}
-      <FilecoinConfigModal
-        open={filecoinConfigModalOpen}
-        onClose={() => setFilecoinConfigModalOpen(false)}
-        onSave={handleFilecoinConfigSave}
+        onSaveFilecoin={handleFilecoinConfigSave}
+        initialFilecoinConfig={filecoinConfig}
       />
     </Box>
   );
@@ -670,105 +742,107 @@ const MainApp: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <ThemeProvider theme={modernTheme}>
-      <CssBaseline />
-      <Box
-        sx={{
-          backgroundColor: "#F5F5F5",
-          minHeight: "100vh",
-          padding: "0",
-        }}
-      >
-        <Router>
-          <Routes>
-            <Route path="/" element={<MainApp />} />
-            <Route
-              path="/livestream-recorder"
-              element={
-                <Box
-                  sx={{
-                    display: "flex",
-                    height: "100vh",
-                    backgroundColor: "#FFFFFF",
-                    borderRadius: "16px",
-                    overflow: "hidden",
-                    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-                    margin: "8px",
-                    border: "1px solid #F0F0F0",
-                  }}
-                >
+    <SettingsNavigationProvider>
+      <ThemeProvider theme={modernTheme}>
+        <CssBaseline />
+        <Box
+          sx={{
+            backgroundColor: "#F5F5F5",
+            minHeight: "100vh",
+            padding: "0",
+          }}
+        >
+          <Router>
+            <Routes>
+              <Route path="/" element={<MainApp />} />
+              <Route
+                path="/livestream-recorder"
+                element={
                   <Box
                     sx={{
-                      background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-                      borderRight: "1px solid #E8E8E8",
+                      display: "flex",
+                      height: "100vh",
+                      backgroundColor: "#FFFFFF",
+                      borderRadius: "16px",
+                      overflow: "hidden",
+                      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
+                      margin: "8px",
+                      border: "1px solid #F0F0F0",
                     }}
                   >
-                    <Sidebar />
-                  </Box>
-
-                  <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
                     <Box
                       sx={{
-                        flexGrow: 1,
-                        backgroundColor: "#FFFFFF",
-                        padding: "16px",
-                        height: "100%",
-                        overflow: "auto",
+                        background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
+                        borderRight: "1px solid #E8E8E8",
                       }}
                     >
-                      <LivestreamRecorderPage />
+                      <Sidebar />
+                    </Box>
+
+                    <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                      <Box
+                        sx={{
+                          flexGrow: 1,
+                          backgroundColor: "#FFFFFF",
+                          padding: "16px",
+                          height: "100%",
+                          overflow: "auto",
+                        }}
+                      >
+                        <LivestreamRecorderPage />
+                      </Box>
                     </Box>
                   </Box>
-                </Box>
-              }
-            />
-            <Route
-              path="/depin"
-              element={
-                <Box
-                  sx={{
-                    display: "flex",
-                    height: "100vh",
-                    backgroundColor: "#FFFFFF",
-                    borderRadius: "16px",
-                    overflow: "hidden",
-                    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-                    margin: "8px",
-                    border: "1px solid #F0F0F0",
-                  }}
-                >
+                }
+              />
+              <Route
+                path="/depin"
+                element={
                   <Box
                     sx={{
-                      background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-                      borderRight: "1px solid #E8E8E8",
+                      display: "flex",
+                      height: "100vh",
+                      backgroundColor: "#FFFFFF",
+                      borderRadius: "16px",
+                      overflow: "hidden",
+                      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
+                      margin: "8px",
+                      border: "1px solid #F0F0F0",
                     }}
                   >
-                    <Sidebar />
-                  </Box>
-
-                  <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
                     <Box
                       sx={{
-                        flexGrow: 1,
-                        backgroundColor: "#FFFFFF",
-                        padding: "16px",
-                        height: "100%",
-                        overflow: "auto",
+                        background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
+                        borderRight: "1px solid #E8E8E8",
                       }}
                     >
-                      <DePinDashboard />
+                      <Sidebar />
+                    </Box>
+
+                    <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                      <Box
+                        sx={{
+                          flexGrow: 1,
+                          backgroundColor: "#FFFFFF",
+                          padding: "16px",
+                          height: "100%",
+                          overflow: "auto",
+                        }}
+                      >
+                        <DePinDashboard filecoinConfig={filecoinConfig} onRequireSettings={openSettings} />
+                      </Box>
                     </Box>
                   </Box>
-                </Box>
-              }
-            />
-            <Route path="/player/:videoPath" element={<VideoPlayer />} />
-          </Routes>
-        </Router>
-        {/* Log Viewer - always available */}
-        <LogViewer />
-      </Box>
-    </ThemeProvider>
+                }
+              />
+              <Route path="/player/:videoPath" element={<VideoPlayer />} />
+            </Routes>
+          </Router>
+          {/* Log Viewer - always available */}
+          <LogViewer />
+        </Box>
+      </ThemeProvider>
+    </SettingsNavigationProvider>
   );
 };
 

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, SyntheticEvent } from "react";
+import type { JSX } from "react";
 import {
   Dialog,
   DialogTitle,
@@ -17,15 +18,25 @@ import {
   CircularProgress,
   Divider,
   IconButton,
+  Tabs,
+  Tab,
+  FormControlLabel,
+  Switch,
+  FormHelperText,
+  SelectChangeEvent,
 } from "@mui/material";
 import {
-  Settings as SettingsIcon,
   Save as SaveIcon,
   Close as CloseIcon,
   SmartToy as AIIcon,
   Storage as ServerIcon,
   WorkspacePremium as BatchIcon,
+  CloudUpload as CloudUploadIcon,
+  Lock as LockIcon,
 } from "@mui/icons-material";
+import type { FilecoinConfig } from "@/types/filecoin";
+import type { SettingsTab } from "@/context/SettingsNavigationContext";
+import { ipcRenderer } from "electron";
 
 interface AppConfig {
   id: number;
@@ -37,39 +48,75 @@ interface AppConfig {
   updated_at: string;
 }
 
+type EditableAppConfig = Omit<AppConfig, "id" | "updated_at">;
+
 interface ConfigurationModalProps {
   open: boolean;
+  activeTab: SettingsTab;
+  onTabChange: (tab: SettingsTab) => void;
   onClose: () => void;
-  onSave: (config: Omit<AppConfig, "id" | "updated_at">) => Promise<void>;
+  onSave: (config: EditableAppConfig) => Promise<void>;
+  onSaveFilecoin: (config: FilecoinConfig) => Promise<void>;
+  initialFilecoinConfig?: FilecoinConfig | null;
 }
+
+const defaultFilecoinConfig: FilecoinConfig = {
+  privateKey: "",
+  rpcUrl: "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
+  dataSetId: undefined,
+  encryptionEnabled: false,
+};
+
+const defaultAppConfig: EditableAppConfig = {
+  analysis_tags: "",
+  llm_base_url: "http://localhost:1234",
+  llm_model: "HuggingFaceTB/SmolVLM-Instruct",
+  max_batch_size: 1,
+  livekit_url: "wss://pump-prod-tg2x8veh.livekit.cloud",
+};
 
 const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   open,
+  activeTab,
+  onTabChange,
   onClose,
   onSave,
-}) => {
-  const [loading, setLoading] = useState(false);
+  onSaveFilecoin,
+  initialFilecoinConfig,
+}: ConfigurationModalProps): JSX.Element => {
+  const [loadingAi, setLoadingAi] = useState(false);
+  const [loadingFilecoin, setLoadingFilecoin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [config, setConfig] = useState({
-    analysis_tags: "",
-    llm_base_url: "http://localhost:1234",
-    llm_model: "HuggingFaceTB/SmolVLM-Instruct",
-    max_batch_size: 1,
-    livekit_url: "wss://pump-prod-tg2x8veh.livekit.cloud",
-  });
+  const [filecoinError, setFilecoinError] = useState<string | null>(null);
+  const [config, setConfig] = useState<EditableAppConfig>(defaultAppConfig);
+  const [filecoinConfig, setFilecoinConfig] =
+    useState<FilecoinConfig>(initialFilecoinConfig ?? defaultFilecoinConfig);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+
+  const isFilecoinTab =
+    activeTab === "filecoin" || activeTab === "encryption";
+  const loading = loadingAi || loadingFilecoin;
 
   useEffect(() => {
     if (open) {
+      setError(null);
+      setFilecoinError(null);
       loadConfig();
       loadAvailableModels();
+      loadFilecoinConfig();
     }
   }, [open]);
 
+  useEffect(() => {
+    if (initialFilecoinConfig) {
+      setFilecoinConfig(initialFilecoinConfig);
+    }
+  }, [initialFilecoinConfig]);
+
   const loadConfig = async () => {
     try {
-      setLoading(true);
+      setLoadingAi(true);
       setError(null);
       const response = await fetch("http://localhost:8000/api/config/");
       if (!response.ok) throw new Error("Failed to load configuration");
@@ -86,8 +133,34 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setError(
         err instanceof Error ? err.message : "Failed to load configuration"
       );
+      setConfig(defaultAppConfig);
     } finally {
-      setLoading(false);
+      setLoadingAi(false);
+    }
+  };
+
+  const loadFilecoinConfig = async () => {
+    if (initialFilecoinConfig) return;
+    try {
+      setLoadingFilecoin(true);
+      const savedConfig = await ipcRenderer.invoke("get-filecoin-config");
+      if (savedConfig) {
+        setFilecoinConfig({
+          privateKey: savedConfig.privateKey || "",
+          rpcUrl:
+            savedConfig.rpcUrl ||
+            "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
+          dataSetId: savedConfig.dataSetId,
+          encryptionEnabled: savedConfig.encryptionEnabled ?? false,
+        });
+      } else {
+        setFilecoinConfig(defaultFilecoinConfig);
+      }
+    } catch (err) {
+      console.error("Failed to load Filecoin config:", err);
+      setFilecoinConfig(defaultFilecoinConfig);
+    } finally {
+      setLoadingFilecoin(false);
     }
   };
 
@@ -110,25 +183,434 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     try {
       setSaving(true);
       setError(null);
-      await onSave(config);
+      setFilecoinError(null);
+
+      if (isFilecoinTab) {
+        if (!filecoinConfig.privateKey.trim()) {
+          setFilecoinError("Private key is required");
+          return;
+        }
+
+        await ipcRenderer.invoke("save-filecoin-config", {
+          privateKey: filecoinConfig.privateKey,
+          rpcUrl: filecoinConfig.rpcUrl,
+          dataSetId: filecoinConfig.dataSetId,
+          encryptionEnabled: filecoinConfig.encryptionEnabled,
+        });
+
+        await onSaveFilecoin(filecoinConfig);
+      } else {
+        await onSave(config);
+      }
+
       onClose();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to save configuration"
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to save configuration";
+      if (isFilecoinTab) {
+        setFilecoinError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setSaving(false);
     }
   };
 
   const handleTagsChange = (value: string) => {
-    setConfig((prev) => ({ ...prev, analysis_tags: value }));
+    setConfig((prev: EditableAppConfig) => ({ ...prev, analysis_tags: value }));
   };
 
-  const tagList = config.analysis_tags
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag);
+  const tagList = useMemo(
+    () =>
+      config.analysis_tags
+        .split(",")
+        .map((tag: string) => tag.trim())
+        .filter((tag: string) => tag),
+    [config.analysis_tags]
+  );
+
+  const renderAiContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <Box sx={{ mt: 2 }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            mb: 3,
+            pt: 1,
+          }}
+        >
+          <Box
+            sx={{
+              width: 24,
+              height: 24,
+              backgroundColor: "#F9A825",
+              borderRadius: "6px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <AIIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
+          </Box>
+          <Typography
+            variant="h6"
+            sx={{
+              color: "#000000",
+              fontWeight: 500,
+              fontSize: "16px",
+            }}
+          >
+            Analysis Tags
+          </Typography>
+        </Box>
+
+        <TextField
+          fullWidth
+          label="Analysis Tags (comma-separated)"
+          value={config.analysis_tags}
+          onChange={(
+            e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+          ) => handleTagsChange(e.target.value)}
+          placeholder="person,car,bicycle,walking,running..."
+          multiline
+          rows={3}
+        />
+
+        {tagList.length > 0 && (
+          <Box sx={{ mt: 3 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "#6B6B6B",
+                mb: 2,
+                fontSize: "12px",
+                fontWeight: 500,
+              }}
+            >
+              TAGS PREVIEW ({tagList.length} tags)
+            </Typography>
+            <Box
+              sx={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 1,
+                maxHeight: 120,
+                overflow: "auto",
+                p: 2,
+                backgroundColor: "#F7F7F7",
+                borderRadius: "8px",
+                border: "1px solid #F0F0F0",
+              }}
+            >
+              {tagList.map((tag: string) => (
+                <Chip
+                  key={tag}
+                  label={tag}
+                  size="small"
+                  sx={{
+                    backgroundColor: "#FFFFFF",
+                    color: "#000000",
+                    border: "1px solid #E0E0E0",
+                    borderRadius: "16px",
+                    fontSize: "12px",
+                    fontWeight: 500,
+                    "&:hover": {
+                      backgroundColor: "#F5F5F5",
+                      borderColor: "#BDBDBD",
+                    },
+                  }}
+                />
+              ))}
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      <Divider sx={{ backgroundColor: "#F0F0F0" }} />
+
+      <Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}>
+          <Box
+            sx={{
+              width: 24,
+              height: 24,
+              backgroundColor: "#4CAF50",
+              borderRadius: "6px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <ServerIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
+          </Box>
+          <Typography
+            variant="h6"
+            sx={{
+              color: "#000000",
+              fontWeight: 500,
+              fontSize: "16px",
+            }}
+          >
+            Language Model Configuration
+          </Typography>
+        </Box>
+
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <TextField
+            fullWidth
+            label="LLM Base URL"
+            value={config.llm_base_url}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setConfig((prev: EditableAppConfig) => ({
+                ...prev,
+                llm_base_url: e.target.value,
+              }))
+            }
+            placeholder="http://localhost:1234"
+          />
+
+          <FormControl fullWidth>
+            <InputLabel>Visual Language Model</InputLabel>
+            <Select
+              value={config.llm_model}
+              label="Visual Language Model"
+              onChange={(e: SelectChangeEvent<string>) =>
+                setConfig((prev: EditableAppConfig) => ({
+                  ...prev,
+                  llm_model: e.target.value as string,
+                }))
+              }
+            >
+              {availableModels.map((model: string) => (
+                <MenuItem key={model} value={model}>
+                  {model}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+      </Box>
+    </Box>
+  );
+
+  const renderLivekitContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        LiveKit Configuration
+      </Typography>
+      <TextField
+        fullWidth
+        label="LiveKit URL"
+        value={config.livekit_url}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setConfig((prev: EditableAppConfig) => ({
+            ...prev,
+            livekit_url: e.target.value,
+          }))
+        }
+        placeholder="wss://pump-prod-tg2x8veh.livekit.cloud"
+        helperText="WebSocket URL for LiveKit server connection"
+      />
+    </Box>
+  );
+
+  const renderProcessingContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        Processing Configuration
+      </Typography>
+      <TextField
+        fullWidth
+        label="Max Batch Size"
+        type="number"
+        value={config.max_batch_size}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setConfig((prev: EditableAppConfig) => ({
+            ...prev,
+            max_batch_size: parseInt(e.target.value, 10) || 1,
+          }))
+        }
+        inputProps={{ min: 1, max: 10 }}
+        helperText="Number of videos to process simultaneously (1-10)"
+      />
+    </Box>
+  );
+
+  const renderFilecoinContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        Filecoin Configuration
+      </Typography>
+      <TextField
+        fullWidth
+        label="Private Key"
+        value={filecoinConfig.privateKey}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setFilecoinConfig((prev: FilecoinConfig) => ({
+            ...prev,
+            privateKey: e.target.value,
+          }))
+        }
+        placeholder="Enter your private key from MetaMask"
+        type="password"
+        required
+        helperText="Your Ethereum private key (0x prefix will be added automatically if missing)"
+      />
+
+      <TextField
+        fullWidth
+        label="RPC URL (optional)"
+        value={filecoinConfig.rpcUrl ?? ""}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setFilecoinConfig((prev: FilecoinConfig) => ({
+            ...prev,
+            rpcUrl: e.target.value,
+          }))
+        }
+        placeholder="wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1"
+        helperText="Filecoin RPC endpoint (WebSocket wss:// or HTTP https://). Default: Calibration testnet WebSocket"
+      />
+
+      <TextField
+        fullWidth
+        label="Data Set ID (optional)"
+        type="number"
+        value={filecoinConfig.dataSetId ?? ""}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setFilecoinConfig((prev: FilecoinConfig) => ({
+            ...prev,
+            dataSetId: e.target.value ? parseInt(e.target.value, 10) : undefined,
+          }))
+        }
+        placeholder="Leave empty to create new"
+        helperText="Use existing data set ID or leave empty to create a new one"
+      />
+
+      <Alert
+        severity="info"
+        sx={{
+          backgroundColor: "#E3F2FD",
+          color: "#1976D2",
+          border: "1px solid #BBDEFB",
+          borderRadius: "8px",
+          "& .MuiAlert-icon": {
+            color: "#1976D2",
+          },
+        }}
+      >
+        <Typography
+          sx={{
+            fontSize: "12px",
+            fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+          }}
+        >
+          <strong>Note:</strong> This uses Filecoin Calibration testnet. You'll
+          need test FIL for gas and test USDFC for storage payments. Private keys
+          are encrypted and stored securely on your device.
+        </Typography>
+      </Alert>
+    </Box>
+  );
+
+  const renderEncryptionContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        Encryption
+      </Typography>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+          p: 2,
+          backgroundColor: filecoinConfig.encryptionEnabled ? "#E8F5E9" : "#FAFAFA",
+          borderRadius: "8px",
+          border: filecoinConfig.encryptionEnabled
+            ? "1px solid #4CAF50"
+            : "1px solid #E0E0E0",
+          transition: "all 0.2s ease-in-out",
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <LockIcon
+            sx={{
+              color: filecoinConfig.encryptionEnabled ? "#4CAF50" : "#9E9E9E",
+              fontSize: 20,
+            }}
+          />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={filecoinConfig.encryptionEnabled}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setFilecoinConfig((prev: FilecoinConfig) => ({
+                    ...prev,
+                    encryptionEnabled: e.target.checked,
+                  }))
+                }
+                sx={{
+                  "& .MuiSwitch-switchBase.Mui-checked": {
+                    color: "#4CAF50",
+                  },
+                  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+                    backgroundColor: "#4CAF50",
+                  },
+                }}
+              />
+            }
+            label={
+              <Typography
+                sx={{
+                  fontWeight: 500,
+                  fontSize: "14px",
+                  color: "#000000",
+                }}
+              >
+                Encrypt videos before upload
+              </Typography>
+            }
+            sx={{ margin: 0 }}
+          />
+        </Box>
+        <Typography
+          sx={{
+            fontSize: "12px",
+            color: "#6B6B6B",
+            ml: 4.5,
+          }}
+        >
+          {filecoinConfig.encryptionEnabled
+            ? "Videos will be encrypted with Lit Protocol before uploading to Filecoin. Only your wallet can decrypt them."
+            : "Videos will be uploaded to Filecoin without encryption."}
+        </Typography>
+        <FormHelperText sx={{ ml: 4.5, mt: 1 }}>
+          Encryption preferences are stored locally in the Filecoin settings.
+        </FormHelperText>
+      </Box>
+    </Box>
+  );
+
+  const saveLabel = isFilecoinTab ? "Save Filecoin Settings" : "Save Configuration";
+
+  const renderContent = (): JSX.Element | null => {
+    switch (activeTab) {
+      case "ai":
+        return renderAiContent();
+      case "livekit":
+        return renderLivekitContent();
+      case "processing":
+        return renderProcessingContent();
+      case "filecoin":
+        return renderFilecoinContent();
+      case "encryption":
+        return renderEncryptionContent();
+      default:
+        return null;
+    }
+  };
 
   return (
     <Dialog
@@ -166,19 +648,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          {/* <Box
-            sx={{
-              width: 32,
-              height: 32,
-              background: "linear-gradient(135deg, #000000 0%, #424242 100%)",
-              borderRadius: "8px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <SettingsIcon sx={{ color: "#FFFFFF", fontSize: 18 }} />
-          </Box> */}
           <Typography
             variant="h6"
             sx={{
@@ -189,7 +658,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
               letterSpacing: "-0.01em",
             }}
           >
-            AI Analysis Configuration
+            Settings
           </Typography>
         </Box>
         <IconButton
@@ -200,448 +669,53 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
               backgroundColor: "#F5F5F5",
             },
           }}
+          aria-label="Close settings"
         >
           <CloseIcon />
         </IconButton>
       </DialogTitle>
 
       <DialogContent sx={{ px: 3, py: 3 }}>
+        {(error || filecoinError) && (
+          <Alert
+            severity="error"
+            sx={{
+              backgroundColor: "#FFF5F5",
+              color: "#FF4D4D",
+              border: "1px solid #FFE0E0",
+              borderRadius: "8px",
+              mb: 2,
+              "& .MuiAlert-icon": {
+                color: "#FF4D4D",
+              },
+            }}
+          >
+            {error || filecoinError}
+          </Alert>
+        )}
+
+        <Tabs
+          value={activeTab}
+          onChange={(event: SyntheticEvent, value: SettingsTab) => {
+            event.preventDefault();
+            onTabChange(value);
+          }}
+          variant="scrollable"
+          scrollButtons="auto"
+        >
+          <Tab label="AI / LLM" value="ai" icon={<AIIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="LiveKit" value="livekit" icon={<ServerIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="Processing" value="processing" icon={<BatchIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="Filecoin" value="filecoin" icon={<CloudUploadIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="Encryption" value="encryption" icon={<LockIcon fontSize="small" />} iconPosition="start" />
+        </Tabs>
+
         {loading ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
             <CircularProgress sx={{ color: "#000000" }} />
           </Box>
         ) : (
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {error && (
-              <Alert
-                severity="error"
-                sx={{
-                  backgroundColor: "#FFF5F5",
-                  color: "#FF4D4D",
-                  border: "1px solid #FFE0E0",
-                  borderRadius: "8px",
-                  "& .MuiAlert-icon": {
-                    color: "#FF4D4D",
-                  },
-                }}
-              >
-                {error}
-              </Alert>
-            )}
-
-            <Box sx={{ mt: 6 }}>
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 2,
-                  mb: 3,
-                  pt: 2,
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 24,
-                    height: 24,
-                    backgroundColor: "#F9A825",
-                    borderRadius: "6px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <AIIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
-                </Box>
-                <Typography
-                  variant="h6"
-                  sx={{
-                    color: "#000000",
-                    fontWeight: 500,
-                    fontSize: "16px",
-                  }}
-                >
-                  Analysis Tags
-                </Typography>
-              </Box>
-
-              <TextField
-                fullWidth
-                label="Analysis Tags (comma-separated)"
-                value={config.analysis_tags}
-                onChange={(e) => handleTagsChange(e.target.value)}
-                placeholder="person,car,bicycle,walking,running..."
-                multiline
-                rows={3}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: "#FAFAFA",
-                    borderRadius: "8px",
-                    color: "#000000",
-                    "& fieldset": {
-                      borderColor: "#E0E0E0",
-                    },
-                    "&:hover fieldset": {
-                      borderColor: "#BDBDBD",
-                    },
-                    "&.Mui-focused fieldset": {
-                      borderColor: "#000000",
-                      borderWidth: "2px",
-                    },
-                  },
-                  "& .MuiInputLabel-root": {
-                    color: "#6B6B6B",
-                    fontSize: "14px",
-                  },
-                  "& .MuiInputLabel-root.Mui-focused": {
-                    color: "#000000",
-                  },
-                }}
-              />
-
-              {tagList.length > 0 && (
-                <Box sx={{ mt: 3 }}>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      color: "#6B6B6B",
-                      mb: 2,
-                      fontSize: "12px",
-                      fontWeight: 500,
-                    }}
-                  >
-                    TAGS PREVIEW ({tagList.length} tags)
-                  </Typography>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 1,
-                      maxHeight: 120,
-                      overflow: "auto",
-                      p: 2,
-                      backgroundColor: "#F7F7F7",
-                      borderRadius: "8px",
-                      border: "1px solid #F0F0F0",
-                    }}
-                  >
-                    {tagList.map((tag, index) => (
-                      <Chip
-                        key={index}
-                        label={tag}
-                        size="small"
-                        sx={{
-                          backgroundColor: "#FFFFFF",
-                          color: "#000000",
-                          border: "1px solid #E0E0E0",
-                          borderRadius: "16px",
-                          fontSize: "12px",
-                          fontWeight: 500,
-                          "&:hover": {
-                            backgroundColor: "#F5F5F5",
-                            borderColor: "#BDBDBD",
-                          },
-                        }}
-                      />
-                    ))}
-                  </Box>
-                </Box>
-              )}
-            </Box>
-
-            <Divider sx={{ backgroundColor: "#F0F0F0" }} />
-
-            <Box>
-              <Box
-                sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}
-              >
-                <Box
-                  sx={{
-                    width: 24,
-                    height: 24,
-                    backgroundColor: "#4CAF50",
-                    borderRadius: "6px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <ServerIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
-                </Box>
-                <Typography
-                  variant="h6"
-                  sx={{
-                    color: "#000000",
-                    fontWeight: 500,
-                    fontSize: "16px",
-                  }}
-                >
-                  Language Model Configuration
-                </Typography>
-              </Box>
-
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <TextField
-                  fullWidth
-                  label="LLM Base URL"
-                  value={config.llm_base_url}
-                  onChange={(e) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      llm_base_url: e.target.value,
-                    }))
-                  }
-                  placeholder="http://localhost:1234"
-                  sx={{
-                    "& .MuiOutlinedInput-root": {
-                      backgroundColor: "#FAFAFA",
-                      borderRadius: "8px",
-                      color: "#000000",
-                      "& fieldset": {
-                        borderColor: "#E0E0E0",
-                      },
-                      "&:hover fieldset": {
-                        borderColor: "#BDBDBD",
-                      },
-                      "&.Mui-focused fieldset": {
-                        borderColor: "#000000",
-                        borderWidth: "2px",
-                      },
-                    },
-                    "& .MuiInputLabel-root": {
-                      color: "#6B6B6B",
-                      fontSize: "14px",
-                    },
-                    "& .MuiInputLabel-root.Mui-focused": {
-                      color: "#000000",
-                    },
-                  }}
-                />
-
-                <FormControl fullWidth>
-                  <InputLabel
-                    sx={{
-                      color: "#6B6B6B",
-                      fontSize: "14px",
-                      "&.Mui-focused": {
-                        color: "#000000",
-                      },
-                    }}
-                  >
-                    Visual Language Model
-                  </InputLabel>
-                  <Select
-                    value={config.llm_model}
-                    onChange={(e) =>
-                      setConfig((prev) => ({
-                        ...prev,
-                        llm_model: e.target.value,
-                      }))
-                    }
-                    sx={{
-                      backgroundColor: "#FAFAFA",
-                      borderRadius: "8px",
-                      color: "#000000",
-                      "& .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#E0E0E0",
-                      },
-                      "&:hover .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#BDBDBD",
-                      },
-                      "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#000000",
-                        borderWidth: "2px",
-                      },
-                      "& .MuiSvgIcon-root": {
-                        color: "#6B6B6B",
-                      },
-                    }}
-                    MenuProps={{
-                      PaperProps: {
-                        sx: {
-                          backgroundColor: "#FFFFFF",
-                          border: "1px solid #F0F0F0",
-                          borderRadius: "8px",
-                          boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
-                          mt: 1,
-                        },
-                      },
-                    }}
-                  >
-                    {availableModels.map((model) => (
-                      <MenuItem
-                        key={model}
-                        value={model}
-                        sx={{
-                          color: "#000000",
-                          fontSize: "14px",
-                          "&:hover": {
-                            backgroundColor: "#F5F5F5",
-                          },
-                          "&.Mui-selected": {
-                            backgroundColor: "#F0F0F0",
-                            "&:hover": {
-                              backgroundColor: "#EEEEEE",
-                            },
-                          },
-                        }}
-                      >
-                        {model}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Box>
-            </Box>
-
-            <Divider sx={{ backgroundColor: "#F0F0F0" }} />
-
-            <Box>
-              <Box
-                sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}
-              >
-                <Box
-                  sx={{
-                    width: 24,
-                    height: 24,
-                    backgroundColor: "#2196F3",
-                    borderRadius: "6px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <ServerIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
-                </Box>
-                <Typography
-                  variant="h6"
-                  sx={{
-                    color: "#000000",
-                    fontWeight: 500,
-                    fontSize: "16px",
-                  }}
-                >
-                  LiveKit Configuration
-                </Typography>
-              </Box>
-
-              <TextField
-                fullWidth
-                label="LiveKit URL"
-                value={config.livekit_url}
-                onChange={(e) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    livekit_url: e.target.value,
-                  }))
-                }
-                placeholder="wss://pump-prod-tg2x8veh.livekit.cloud"
-                helperText="WebSocket URL for LiveKit server connection"
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: "#FAFAFA",
-                    borderRadius: "8px",
-                    color: "#000000",
-                    "& fieldset": {
-                      borderColor: "#E0E0E0",
-                    },
-                    "&:hover fieldset": {
-                      borderColor: "#BDBDBD",
-                    },
-                    "&.Mui-focused fieldset": {
-                      borderColor: "#000000",
-                      borderWidth: "2px",
-                    },
-                  },
-                  "& .MuiInputLabel-root": {
-                    color: "#6B6B6B",
-                    fontSize: "14px",
-                  },
-                  "& .MuiInputLabel-root.Mui-focused": {
-                    color: "#000000",
-                  },
-                  "& .MuiFormHelperText-root": {
-                    color: "#6B6B6B",
-                    fontSize: "12px",
-                  },
-                }}
-              />
-            </Box>
-
-            <Divider sx={{ backgroundColor: "#F0F0F0" }} />
-
-            <Box>
-              <Box
-                sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}
-              >
-                <Box
-                  sx={{
-                    width: 24,
-                    height: 24,
-                    backgroundColor: "#6B6B6B",
-                    borderRadius: "6px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <BatchIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
-                </Box>
-                <Typography
-                  variant="h6"
-                  sx={{
-                    color: "#000000",
-                    fontWeight: 500,
-                    fontSize: "16px",
-                  }}
-                >
-                  Processing Configuration
-                </Typography>
-              </Box>
-
-              <TextField
-                fullWidth
-                label="Max Batch Size"
-                type="number"
-                value={config.max_batch_size}
-                onChange={(e) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    max_batch_size: parseInt(e.target.value) || 1,
-                  }))
-                }
-                inputProps={{ min: 1, max: 10 }}
-                helperText="Number of videos to process simultaneously (1-10)"
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: "#FAFAFA",
-                    borderRadius: "8px",
-                    color: "#000000",
-                    "& fieldset": {
-                      borderColor: "#E0E0E0",
-                    },
-                    "&:hover fieldset": {
-                      borderColor: "#BDBDBD",
-                    },
-                    "&.Mui-focused fieldset": {
-                      borderColor: "#000000",
-                      borderWidth: "2px",
-                    },
-                  },
-                  "& .MuiInputLabel-root": {
-                    color: "#6B6B6B",
-                    fontSize: "14px",
-                  },
-                  "& .MuiInputLabel-root.Mui-focused": {
-                    color: "#000000",
-                  },
-                  "& .MuiFormHelperText-root": {
-                    color: "#6B6B6B",
-                    fontSize: "12px",
-                  },
-                }}
-              />
-            </Box>
-          </Box>
+          <Box sx={{ mt: 3 }}>{renderContent()}</Box>
         )}
       </DialogContent>
 
@@ -674,7 +748,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         </Button>
         <Button
           onClick={handleSave}
-          disabled={loading || saving}
+          disabled={loading || saving || (isFilecoinTab && !filecoinConfig.privateKey.trim())}
           variant="contained"
           sx={{
             background: "linear-gradient(135deg, #000000 0%, #424242 100%)",
@@ -702,7 +776,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
             )
           }
         >
-          {saving ? "Saving..." : "Save Configuration"}
+          {saving ? "Saving..." : saveLabel}
         </Button>
       </DialogActions>
     </Dialog>

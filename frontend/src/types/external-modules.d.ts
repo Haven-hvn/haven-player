@@ -42,6 +42,17 @@ declare module 'filecoin-pin/core/unixfs' {
 }
 declare module 'multiformats/cid';
 
+declare module '@web3-storage/piece' {
+  export interface PieceResult {
+    pieceCid: { toString(): string };
+    rootCid?: unknown;
+    pieceSize?: number;
+    payloadSize?: number;
+  }
+
+  export function pieceFromCAR(car: Blob | Uint8Array | AsyncIterable<Uint8Array>): Promise<PieceResult>;
+}
+
 declare module 'buffer' {
   export class Buffer extends Uint8Array {
     static from(data: ArrayBuffer | ArrayBufferView | string, encoding?: string): Buffer;

@@ -4,6 +4,7 @@ import {
   type CreateCarOptions,
   type Logger,
 } from 'filecoin-pin/core/unixfs';
+import { pieceFromCAR } from '@web3-storage/piece';
 import {
   initializeSynapse as initSynapse,
   createStorageContext,
@@ -218,6 +219,38 @@ async function derivePieceCid(
     discoveredPrototypeKeys: protoKeys.slice(0, 50),
   });
   return undefined;
+}
+
+async function computePieceCidLocally(carBytes: Uint8Array, logger: Logger): Promise<string | undefined> {
+  try {
+    // Wrap in a plain ArrayBuffer-backed Uint8Array to satisfy Blob typing expectations (avoid SharedArrayBuffer).
+    const safeBytes =
+      carBytes instanceof Uint8Array
+        ? new Uint8Array(carBytes.buffer.slice(carBytes.byteOffset, carBytes.byteOffset + carBytes.byteLength))
+        : new Uint8Array(carBytes);
+    const safeArrayBuffer = new ArrayBuffer(safeBytes.byteLength);
+    new Uint8Array(safeArrayBuffer).set(safeBytes);
+    const piece = await pieceFromCAR(new Blob([safeArrayBuffer]));
+    const pieceCidString = piece.pieceCid?.toString?.() ?? `${piece.pieceCid}`;
+    logger.info('Computed PieceCID locally from CAR', {
+      pieceCid: pieceCidString,
+      pieceSize: piece.pieceSize,
+      payloadSize: piece.payloadSize,
+    });
+    return pieceCidString;
+  } catch (error) {
+    logger.warn('Local PieceCID computation failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+function normalizePieceCid(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  // If helper returned multiple comma-separated CIDs, pick the first
+  const first = raw.split(',').map((s) => s.trim()).find((s) => s.length > 0);
+  return first;
 }
 
 async function runCleanup(cleanups: CleanupCallback[], logger: ReturnType<typeof createLogger>, context: string): Promise<void> {
@@ -674,7 +707,10 @@ export async function uploadVideoToFilecoin(
     };
 
     // Derive PieceCID if the storage helper provides one (required by PDP upload)
-    const pieceCid = await derivePieceCid(storage, carPath, carBytes, logger);
+    let pieceCid = normalizePieceCid(await derivePieceCid(storage, carPath, carBytes, logger));
+    if (!pieceCid) {
+      pieceCid = normalizePieceCid(await computePieceCidLocally(carBytes, logger));
+    }
 
     onProgress?.({
       stage: 'uploading',

@@ -11,6 +11,8 @@ type Synapse = Awaited<ReturnType<typeof initSynapse>>;
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 // Use CID from multiformats - type assertion needed due to version mismatch
 import { CID } from 'multiformats/cid';
+import { CarReader } from '@ipld/car';
+import { pieceFromCAR } from '@web3-storage/data-segment';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -373,6 +375,17 @@ export async function uploadVideoToFilecoin(
       isEncrypted,
       logger
     );
+
+    // If pieceCid is missing, compute it from the CAR bytes
+    let pieceCidString =
+      pieceCid ??
+      (typeof rootCid === 'string' ? rootCid : (rootCid as unknown as { toString(): string }).toString());
+    if (!pieceCidString) {
+      const carReader = await CarReader.fromBytes(carBytes);
+      const piece = await pieceFromCAR(carReader);
+      pieceCidString = piece.piece.toString();
+      logger.info('Computed piece CID from CAR', { pieceCid: pieceCidString });
+    }
     
     // If pieceCid not provided by CAR builder, fall back to rootCid to avoid undefined.
     const pieceCidToUse =

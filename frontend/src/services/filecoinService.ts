@@ -381,10 +381,10 @@ export async function uploadVideoToFilecoin(
 
     if (!pieceCidString) {
       try {
+        // Lazy import to avoid export path issues; use explicit file path for data-segment Piece API.
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const dataSegment = require('@web3-storage/data-segment') as {
+        const dataSegment = require('@web3-storage/data-segment/dist/src/piece.js') as {
           Piece?: { fromCAR: (carReader: unknown) => Promise<{ pieceCid: string }> };
-          pieceFromCAR?: (carReader: unknown) => Promise<{ piece: { toString(): string } }>;
         };
 
         const carReader = await CarReader.fromBytes(carBytes);
@@ -393,12 +393,8 @@ export async function uploadVideoToFilecoin(
           const piece = await dataSegment.Piece.fromCAR(carReader);
           pieceCidString = piece.pieceCid;
           logger.info('Computed piece CID from CAR (Piece.fromCAR)', { pieceCid: pieceCidString });
-        } else if (typeof dataSegment.pieceFromCAR === 'function') {
-          const piece = await dataSegment.pieceFromCAR(carReader);
-          pieceCidString = piece.piece.toString();
-          logger.info('Computed piece CID from CAR (pieceFromCAR)', { pieceCid: pieceCidString });
         } else {
-          throw new Error('pieceFromCAR / Piece.fromCAR not available in @web3-storage/data-segment');
+          throw new Error('Piece.fromCAR not available in @web3-storage/data-segment');
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

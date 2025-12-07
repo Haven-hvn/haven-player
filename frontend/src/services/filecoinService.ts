@@ -375,10 +375,8 @@ export async function uploadVideoToFilecoin(
       logger
     );
 
-    // If pieceCid is missing, compute it from the CAR bytes
-    let pieceCidString =
-      pieceCid ??
-      (typeof rootCid === 'string' ? rootCid : (rootCid as unknown as { toString(): string }).toString());
+    // Compute piece CID from CAR when the builder does not provide it
+    let pieceCidString = pieceCid ? pieceCid.toString() : undefined;
 
     if (!pieceCidString) {
       try {
@@ -386,18 +384,18 @@ export async function uploadVideoToFilecoin(
         const dataSegment = require('@web3-storage/data-segment') as {
           pieceFromCAR?: (carReader: unknown) => Promise<{ piece: { toString(): string } }>;
         };
-        if (dataSegment.pieceFromCAR) {
+        if (typeof dataSegment.pieceFromCAR === 'function') {
           const carReader = await CarReader.fromBytes(carBytes);
           const piece = await dataSegment.pieceFromCAR(carReader);
           pieceCidString = piece.piece.toString();
           logger.info('Computed piece CID from CAR', { pieceCid: pieceCidString });
         } else {
-          logger.warn('pieceFromCAR not available in @web3-storage/data-segment');
+          throw new Error('pieceFromCAR not available in @web3-storage/data-segment');
         }
       } catch (err) {
-        logger.error('Failed to compute piece CID from CAR', {
-          error: err instanceof Error ? err.message : err,
-        });
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Failed to compute piece CID from CAR', { error: message });
+        throw new Error(`Failed to compute piece CID from CAR: ${message}`);
       }
     }
 

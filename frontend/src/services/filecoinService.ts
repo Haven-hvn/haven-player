@@ -105,15 +105,35 @@ async function createCarFromVideo(
   });
 
   const buildCarFromPath = async (pathToUse: string) => {
-    // Some versions return { car }, others { carBytes }; normalize to carBytes.
-    const result = await (createCarFromPath as unknown as (p: string) => Promise<{ car?: Uint8Array; carBytes?: Uint8Array; rootCid: CID }>)(
+    // Some versions return { car }, others { carBytes }, others write to disk and return a path.
+    const result = await (createCarFromPath as unknown as (p: string) => Promise<Record<string, unknown>>)(
       pathToUse
     );
-    const carBytes = result.carBytes ?? result.car;
-    if (!carBytes) {
+    const rootCid = (result as { rootCid?: CID }).rootCid;
+    const rawCar =
+      (result as { carBytes?: Uint8Array }).carBytes ??
+      (result as { car?: Uint8Array | string }).car ??
+      (result as { carFile?: Uint8Array | string }).carFile ??
+      (result as { carPath?: string }).carPath ??
+      (result as { carFilePath?: string }).carFilePath;
+
+    let carBytes: Uint8Array | undefined;
+    if (rawCar instanceof Uint8Array) {
+      carBytes = rawCar;
+    } else if (typeof rawCar === 'string') {
+      carBytes = fs.readFileSync(rawCar);
+    }
+
+    if (!carBytes || !rootCid) {
+      // eslint-disable-next-line no-console
+      console.error('[Filecoin] createCarFromPath returned unexpected shape', {
+        keys: Object.keys(result),
+        rootCid,
+      });
       throw new Error('Failed to build CAR: missing car bytes');
     }
-    return { carBytes, rootCid: result.rootCid };
+
+    return { carBytes, rootCid };
   };
 
   // If not encrypted and we have the original file path, prefer the path-based CAR builder.

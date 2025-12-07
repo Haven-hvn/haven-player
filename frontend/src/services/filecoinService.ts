@@ -10,7 +10,7 @@ import {
 type Synapse = Awaited<ReturnType<typeof initSynapse>>;
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 // Use CID from multiformats - type assertion needed due to version mismatch
-import type { CID } from 'multiformats/cid';
+import { CID } from 'multiformats/cid';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';

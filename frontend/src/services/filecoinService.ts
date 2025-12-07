@@ -376,7 +376,8 @@ export async function uploadVideoToFilecoin(
     );
 
     // Compute piece CID from CAR when the builder does not provide it
-    let pieceCidString = pieceCid ? pieceCid.toString() : undefined;
+    // Normalize any provided pieceCid to a string
+    let pieceCidString = pieceCid ? `${pieceCid}` : undefined;
 
     if (!pieceCidString) {
       try {
@@ -406,8 +407,11 @@ export async function uploadVideoToFilecoin(
       }
     }
 
-    // Normalize to string
-    pieceCidString = typeof pieceCidString === 'string' ? pieceCidString : pieceCidString?.toString();
+    // Ensure we have a string; fail fast if still missing
+    pieceCidString = typeof pieceCidString === 'string' ? pieceCidString : pieceCidString ? `${pieceCidString}` : undefined;
+    if (!pieceCidString) {
+      throw new Error('Failed to compute piece CID from CAR: piece CID is empty');
+    }
 
     // Log CAR creation result for debugging
     logger.info('CAR created', {

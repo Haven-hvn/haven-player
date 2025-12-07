@@ -1,19 +1,9 @@
 import { useState, useCallback } from 'react';
-import { uploadVideoToFilecoin, type UploadProgress } from '@/services/filecoinService';
 import { videoService } from '@/services/api';
 import type { FilecoinUploadStatus, FilecoinConfig, FilecoinUploadResult } from '@/types/filecoin';
+import type { UploadProgress } from '@/services/filecoinService';
 
 const { ipcRenderer } = require('electron');
-
-/**
- * Convert a local file path to a File object for browser APIs
- */
-async function pathToFile(filePath: string): Promise<File> {
-  const fileData = await ipcRenderer.invoke('read-video-file', filePath);
-  const buffer = new Uint8Array(fileData.data);
-  const blob = new Blob([buffer], { type: fileData.type });
-  return new File([blob], fileData.name, { type: fileData.type });
-}
 
 export interface UseFilecoinUploadReturn {
   uploadStatus: Record<string, FilecoinUploadStatus>;
@@ -45,25 +35,26 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
         },
       }));
 
-      try {
-        // Convert file path to File object
-        const file = await pathToFile(videoPath);
+      const handleProgress = (_: unknown, payload: { videoPath: string; progress: UploadProgress }) => {
+        if (payload.videoPath !== videoPath) return;
+        if (controller.signal.aborted) return;
 
-        // Upload to Filecoin
-        const result = await uploadVideoToFilecoin({
-          file,
-          config,
-          onProgress: (progress: UploadProgress) => {
-            if (controller.signal.aborted) return;
-
-            setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
-              ...prev,
-              [videoPath]: {
-                status: progress.stage === 'completed' ? 'completed' : 'uploading',
-                progress: progress.progress,
-              },
-            }));
+        setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
+          ...prev,
+          [videoPath]: {
+            status: payload.progress.stage === 'completed' ? 'completed' : 'uploading',
+            progress: payload.progress.progress,
           },
+        }));
+      };
+
+      ipcRenderer.on('filecoin-upload-progress', handleProgress);
+
+      try {
+        // Delegate upload to main process to keep heavy work out of renderer
+        const result: FilecoinUploadResult = await ipcRenderer.invoke('upload-to-filecoin', {
+          videoPath,
+          config,
         });
 
         // Update status with result
@@ -105,6 +96,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           return updated;
         });
 
+        ipcRenderer.removeListener('filecoin-upload-progress', handleProgress);
         return result;
       } catch (error) {
         let errorMessage = error instanceof Error ? error.message : 'Upload failed';
@@ -137,6 +129,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           return updated;
         });
 
+        ipcRenderer.removeListener('filecoin-upload-progress', handleProgress);
         throw error;
       }
     },

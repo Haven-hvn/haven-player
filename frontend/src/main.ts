@@ -2,6 +2,8 @@ import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { registerRenderCrashLogger } from './utils/registerRenderCrashLogger';
+import { uploadVideoToFilecoin } from './services/filecoinService';
+import type { FilecoinConfig } from './types/filecoin';
 
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
@@ -93,7 +95,7 @@ ipcMain.handle('read-video-file', async (_event, filePath: string) => {
       name: fileName,
       size: stats.size,
       type: mimeType,
-      data: buffer.buffer,
+      data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
     };
   } catch (error) {
     throw new Error(`Failed to read file: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -143,6 +145,49 @@ ipcMain.handle('get-filecoin-config', async () => {
     return null;
   }
 });
+
+ipcMain.handle(
+  'upload-to-filecoin',
+  async (
+    _event,
+    args: {
+      videoPath: string;
+      config: FilecoinConfig;
+    }
+  ) => {
+    if (!mainWindow) {
+      throw new Error('Main window not available');
+    }
+
+    const { videoPath, config } = args;
+
+    const fileStats = fs.statSync(videoPath);
+    if (!fileStats.isFile()) {
+      throw new Error(`Path is not a file: ${videoPath}`);
+    }
+
+    const fileBuffer = fs.readFileSync(videoPath);
+    const fileName = path.basename(videoPath);
+    const mimeType = getMimeType(videoPath);
+
+    // Use Blob/File available in recent Electron/Node to keep compatibility with the existing upload pipeline.
+    const blob = new Blob([fileBuffer], { type: mimeType });
+    const file = new File([blob], fileName, { type: mimeType });
+
+    const result = await uploadVideoToFilecoin({
+      file,
+      config,
+      onProgress: (progress) => {
+        mainWindow?.webContents.send('filecoin-upload-progress', {
+          videoPath,
+          progress,
+        });
+      },
+    });
+
+    return result;
+  }
+);
 
 ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: string; rpcUrl?: string; dataSetId?: number }) => {
   try {

@@ -113,36 +113,65 @@ async function derivePieceCid(
   carBytes: Uint8Array,
   logger: Logger
 ): Promise<string | undefined> {
-  const candidates: Array<{ name: string; argType: 'path' | 'bytes' }> = [
-    { name: 'generatePieceCidFromFile', argType: 'path' },
-    { name: 'generatePieceCIDFromFile', argType: 'path' },
-    { name: 'generatePieceCidFromCAR', argType: 'path' },
-    { name: 'generatePieceCIDFromCAR', argType: 'path' },
-    { name: 'calculatePieceCidFromCAR', argType: 'path' },
-    { name: 'calculatePieceCIDFromCAR', argType: 'path' },
-    { name: 'calculatePieceCid', argType: 'path' },
-    { name: 'calculatePieceCID', argType: 'path' },
-    { name: 'getPieceCidFromFile', argType: 'path' },
-    { name: 'getPieceCIDFromFile', argType: 'path' },
-    { name: 'getPieceCidFromCAR', argType: 'path' },
-    { name: 'getPieceCIDFromCAR', argType: 'path' },
-    { name: 'pieceCidFromFile', argType: 'path' },
-    { name: 'pieceCIDFromFile', argType: 'path' },
-    { name: 'pieceCidFromCAR', argType: 'path' },
-    { name: 'pieceCIDFromCAR', argType: 'path' },
-    { name: 'pieceCid', argType: 'path' },
-    { name: 'pieceCID', argType: 'path' },
-    { name: 'calculatePieceCidFromBytes', argType: 'bytes' },
-    { name: 'calculatePieceCIDFromBytes', argType: 'bytes' },
-    { name: 'generatePieceCidFromBytes', argType: 'bytes' },
-    { name: 'generatePieceCIDFromBytes', argType: 'bytes' },
-  ];
-
   const storageObj = storage as Record<string, unknown> | undefined;
   if (!storageObj) {
     return undefined;
   }
 
+  const candidates: Array<{ name: string; argType: 'path' | 'bytes' }> = [];
+  const seen = new Set<string>();
+  const addCandidate = (name: string, argType: 'path' | 'bytes') => {
+    const key = `${name}:${argType}`;
+    if (!seen.has(key)) {
+      candidates.push({ name, argType });
+      seen.add(key);
+    }
+  };
+
+  // Preferred known helpers
+  [
+    { name: 'generatePieceCidFromFile', argType: 'path' as const },
+    { name: 'generatePieceCIDFromFile', argType: 'path' as const },
+    { name: 'generatePieceCidFromCAR', argType: 'path' as const },
+    { name: 'generatePieceCIDFromCAR', argType: 'path' as const },
+    { name: 'generatePieceCidFromCARFile', argType: 'path' as const },
+    { name: 'generatePieceCIDFromCARFile', argType: 'path' as const },
+    { name: 'calculatePieceCidFromCAR', argType: 'path' as const },
+    { name: 'calculatePieceCIDFromCAR', argType: 'path' as const },
+    { name: 'calculatePieceCid', argType: 'path' as const },
+    { name: 'calculatePieceCID', argType: 'path' as const },
+    { name: 'getPieceCidFromFile', argType: 'path' as const },
+    { name: 'getPieceCIDFromFile', argType: 'path' as const },
+    { name: 'getPieceCidFromCAR', argType: 'path' as const },
+    { name: 'getPieceCIDFromCAR', argType: 'path' as const },
+    { name: 'pieceCidFromFile', argType: 'path' as const },
+    { name: 'pieceCIDFromFile', argType: 'path' as const },
+    { name: 'pieceCidFromCAR', argType: 'path' as const },
+    { name: 'pieceCIDFromCAR', argType: 'path' as const },
+    { name: 'pieceCid', argType: 'path' as const },
+    { name: 'pieceCID', argType: 'path' as const },
+    { name: 'calculatePieceCidFromBytes', argType: 'bytes' as const },
+    { name: 'calculatePieceCIDFromBytes', argType: 'bytes' as const },
+    { name: 'generatePieceCidFromBytes', argType: 'bytes' as const },
+    { name: 'generatePieceCIDFromBytes', argType: 'bytes' as const },
+    { name: 'calculateCommP', argType: 'path' as const },
+    { name: 'generateCommP', argType: 'path' as const },
+    { name: 'commP', argType: 'path' as const },
+    { name: 'computePieceCID', argType: 'path' as const },
+    { name: 'computePieceCid', argType: 'path' as const },
+  ].forEach(({ name, argType }) => addCandidate(name, argType));
+
+  // Dynamically discover any piece/comm/cid helpers exposed by storage
+  const dynamicKeys = Object.keys(storageObj).filter((key) => {
+    const val = storageObj[key];
+    return typeof val === 'function' && /(piece|cid|comm)/i.test(key);
+  });
+  dynamicKeys.forEach((name) => {
+    addCandidate(name, 'path');
+    addCandidate(name, 'bytes');
+  });
+
+  const attempted: string[] = [];
   for (const candidate of candidates) {
     const maybeFn = storageObj[candidate.name];
     if (typeof maybeFn !== 'function') {
@@ -163,9 +192,14 @@ async function derivePieceCid(
         error: error instanceof Error ? error.message : String(error),
       });
     }
+
+    attempted.push(candidate.name);
   }
 
-  logger.warn('Unable to derive PieceCID from storage helpers; proceeding without one');
+  logger.warn('Unable to derive PieceCID from storage helpers; proceeding without one', {
+    attemptedMethods: Array.from(new Set(attempted)).slice(0, 50),
+    discoveredMethods: dynamicKeys.slice(0, 50),
+  });
   return undefined;
 }
 

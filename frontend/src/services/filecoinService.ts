@@ -378,17 +378,13 @@ export async function uploadVideoToFilecoin(
     const pieceCidToUse =
       pieceCid ??
       (typeof rootCid === 'string' ? rootCid : (rootCid as unknown as { toString(): string }).toString());
-
-    const pieceCidParsed =
-      typeof pieceCidToUse === 'string'
-        ? CID.parse(pieceCidToUse)
-        : pieceCidToUse;
+    const pieceCidString = typeof pieceCidToUse === 'string' ? pieceCidToUse : pieceCidToUse?.toString();
 
     // Log CAR creation result for debugging
     logger.info('CAR created', {
       carSize: carBytes.length,
       rootCid: rootCid.toString(),
-      pieceCid: pieceCidToUse ?? 'not provided',
+      pieceCid: pieceCidString ?? 'not provided',
       carPath,
     });
 
@@ -521,8 +517,7 @@ export async function uploadVideoToFilecoin(
       logger,
       contextId: file.name,
       // Pass through pieceCid/carPath if the CAR builder provided them
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pieceCid: pieceCidParsed as any,
+      pieceCid: pieceCidString,
       carPath,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error - ProgressEventHandler expects specific event types, but our handler works with all event types at runtime

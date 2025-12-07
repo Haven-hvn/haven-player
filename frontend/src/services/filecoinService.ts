@@ -3,15 +3,16 @@ import {
   initializeSynapse as initSynapse,
   createStorageContext,
   cleanupSynapseService,
-  type SynapseService,
 } from 'filecoin-pin/core/synapse';
 // Import the actual Synapse type from the package if available, otherwise infer it
 // TypeScript may not be able to properly infer this, so we'll use type assertions where needed
 type Synapse = Awaited<ReturnType<typeof initSynapse>>;
+type SynapseServiceShape = {
+  synapse: Synapse;
+  storage: unknown;
+  providerInfo: unknown;
+};
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
-// Use CID from multiformats - type assertion needed due to version mismatch
-import { CID } from 'multiformats/cid';
-import { CarReader } from '@ipld/car';
 import { Piece } from '@web3-storage/data-segment';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -100,7 +101,7 @@ async function createCarFromVideo(
   filePath?: string,
   isEncrypted: boolean = false,
   logger?: ReturnType<typeof createLogger>
-): Promise<{ carBytes: Uint8Array; rootCid: CID; pieceCid?: CID | string; carPath?: string }> {
+): Promise<{ carBytes: Uint8Array; rootCid: string; pieceCid?: string; carPath?: string }> {
   onProgress?.({
     stage: 'creating-car',
     progress: 0,
@@ -116,15 +117,17 @@ async function createCarFromVideo(
     // Log what we got for debugging
     logger?.info('createCarFromPath result', {
       keys: Object.keys(result),
-      hasRootCid: !!(result as { rootCid?: CID }).rootCid,
-      hasPieceCid: !!(result as { pieceCid?: CID | string }).pieceCid,
+      hasRootCid: !!(result as { rootCid?: unknown }).rootCid,
+      hasPieceCid: !!(result as { pieceCid?: unknown }).pieceCid,
     });
     
-    const rootCid = (result as { rootCid?: CID }).rootCid;
-    const pieceCid =
-      (result as { pieceCid?: CID | string }).pieceCid ??
-      (result as { pieceCID?: CID | string }).pieceCID ??
-      (result as { piece_cid?: CID | string }).piece_cid;
+    const rootCidRaw = (result as { rootCid?: unknown }).rootCid;
+    const rootCid = rootCidRaw ? `${rootCidRaw}` : undefined;
+    const pieceCidRaw =
+      (result as { pieceCid?: unknown }).pieceCid ??
+      (result as { pieceCID?: unknown }).pieceCID ??
+      (result as { piece_cid?: unknown }).piece_cid;
+    const pieceCid = pieceCidRaw ? `${pieceCidRaw}` : undefined;
     const returnedCarPath =
       (result as { carPath?: string }).carPath ||
       (result as { carFilePath?: string }).carFilePath;
@@ -382,18 +385,17 @@ export async function uploadVideoToFilecoin(
 
     if (!pieceCidString) {
       try {
-        const carReader = await CarReader.fromBytes(carBytes);
-        // Prefer Piece.fromCAR if available
-        if (typeof (Piece as unknown as { fromCAR?: (reader: unknown) => Promise<{ pieceCid?: string; link?: { toString?: () => string } }> }).fromCAR === 'function') {
-          const piece = await (Piece as unknown as { fromCAR: (reader: unknown) => Promise<{ pieceCid?: string; link?: { toString?: () => string } }> }).fromCAR(carReader);
-          pieceCidString = piece.pieceCid ?? piece.link?.toString();
-          logger.info('Computed piece CID from CAR (Piece.fromCAR)', { pieceCid: pieceCidString });
-        } else if (typeof (Piece as unknown as { fromPayload?: (payload: Uint8Array) => Promise<{ link?: { toString?: () => string } }> }).fromPayload === 'function') {
+        if (typeof (Piece as unknown as { fromPayload?: (payload: Uint8Array) => Promise<{ link?: { toString?: () => string } }> }).fromPayload === 'function') {
           const piece = await (Piece as unknown as { fromPayload: (payload: Uint8Array) => Promise<{ link?: { toString?: () => string } }> }).fromPayload(carBytes);
-          pieceCidString = piece.link?.toString();
-          logger.info('Computed piece CID from payload (Piece.fromPayload)', { pieceCid: pieceCidString });
+          const linkToString = piece.link && typeof piece.link.toString === 'function' ? piece.link.toString() : undefined;
+          if (linkToString) {
+            pieceCidString = linkToString;
+            logger.info('Computed piece CID from payload (Piece.fromPayload)', { pieceCid: pieceCidString });
+          } else {
+            throw new Error('Piece.fromPayload did not return a link');
+          }
         } else {
-          throw new Error('Piece.fromCAR / Piece.fromPayload not available in @web3-storage/data-segment');
+          throw new Error('Piece.fromPayload not available in @web3-storage/data-segment');
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -411,7 +413,7 @@ export async function uploadVideoToFilecoin(
     // Log CAR creation result for debugging
     logger.info('CAR created', {
       carSize: carBytes.length,
-      rootCid: rootCid.toString(),
+      rootCid,
       pieceCid: pieceCidString ?? 'not provided',
       carPath,
     });
@@ -451,7 +453,7 @@ export async function uploadVideoToFilecoin(
     let readiness;
     try {
       readiness = await checkUploadReadiness({
-        synapse: synapse as unknown as Parameters<typeof checkUploadReadiness>[0]['synapse'],
+        synapse: synapse as any,
         fileSize: carBytes.length,
         autoConfigureAllowances: true,
         onProgress: (event: { type: string }) => {
@@ -512,8 +514,6 @@ export async function uploadVideoToFilecoin(
     // This matches filecoin-pin pattern from add.ts line 160-180
     const { storage, providerInfo } = await createStorageContext(
       synapse as unknown as Parameters<typeof createStorageContext>[0],
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
       logger,
       config.dataSetId
         ? {
@@ -524,8 +524,8 @@ export async function uploadVideoToFilecoin(
         : undefined
     );
 
-    const synapseService: SynapseService = { 
-      synapse: synapse as unknown as SynapseService['synapse'], 
+    const synapseService: SynapseServiceShape = { 
+      synapse, 
       storage, 
       providerInfo 
     };
@@ -540,19 +540,13 @@ export async function uploadVideoToFilecoin(
     // Type assertion needed due to multiformats version mismatch between root and filecoin-pin's nested multiformats
     // Both CID types are structurally compatible, just from different package versions
     const uploadResult = await executeUpload(synapseService, carBytes, rootCid, {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
       logger,
       contextId: file.name,
       // Pass through pieceCid/carPath; include casing variants for compatibility
       pieceCid: pieceCidString,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pieceCID: pieceCidString as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      piece_cid: pieceCidString as any,
+      pieceCID: pieceCidString,
+      piece_cid: pieceCidString,
       carPath,
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error - ProgressEventHandler expects specific event types, but our handler works with all event types at runtime
       onProgress: (event: { type: string; data?: { retryCount?: number } }) => {
         switch (event.type) {
           case 'onUploadComplete': {

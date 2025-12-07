@@ -12,7 +12,6 @@ import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 // Use CID from multiformats - type assertion needed due to version mismatch
 import { CID } from 'multiformats/cid';
 import { CarReader } from '@ipld/car';
-import { pieceFromCAR } from '@web3-storage/data-segment';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -380,11 +379,26 @@ export async function uploadVideoToFilecoin(
     let pieceCidString =
       pieceCid ??
       (typeof rootCid === 'string' ? rootCid : (rootCid as unknown as { toString(): string }).toString());
-    if (!pieceCidString) {
-      const carReader = await CarReader.fromBytes(carBytes);
-      const piece = await pieceFromCAR(carReader);
-      pieceCidString = piece.piece.toString();
-      logger.info('Computed piece CID from CAR', { pieceCid: pieceCidString });
+
+    if (!pieceCid) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const dataSegment = require('@web3-storage/data-segment') as {
+          pieceFromCAR?: (carReader: unknown) => Promise<{ piece: { toString(): string } }>;
+        };
+        if (dataSegment.pieceFromCAR) {
+          const carReader = await CarReader.fromBytes(carBytes);
+          const piece = await dataSegment.pieceFromCAR(carReader);
+          pieceCidString = piece.piece.toString();
+          logger.info('Computed piece CID from CAR', { pieceCid: pieceCidString });
+        } else {
+          logger.warn('pieceFromCAR not available in @web3-storage/data-segment');
+        }
+      } catch (err) {
+        logger.error('Failed to compute piece CID from CAR', {
+          error: err instanceof Error ? err.message : err,
+        });
+      }
     }
     
     // If pieceCid not provided by CAR builder, fall back to rootCid to avoid undefined.

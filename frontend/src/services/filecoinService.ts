@@ -96,7 +96,8 @@ async function createCarFromVideo(
   file: File,
   onProgress?: (progress: UploadProgress) => void,
   filePath?: string,
-  isEncrypted: boolean = false
+  isEncrypted: boolean = false,
+  logger?: ReturnType<typeof createLogger>
 ): Promise<{ carBytes: Uint8Array; rootCid: CID; pieceCid?: CID | string }> {
   onProgress?.({
     stage: 'creating-car',
@@ -111,7 +112,7 @@ async function createCarFromVideo(
     );
     
     // Log what we got for debugging
-    logger.info('createCarFromPath result', {
+    logger?.info('createCarFromPath result', {
       keys: Object.keys(result),
       hasRootCid: !!(result as { rootCid?: CID }).rootCid,
       hasPieceCid: !!(result as { pieceCid?: CID | string }).pieceCid,
@@ -134,7 +135,7 @@ async function createCarFromVideo(
     }
 
     if (!carBytes || !rootCid) {
-      logger.error('[Filecoin] createCarFromPath returned unexpected shape', {
+      logger?.error('[Filecoin] createCarFromPath returned unexpected shape', {
         keys: Object.keys(result),
         rootCid: !!rootCid,
         hasCarBytes: !!carBytes,
@@ -363,7 +364,8 @@ export async function uploadVideoToFilecoin(
       fileToUpload,
       onProgress,
       options.filePath,
-      isEncrypted
+      isEncrypted,
+      logger
     );
     
     // Log CAR creation result for debugging

@@ -24,6 +24,10 @@ module.exports = [
         '@': path.resolve(__dirname, 'src'),
       },
     },
+    ignoreWarnings: [
+      /Critical dependency: the request of a dependency is an expression/,
+      /require function is used in a way in which dependencies cannot be statically extracted/,
+    ],
     // Keep default warnings visible for main; we rely on runtime optional deps (ws).
     output: {
       filename: 'main.js',

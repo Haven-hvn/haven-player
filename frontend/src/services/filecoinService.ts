@@ -382,15 +382,22 @@ export async function uploadVideoToFilecoin(
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const dataSegment = require('@web3-storage/data-segment') as {
+          Piece?: { fromCAR: (carReader: unknown) => Promise<{ pieceCid: string }> };
           pieceFromCAR?: (carReader: unknown) => Promise<{ piece: { toString(): string } }>;
         };
-        if (typeof dataSegment.pieceFromCAR === 'function') {
-          const carReader = await CarReader.fromBytes(carBytes);
+
+        const carReader = await CarReader.fromBytes(carBytes);
+
+        if (dataSegment?.Piece?.fromCAR) {
+          const piece = await dataSegment.Piece.fromCAR(carReader);
+          pieceCidString = piece.pieceCid;
+          logger.info('Computed piece CID from CAR (Piece.fromCAR)', { pieceCid: pieceCidString });
+        } else if (typeof dataSegment.pieceFromCAR === 'function') {
           const piece = await dataSegment.pieceFromCAR(carReader);
           pieceCidString = piece.piece.toString();
-          logger.info('Computed piece CID from CAR', { pieceCid: pieceCidString });
+          logger.info('Computed piece CID from CAR (pieceFromCAR)', { pieceCid: pieceCidString });
         } else {
-          throw new Error('pieceFromCAR not available in @web3-storage/data-segment');
+          throw new Error('pieceFromCAR / Piece.fromCAR not available in @web3-storage/data-segment');
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

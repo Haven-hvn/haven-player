@@ -98,7 +98,7 @@ async function createCarFromVideo(
   filePath?: string,
   isEncrypted: boolean = false,
   logger?: ReturnType<typeof createLogger>
-): Promise<{ carBytes: Uint8Array; rootCid: CID; pieceCid?: CID | string }> {
+): Promise<{ carBytes: Uint8Array; rootCid: CID; pieceCid?: CID | string; carPath?: string }> {
   onProgress?.({
     stage: 'creating-car',
     progress: 0,
@@ -120,6 +120,9 @@ async function createCarFromVideo(
     
     const rootCid = (result as { rootCid?: CID }).rootCid;
     const pieceCid = (result as { pieceCid?: CID | string }).pieceCid;
+    const returnedCarPath =
+      (result as { carPath?: string }).carPath ||
+      (result as { carFilePath?: string }).carFilePath;
     const rawCar =
       (result as { carBytes?: Uint8Array }).carBytes ??
       (result as { car?: Uint8Array | string }).car ??
@@ -145,7 +148,7 @@ async function createCarFromVideo(
     }
 
     // Return pieceCid if available (some versions compute it)
-    return { carBytes, rootCid, pieceCid };
+    return { carBytes, rootCid, pieceCid, carPath: returnedCarPath };
   };
 
   // If not encrypted and we have the original file path, prefer the path-based CAR builder.
@@ -360,7 +363,7 @@ export async function uploadVideoToFilecoin(
     }
 
     // Step 2: Create CAR file (from encrypted or original file)
-    const { carBytes, rootCid, pieceCid } = await createCarFromVideo(
+    const { carBytes, rootCid, pieceCid, carPath } = await createCarFromVideo(
       fileToUpload,
       onProgress,
       options.filePath,
@@ -373,6 +376,7 @@ export async function uploadVideoToFilecoin(
       carSize: carBytes.length,
       rootCid: rootCid.toString(),
       pieceCid: pieceCid ? (typeof pieceCid === 'string' ? pieceCid : pieceCid.toString()) : 'not provided',
+      carPath,
     });
 
     onProgress?.({
@@ -503,6 +507,10 @@ export async function uploadVideoToFilecoin(
       // @ts-expect-error - Logger interface expects silent to be LogFn, but boolean works at runtime
       logger,
       contextId: file.name,
+      // Pass through pieceCid/carPath if the CAR builder provided them
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pieceCid: pieceCid as any,
+      carPath,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error - ProgressEventHandler expects specific event types, but our handler works with all event types at runtime
       onProgress: (event: { type: string; data?: { retryCount?: number } }) => {

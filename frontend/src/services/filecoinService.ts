@@ -12,6 +12,7 @@ import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 // Use CID from multiformats - type assertion needed due to version mismatch
 import { CID } from 'multiformats/cid';
 import { CarReader } from '@ipld/car';
+import { Piece } from '@web3-storage/data-segment';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -381,20 +382,18 @@ export async function uploadVideoToFilecoin(
 
     if (!pieceCidString) {
       try {
-        // Lazy import to avoid export path issues; use explicit file path for data-segment Piece API.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const dataSegment = require('@web3-storage/data-segment/dist/src/piece.js') as {
-          Piece?: { fromCAR: (carReader: unknown) => Promise<{ pieceCid: string }> };
-        };
-
         const carReader = await CarReader.fromBytes(carBytes);
-
-        if (dataSegment?.Piece?.fromCAR) {
-          const piece = await dataSegment.Piece.fromCAR(carReader);
-          pieceCidString = piece.pieceCid;
+        // Prefer Piece.fromCAR if available
+        if (typeof (Piece as unknown as { fromCAR?: (reader: unknown) => Promise<{ pieceCid?: string; link?: { toString?: () => string } }> }).fromCAR === 'function') {
+          const piece = await (Piece as unknown as { fromCAR: (reader: unknown) => Promise<{ pieceCid?: string; link?: { toString?: () => string } }> }).fromCAR(carReader);
+          pieceCidString = piece.pieceCid ?? piece.link?.toString();
           logger.info('Computed piece CID from CAR (Piece.fromCAR)', { pieceCid: pieceCidString });
+        } else if (typeof (Piece as unknown as { fromPayload?: (payload: Uint8Array) => Promise<{ link?: { toString?: () => string } }> }).fromPayload === 'function') {
+          const piece = await (Piece as unknown as { fromPayload: (payload: Uint8Array) => Promise<{ link?: { toString?: () => string } }> }).fromPayload(carBytes);
+          pieceCidString = piece.link?.toString();
+          logger.info('Computed piece CID from payload (Piece.fromPayload)', { pieceCid: pieceCidString });
         } else {
-          throw new Error('Piece.fromCAR not available in @web3-storage/data-segment');
+          throw new Error('Piece.fromCAR / Piece.fromPayload not available in @web3-storage/data-segment');
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

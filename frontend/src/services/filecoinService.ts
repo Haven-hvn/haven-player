@@ -380,7 +380,7 @@ export async function uploadVideoToFilecoin(
       pieceCid ??
       (typeof rootCid === 'string' ? rootCid : (rootCid as unknown as { toString(): string }).toString());
 
-    if (!pieceCid) {
+    if (!pieceCidString) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const dataSegment = require('@web3-storage/data-segment') as {
@@ -400,12 +400,9 @@ export async function uploadVideoToFilecoin(
         });
       }
     }
-    
-    // If pieceCid not provided by CAR builder, fall back to rootCid to avoid undefined.
-    const pieceCidToUse =
-      pieceCid ??
-      (typeof rootCid === 'string' ? rootCid : (rootCid as unknown as { toString(): string }).toString());
-    const pieceCidString = typeof pieceCidToUse === 'string' ? pieceCidToUse : pieceCidToUse?.toString();
+
+    // Normalize to string
+    pieceCidString = typeof pieceCidString === 'string' ? pieceCidString : pieceCidString?.toString();
 
     // Log CAR creation result for debugging
     logger.info('CAR created', {

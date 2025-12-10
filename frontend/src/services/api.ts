@@ -82,6 +82,14 @@ export const videoService = {
     );
     return response.data;
   },
+
+  updateSharePreference: async (videoPath: string, shareToArkiv: boolean): Promise<Video> => {
+    const response = await api.put<Video>(
+      `/videos/${encodeURIComponent(videoPath)}/share`,
+      { share_to_arkiv: shareToArkiv }
+    );
+    return response.data;
+  },
 };
 
 // Job-related API functions

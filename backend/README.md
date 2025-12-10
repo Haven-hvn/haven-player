@@ -47,6 +47,10 @@ uvicorn app.main:app --reload --log-level debug
 
 The API will be available at http://localhost:8000
 
+### Key management for development
+- Preferred: run the backend via the Electron app (GUI). The Filecoin/Lit private key you set in the Filecoin modal is stored encrypted and injected into the backend process automatically—no manual exports needed.
+- If you insist on running the backend standalone (outside the app), you must provide the same key via `FILECOIN_PRIVATE_KEY` (and optionally `FILECOIN_RPC_URL`) yourself.
+
 ## API Documentation
 
 Once the server is running, you can access the API documentation at:

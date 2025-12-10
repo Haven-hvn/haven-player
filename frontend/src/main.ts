@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron';
+import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { registerRenderCrashLogger } from './utils/registerRenderCrashLogger';
@@ -9,6 +10,7 @@ import type { FilecoinConfig } from './types/filecoin';
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
 
 let mainWindow: BrowserWindow | null = null;
+let backendProcess: ChildProcess | null = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -122,22 +124,23 @@ ipcMain.handle('get-filecoin-config', async () => {
       const data = fs.readFileSync(configPath, 'utf-8');
       const config = JSON.parse(data);
       
-      // Decrypt private key if available
-      if (config.encryptedPrivateKey && safeStorage.isEncryptionAvailable()) {
-        try {
-          const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
-          config.privateKey = safeStorage.decryptString(encryptedBuffer);
-        } catch (error) {
-          console.error('Failed to decrypt private key:', error);
-          return null;
-        }
+      // Decrypt private key if available (never stored in plaintext)
+      if (!config.encryptedPrivateKey || !safeStorage.isEncryptionAvailable()) {
+        return null;
       }
-      
-      return {
-        privateKey: config.privateKey,
-        rpcUrl: config.rpcUrl,
-        dataSetId: config.dataSetId,
-      };
+
+      try {
+        const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
+        const privateKey = safeStorage.decryptString(encryptedBuffer);
+        return {
+          privateKey,
+          rpcUrl: config.rpcUrl,
+          dataSetId: config.dataSetId,
+        };
+      } catch (error) {
+        console.error('Failed to decrypt private key:', error);
+        return null;
+      }
     }
     return null;
   } catch (error) {
@@ -194,16 +197,17 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
   try {
     const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
     
-    // Encrypt private key if encryption is available
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('Secure storage is not available on this system; cannot save private key.');
+    }
+
     let encryptedPrivateKey: string | undefined;
-    if (safeStorage.isEncryptionAvailable()) {
-      try {
-        const encrypted = safeStorage.encryptString(config.privateKey);
-        encryptedPrivateKey = encrypted.toString('base64');
-      } catch (error) {
-        console.error('Failed to encrypt private key:', error);
-        throw new Error('Failed to encrypt private key');
-      }
+    try {
+      const encrypted = safeStorage.encryptString(config.privateKey);
+      encryptedPrivateKey = encrypted.toString('base64');
+    } catch (error) {
+      console.error('Failed to encrypt private key:', error);
+      throw new Error('Failed to encrypt private key');
     }
     
     const dataToSave = {
@@ -219,3 +223,67 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
     throw new Error(`Failed to save config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }); 
+
+async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number } | null> {
+  const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
+  if (!fs.existsSync(configPath)) return null;
+  const data = fs.readFileSync(configPath, 'utf-8');
+  const config = JSON.parse(data);
+
+  if (!config.encryptedPrivateKey) {
+    return null;
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Secure storage is not available; cannot decrypt private key.');
+  }
+
+  const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
+  const privateKey = safeStorage.decryptString(encryptedBuffer);
+  return {
+    privateKey,
+    rpcUrl: config.rpcUrl,
+    dataSetId: config.dataSetId,
+  };
+}
+
+ipcMain.handle('start-backend', async () => {
+  if (backendProcess && !backendProcess.killed) {
+    return { pid: backendProcess.pid, message: 'Backend already running' };
+  }
+
+  const cfg = await loadDecryptedFilecoinConfig();
+  if (!cfg || !cfg.privateKey) {
+    throw new Error('Filecoin config with private key is not available. Please configure Filecoin settings first.');
+  }
+
+  const backendDir = path.join(app.getAppPath(), '..', 'backend');
+  const env = {
+    ...process.env,
+    FILECOIN_PRIVATE_KEY: cfg.privateKey,
+    FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
+  };
+
+  backendProcess = spawn(
+    'python',
+    ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
+    {
+      cwd: backendDir,
+      env,
+      stdio: 'inherit',
+    }
+  );
+
+  backendProcess.on('exit', (code) => {
+    console.log(`Backend process exited with code ${code}`);
+    backendProcess = null;
+  });
+
+  return { pid: backendProcess.pid, message: 'Backend started' };
+});
+
+app.on('before-quit', () => {
+  if (backendProcess && !backendProcess.killed) {
+    backendProcess.kill();
+  }
+});

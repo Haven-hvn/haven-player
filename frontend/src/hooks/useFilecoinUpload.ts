@@ -82,6 +82,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
             transaction_hash: result.transactionHash,
             is_encrypted: result.isEncrypted ?? false,
             lit_encryption_metadata: result.encryptionMetadata,
+            encrypted_root_cid: result.encryptedRootCid,
           });
           console.log(`✅ Saved Filecoin metadata for ${videoPath}${result.isEncrypted ? ' (encrypted)' : ''}`);
         } catch (error) {

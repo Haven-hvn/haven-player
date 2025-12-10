@@ -83,6 +83,21 @@ export const useVideos = () => {
     }
   }, [fetchTimestampsForVideo]);
 
+  const updateVideoSharePreference = useCallback(
+    async (videoPath: string, shareToArkiv: boolean) => {
+      const updated = await videoService.updateSharePreference(videoPath, shareToArkiv);
+      setVideos(prev => prev.map(v => (v.path === videoPath ? updated : v)));
+      setVideoGroups(prev =>
+        prev.map(group => ({
+          ...group,
+          videos: group.videos.map(v => (v.path === videoPath ? updated : v)),
+        }))
+      );
+      return updated;
+    },
+    []
+  );
+
   const deleteVideo = useCallback(async (videoPath: string) => {
     try {
       await videoService.delete(videoPath);
@@ -131,6 +146,7 @@ export const useVideos = () => {
     error,
     videoTimestamps,
     addVideo,
+    updateVideoSharePreference,
     deleteVideo,
     moveToFront,
     refreshVideos: fetchVideos,

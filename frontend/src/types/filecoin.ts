@@ -29,6 +29,7 @@ export interface FilecoinUploadResult {
   };
   isEncrypted?: boolean;
   encryptionMetadata?: string; // JSON-serialized LitEncryptionMetadata
+  encryptedRootCid?: string; // Lit-encrypted root CID (ciphertext) for Arkiv sync
 }
 
 // Lit Protocol encryption metadata stored with encrypted videos

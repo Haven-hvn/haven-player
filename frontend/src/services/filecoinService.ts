@@ -23,6 +23,7 @@ import {
   encryptFileForStorage, 
   serializeEncryptionMetadata,
   type LitEncryptionMetadata,
+  encryptTextWithLit,
 } from '@/services/litService';
 import { Buffer } from 'buffer';
 import { mkdtemp, readFile as readFileFromFs, rm, writeFile } from 'fs/promises';
@@ -773,6 +774,19 @@ export async function uploadVideoToFilecoin(
         : 'Upload completed successfully!',
     });
 
+    // Encrypt the root CID itself when the video is encrypted to avoid leaking retrieval hints
+    let encryptedRootCid: string | undefined;
+    if (isEncrypted) {
+      const encryptedCid = await encryptTextWithLit(rootCid.toString(), config.privateKey, (message: string) => {
+        onProgress?.({
+          stage: 'encrypting',
+          progress: 38,
+          message: `Encrypting CID: ${message}`,
+        });
+      });
+      encryptedRootCid = encryptedCid.ciphertext;
+    }
+
     return {
       rootCid: rootCid.toString(),
       pieceCid: uploadResult.pieceCid,
@@ -784,6 +798,7 @@ export async function uploadVideoToFilecoin(
       encryptionMetadata: encryptionMetadata 
         ? serializeEncryptionMetadata(encryptionMetadata) 
         : undefined,
+      encryptedRootCid,
     };
   } catch (error) {
     // Extract detailed error information

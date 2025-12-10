@@ -7,12 +7,23 @@ export interface Video {
   thumbnail_path: string | null;
   position: number;
   created_at: string;
+  updated_at?: string | null;
+  file_size?: number | null;
+  file_extension?: string | null;
+  mime_type?: string | null;
+  codec?: string | null;
+  creator_handle?: string | null;
+  source_uri?: string | null;
+  analysis_model?: string | null;
+  share_to_arkiv: boolean;
+  arkiv_entity_key?: string | null;
   mint_id?: string | null;
   filecoin_root_cid?: string | null;
   filecoin_piece_cid?: string | null;
   filecoin_piece_id?: number | null;
   filecoin_data_set_id?: string | null;
   filecoin_uploaded_at?: string | null;
+  cid_hash?: string | null; // SHA256 hash of filecoin_root_cid for Arkiv dedupe
   // Lit Protocol encryption metadata
   is_encrypted?: boolean;
   lit_encryption_metadata?: string | null; // JSON-serialized LitEncryptionMetadata
@@ -33,6 +44,9 @@ export interface VideoCreate {
   duration: number;
   has_ai_data: boolean;
   thumbnail_path: string | null;
+  share_to_arkiv?: boolean;
+  creator_handle?: string | null;
+  source_uri?: string | null;
 }
 
 export interface TimestampCreate {

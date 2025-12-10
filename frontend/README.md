@@ -35,6 +35,10 @@ npm run build
 npm start
 ```
 
+### Backend during development
+- Preferred: run via the Electron app (GUI). The backend is started by the app, and the Filecoin/Lit private key you set in the Filecoin modal (stored encrypted) is injected automatically—no manual exports needed.
+- If you run the backend standalone (outside the app), you must supply `FILECOIN_PRIVATE_KEY` (and optionally `FILECOIN_RPC_URL`) yourself to match the GUI configuration.
+
 ## Development
 
 For development with hot reloading:

@@ -341,6 +341,52 @@ export async function encryptFileForStorage(
 }
 
 /**
+ * Encrypt arbitrary text (e.g., CID) with Lit using owner-only access control.
+ * Returns ciphertext and metadata for later decryption.
+ */
+export async function encryptTextWithLit(
+  text: string,
+  privateKey: string,
+  onProgress?: (message: string) => void
+): Promise<{
+  ciphertext: string;
+  metadata: LitEncryptionMetadata;
+}> {
+  onProgress?.('Initializing Lit Protocol...');
+
+  const client = await initLitClient();
+  const walletAddress = getWalletAddressFromPrivateKey(privateKey);
+
+  onProgress?.('Creating access control conditions...');
+  const accessControlConditions = createOwnerOnlyAccessControlConditions(walletAddress);
+
+  onProgress?.('Encrypting text...');
+
+  const encoder = new TextEncoder();
+  const dataToEncrypt = encoder.encode(text);
+
+  const encryptResponse = await client.encrypt({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accessControlConditions: accessControlConditions as any,
+    dataToEncrypt,
+  });
+
+  onProgress?.('Encryption complete');
+
+  const metadata: LitEncryptionMetadata = {
+    ciphertext: encryptResponse.ciphertext,
+    dataToEncryptHash: encryptResponse.dataToEncryptHash,
+    accessControlConditions,
+    chain: 'ethereum',
+  };
+
+  return {
+    ciphertext: encryptResponse.ciphertext,
+    metadata,
+  };
+}
+
+/**
  * Decrypt data that was encrypted with encryptFileForStorage
  */
 export async function decryptFileFromStorage(

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Video, Timestamp, VideoCreate, TimestampCreate, StreamInfo, VideoGroup } from '@/types/video';
+import type { IpfsGatewayConfig } from '@/types/playback';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
@@ -145,5 +146,19 @@ export const streamService = {
   }> => {
     const response = await api.get('/live/stats');
     return response.data;
+  },
+};
+
+export const gatewayService = {
+  get: async (): Promise<IpfsGatewayConfig> => {
+    const response = await api.get<{ base_url: string }>('/config/gateway');
+    const baseUrl = response.data.base_url;
+    return { baseUrl };
+  },
+  update: async (config: IpfsGatewayConfig): Promise<IpfsGatewayConfig> => {
+    const response = await api.put<{ base_url: string }>('/config/gateway', {
+      base_url: config.baseUrl,
+    });
+    return { baseUrl: response.data.base_url };
   },
 };

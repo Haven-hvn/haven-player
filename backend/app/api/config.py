@@ -1,12 +1,76 @@
-from typing import List, Optional
+import json
+import os
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+from typing import List
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from app.models.database import get_db
-from app.models.config import AppConfig
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from app.models.database import get_db
+from app.models.config import AppConfig
+
 router = APIRouter()
+
+DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs/"
+GATEWAY_CONFIG_FILENAME = "ipfs-gateway.json"
+GATEWAY_CONFIG_DIR = Path(
+    os.environ.get("HAVEN_PLAYER_CONFIG_DIR", Path.home() / ".haven-player")
+)
+
+
+def normalize_gateway_url(value: str) -> str:
+    trimmed = value.strip()
+    if not trimmed:
+        raise ValueError("Gateway URL cannot be empty")
+
+    parsed = urlparse(trimmed)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Gateway URL must start with http:// or https://")
+
+    path = parsed.path
+    if "ipfs" not in path:
+        path = f"{path.rstrip('/')}/ipfs/"
+    elif not path.endswith("/"):
+        path = f"{path.rstrip('/')}/"
+
+    normalized = parsed._replace(path=path).geturl()
+    return normalized
+
+
+class GatewayConfig(BaseModel):
+    base_url: str
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: str) -> str:
+        return normalize_gateway_url(v)
+
+
+def gateway_config_path() -> Path:
+    GATEWAY_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    return GATEWAY_CONFIG_DIR / GATEWAY_CONFIG_FILENAME
+
+
+def load_gateway_config() -> GatewayConfig:
+    path = gateway_config_path()
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            base_url = data.get("base_url", DEFAULT_IPFS_GATEWAY)
+            return GatewayConfig(base_url=base_url)
+        except Exception:
+            # Fall back to default if file is malformed
+            return GatewayConfig(base_url=DEFAULT_IPFS_GATEWAY)
+    return GatewayConfig(base_url=DEFAULT_IPFS_GATEWAY)
+
+
+def save_gateway_config(config: GatewayConfig) -> GatewayConfig:
+    path = gateway_config_path()
+    path.write_text(json.dumps({"base_url": config.base_url}, indent=2))
+    return config
 
 class ConfigUpdate(BaseModel):
     analysis_tags: str
@@ -100,6 +164,16 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     db.commit()
     db.refresh(config)
     return config
+
+@router.get("/gateway", response_model=GatewayConfig)
+def get_gateway_config() -> GatewayConfig:
+    """Get IPFS gateway configuration used for remote playback."""
+    return load_gateway_config()
+
+@router.put("/gateway", response_model=GatewayConfig)
+def update_gateway_config(gateway_config: GatewayConfig) -> GatewayConfig:
+    """Update IPFS gateway configuration used for remote playback."""
+    return save_gateway_config(gateway_config)
 
 @router.get("/available-models/", response_model=AvailableModelsResponse)
 def get_available_models() -> dict:

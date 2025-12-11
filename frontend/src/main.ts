@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import { registerRenderCrashLogger } from './utils/registerRenderCrashLogger';
 import { uploadVideoToFilecoin } from './services/filecoinService';
 import type { FilecoinConfig } from './types/filecoin';
+import type { IpfsGatewayConfig } from './types/playback';
+import { DEFAULT_IPFS_GATEWAY, normalizeGatewayBase } from './services/playbackResolver';
 
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
@@ -219,3 +221,54 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
     throw new Error(`Failed to save config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }); 
+
+ipcMain.handle('playback:file-exists', async (_event, filePath: string) => {
+  try {
+    const stats = await fs.promises.stat(filePath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('playback:get-gateway-config', async () => {
+  return readIpfsGatewayConfig();
+});
+
+ipcMain.handle('playback:set-gateway-config', async (_event, config: IpfsGatewayConfig) => {
+  return writeIpfsGatewayConfig(config);
+});
+
+function getIpfsGatewayConfigPath(): string {
+  return path.join(app.getPath('userData'), 'ipfs-gateway-config.json');
+}
+
+function readIpfsGatewayConfig(): IpfsGatewayConfig {
+  const configPath = getIpfsGatewayConfigPath();
+  try {
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const baseUrl = normalizeGatewayBase(parsed.baseUrl || DEFAULT_IPFS_GATEWAY);
+      return { baseUrl };
+    }
+  } catch (error) {
+    console.error('Failed to read IPFS gateway config:', error);
+  }
+
+  return { baseUrl: DEFAULT_IPFS_GATEWAY };
+}
+
+function writeIpfsGatewayConfig(config: IpfsGatewayConfig): IpfsGatewayConfig {
+  const configPath = getIpfsGatewayConfigPath();
+  const sanitizedBase = normalizeGatewayBase(config.baseUrl || DEFAULT_IPFS_GATEWAY);
+  const payload: IpfsGatewayConfig = { baseUrl: sanitizedBase };
+
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('Failed to save IPFS gateway config:', error);
+    throw new Error('Unable to persist IPFS gateway configuration');
+  }
+
+  return payload;
+}

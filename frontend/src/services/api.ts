@@ -122,6 +122,13 @@ export const cancelJob = async (jobId: number): Promise<void> => {
   await api.delete(`/jobs/${jobId}`);
 };
 
+export const restoreService = {
+  restoreFromArkiv: async (): Promise<{ success: boolean; restored: number; skipped: number }> => {
+    const response = await api.post<{ success: boolean; restored: number; skipped: number }>('/restore/arkiv');
+    return response.data;
+  },
+};
+
 // Stream-related API functions
 export const streamService = {
   getPopular: async (limit: number = 20): Promise<StreamInfo[]> => {

@@ -6,7 +6,6 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Iterable, Protocol
-from typing import Callable, Iterable, Protocol
 
 from arkiv import Arkiv
 from arkiv.account import NamedAccount
@@ -170,6 +169,111 @@ class ArkivSyncClient:
                 raise ValueError("Arkiv private key missing")
             self._client = self._arkiv_factory(self.config.rpc_url, self.config.private_key)
         return self._client
+
+    def fetch_entities(self) -> list:
+        """
+        Fetch all Arkiv entities for the current account.
+        """
+        if not self.config.enabled:
+            return []
+        client = self._get_client()
+        # Select all fields; SDK defaults to all fields when no projection specified
+        try:
+            return list(client.arkiv.select().fetch())
+        except Exception as exc:
+            logger.error("Failed to fetch Arkiv entities: %s", exc)
+            return []
+
+    def restore_catalog(self, db_session: Session) -> dict:
+        """
+        Restore catalog metadata from Arkiv into local DB (catalog-only).
+        """
+        if not self.config.enabled:
+            raise ValueError("Arkiv sync disabled (no private key configured)")
+
+        entities = self.fetch_entities()
+        restored = 0
+        skipped = 0
+
+        for entity in entities:
+            payload_bytes = entity.payload if hasattr(entity, "payload") else None
+            if not payload_bytes:
+                skipped += 1
+                continue
+            try:
+                payload = json.loads(payload_bytes.decode("utf-8"))
+            except Exception as exc:
+                logger.warning("Skipping entity due to payload decode error: %s", exc)
+                skipped += 1
+                continue
+
+            # Dedupe by arkiv_entity_key, cid_hash, or phash
+            existing = None
+            if entity.key:
+                existing = db_session.query(Video).filter(Video.arkiv_entity_key == str(entity.key)).first()
+            if not existing and payload.get("cid_hash"):
+                existing = db_session.query(Video).filter(Video.cid_hash == payload.get("cid_hash")).first()
+            if not existing and payload.get("phash"):
+                existing = db_session.query(Video).filter(Video.phash == payload.get("phash")).first()
+
+            if existing:
+                skipped += 1
+                continue
+
+            ts_payloads = payload.get("timestamps") or []
+            timestamps: list[Timestamp] = []
+            for ts in ts_payloads:
+                try:
+                    timestamps.append(
+                        Timestamp(
+                            video_path="",  # filled after Video path set
+                            tag_name=ts.get("tag", "tag"),
+                            start_time=float(ts.get("start_time", 0.0)),
+                            end_time=ts.get("end_time"),
+                            confidence=float(ts.get("confidence", 0.0)),
+                        )
+                    )
+                except Exception:
+                    continue
+
+            db_video = Video(
+                path=payload.get("filecoin_root_cid") or "",  # No local path; placeholder
+                title=payload.get("title") or "Restored Video",
+                duration=int(payload.get("duration") or 0),
+                has_ai_data=bool(ts_payloads),
+                thumbnail_path=None,
+                position=0,
+                phash=payload.get("phash"),
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+                file_size=payload.get("file_size"),
+                file_extension=payload.get("file_extension"),
+                mime_type=payload.get("mime_type"),
+                codec=payload.get("codec"),
+                creator_handle=payload.get("creator_handle"),
+                source_uri=payload.get("source_uri"),
+                analysis_model=payload.get("analysis_model"),
+                share_to_arkiv=True,
+                arkiv_entity_key=str(entity.key) if entity.key else None,
+                mint_id=payload.get("mint_id"),
+                filecoin_root_cid=payload.get("filecoin_root_cid"),
+                cid_hash=payload.get("cid_hash"),
+                encrypted_filecoin_cid=payload.get("encrypted_cid"),
+                is_encrypted=bool(payload.get("is_encrypted")),
+                lit_encryption_metadata=payload.get("lit_encryption_metadata"),
+            )
+            db_session.add(db_video)
+            db_session.commit()
+            db_session.refresh(db_video)
+
+            # Update timestamps with video path reference
+            for ts in timestamps:
+                ts.video_path = db_video.path
+                db_session.add(ts)
+            db_session.commit()
+            restored += 1
+
+        return {"restored": restored, "skipped": skipped}
 
     def sync_video(self, db_session: Session, video: Video, timestamps: Iterable[Timestamp]) -> EntityKey | None:
         """

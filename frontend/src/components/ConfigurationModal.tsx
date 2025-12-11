@@ -29,6 +29,7 @@ import {
   Save as SaveIcon,
   Close as CloseIcon,
   SmartToy as AIIcon,
+  SmartDisplay as PlaybackIcon,
   Storage as ServerIcon,
   WorkspacePremium as BatchIcon,
   CloudUpload as CloudUploadIcon,
@@ -37,6 +38,12 @@ import {
 import type { FilecoinConfig } from "@/types/filecoin";
 import { restoreService } from "@/services/api";
 import type { SettingsTab } from "@/context/SettingsNavigationContext";
+import type { IpfsGatewayConfig } from "@/types/playback";
+import {
+  DEFAULT_IPFS_GATEWAY,
+  normalizeGatewayBase,
+} from "@/services/playbackResolver";
+import { gatewayService } from "@/services/api";
 import { ipcRenderer } from "electron";
 
 interface AppConfig {
@@ -96,10 +103,21 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [filecoinConfig, setFilecoinConfig] =
     useState<FilecoinConfig>(initialFilecoinConfig ?? defaultFilecoinConfig);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [gatewayConfig, setGatewayConfig] = useState<IpfsGatewayConfig>({
+    baseUrl: DEFAULT_IPFS_GATEWAY,
+  });
+  const [gatewayStatus, setGatewayStatus] = useState<
+    "idle" | "checking" | "ok" | "error"
+  >("idle");
+  const [gatewayStatusMessage, setGatewayStatusMessage] = useState<string | null>(
+    null
+  );
+  const [loadingGateway, setLoadingGateway] = useState(false);
 
   const isFilecoinTab =
     activeTab === "filecoin" || activeTab === "encryption";
-  const loading = loadingAi || loadingFilecoin;
+  const isPlaybackTab = activeTab === "playback";
+  const loading = loadingAi || loadingFilecoin || loadingGateway;
 
   useEffect(() => {
     if (open) {
@@ -108,6 +126,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       loadConfig();
       loadAvailableModels();
       loadFilecoinConfig();
+      loadGatewayConfig();
     }
   }, [open]);
 
@@ -182,6 +201,70 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     }
   };
 
+  const loadGatewayConfig = async () => {
+    try {
+      setLoadingGateway(true);
+      setGatewayStatus("idle");
+      setGatewayStatusMessage(null);
+      const savedGateway: IpfsGatewayConfig | null =
+        await ipcRenderer.invoke("playback:get-gateway-config");
+
+      let resolvedBase = savedGateway?.baseUrl ?? DEFAULT_IPFS_GATEWAY;
+
+      try {
+        const backendGateway = await gatewayService.get();
+        if (backendGateway?.baseUrl) {
+          resolvedBase = backendGateway.baseUrl;
+        }
+      } catch (backendError) {
+        console.error("Failed to load backend gateway config:", backendError);
+      }
+
+      setGatewayConfig({ baseUrl: normalizeGatewayBase(resolvedBase) });
+    } catch (err) {
+      console.error("Failed to load IPFS gateway config:", err);
+      setGatewayConfig({ baseUrl: DEFAULT_IPFS_GATEWAY });
+      setGatewayStatus("error");
+      setGatewayStatusMessage("Failed to load gateway settings");
+    } finally {
+      setLoadingGateway(false);
+    }
+  };
+
+  const handleGatewayChange = (value: string) => {
+    setGatewayConfig({ baseUrl: value });
+    setGatewayStatus("idle");
+    setGatewayStatusMessage(null);
+  };
+
+  const handleGatewayReset = () => {
+    setGatewayConfig({ baseUrl: DEFAULT_IPFS_GATEWAY });
+    setGatewayStatus("idle");
+    setGatewayStatusMessage(null);
+  };
+
+  const checkGatewayConnectivity = async () => {
+    const normalizedBase = normalizeGatewayBase(gatewayConfig.baseUrl);
+    setGatewayConfig({ baseUrl: normalizedBase });
+    setGatewayStatus("checking");
+    setGatewayStatusMessage(null);
+
+    try {
+      const response = await fetch(normalizedBase, { method: "HEAD" });
+      const isReachable = response.ok || response.status < 500;
+      setGatewayStatus(isReachable ? "ok" : "error");
+      setGatewayStatusMessage(
+        isReachable
+          ? "Gateway reachable"
+          : `Gateway responded with status ${response.status}`
+      );
+    } catch (err) {
+      console.error("Gateway connectivity check failed:", err);
+      setGatewayStatus("error");
+      setGatewayStatusMessage("Gateway unreachable");
+    }
+  };
+
   const handleSave = async () => {
     try {
       setSaving(true);
@@ -189,7 +272,26 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setFilecoinError(null);
       setRestoreSummary(null);
 
-      if (isFilecoinTab) {
+      if (isPlaybackTab) {
+        const normalizedBase = normalizeGatewayBase(gatewayConfig.baseUrl);
+        const savedGateway: IpfsGatewayConfig = await ipcRenderer.invoke(
+          "playback:set-gateway-config",
+          { baseUrl: normalizedBase }
+        );
+        setGatewayConfig({
+          baseUrl: normalizeGatewayBase(savedGateway.baseUrl),
+        });
+        try {
+          await gatewayService.update({ baseUrl: normalizedBase });
+        } catch (syncError) {
+          console.error("Failed to sync gateway config to backend:", syncError);
+          setGatewayStatus("error");
+          setGatewayStatusMessage("Saved locally but backend sync failed");
+          return;
+        }
+        setGatewayStatus("ok");
+        setGatewayStatusMessage("Gateway saved");
+      } else if (isFilecoinTab) {
         if (!filecoinConfig.privateKey.trim()) {
           setFilecoinError("Private key is required");
           return;
@@ -437,6 +539,52 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     </Box>
   );
 
+  const renderPlaybackContent = (): JSX.Element => {
+    const statusSeverity =
+      gatewayStatus === "ok"
+        ? "success"
+        : gatewayStatus === "error"
+        ? "error"
+        : "info";
+
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+        <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+          Playback Preferences
+        </Typography>
+        <Typography variant="body2" sx={{ color: "#6B6B6B" }}>
+          Haven Player prefers your local file when it exists. If it is missing,
+          playback streams from the configured IPFS gateway.
+        </Typography>
+        <TextField
+          fullWidth
+          label="IPFS Gateway URL"
+          value={gatewayConfig.baseUrl}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            handleGatewayChange(e.target.value)
+          }
+          placeholder={DEFAULT_IPFS_GATEWAY}
+          helperText="Used for remote playback. /ipfs/ is added automatically."
+        />
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+          <Button
+            variant="outlined"
+            onClick={checkGatewayConnectivity}
+            disabled={gatewayStatus === "checking"}
+          >
+            {gatewayStatus === "checking" ? "Checking..." : "Check gateway"}
+          </Button>
+          <Button variant="text" onClick={handleGatewayReset}>
+            Reset to default
+          </Button>
+        </Box>
+        {gatewayStatusMessage && (
+          <Alert severity={statusSeverity}>{gatewayStatusMessage}</Alert>
+        )}
+      </Box>
+    );
+  };
+
   const renderProcessingContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
       <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
@@ -635,7 +783,11 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     </Box>
   );
 
-  const saveLabel = isFilecoinTab ? "Save Filecoin Settings" : "Save Configuration";
+  const saveLabel = isPlaybackTab
+    ? "Save Playback Settings"
+    : isFilecoinTab
+    ? "Save Filecoin Settings"
+    : "Save Configuration";
 
   const renderContent = (): JSX.Element | null => {
     switch (activeTab) {
@@ -643,6 +795,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         return renderAiContent();
       case "livekit":
         return renderLivekitContent();
+      case "playback":
+        return renderPlaybackContent();
       case "processing":
         return renderProcessingContent();
       case "filecoin":
@@ -748,6 +902,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           <Tab label="AI / LLM" value="ai" icon={<AIIcon fontSize="small" />} iconPosition="start" />
           <Tab label="LiveKit" value="livekit" icon={<ServerIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Processing" value="processing" icon={<BatchIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="Playback" value="playback" icon={<PlaybackIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Filecoin" value="filecoin" icon={<CloudUploadIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Encryption" value="encryption" icon={<LockIcon fontSize="small" />} iconPosition="start" />
         </Tabs>

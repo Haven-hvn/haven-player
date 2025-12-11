@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useMemo, useState, ReactNode } from "react";
 
-export type SettingsTab = "ai" | "livekit" | "processing" | "filecoin" | "encryption";
+export type SettingsTab =
+  | "ai"
+  | "livekit"
+  | "playback"
+  | "processing"
+  | "filecoin"
+  | "encryption";
 
 interface SettingsNavigationContextValue {
   isOpen: boolean;

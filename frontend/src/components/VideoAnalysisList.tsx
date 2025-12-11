@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Box,
   Typography,
@@ -35,17 +35,12 @@ import {
 } from "@mui/icons-material";
 import { Video, Timestamp, VideoGroup } from "@/types/video";
 import TokenGroup from "@/components/TokenGroup";
-
-/**
- * Construct an IPFS gateway URL from a CID
- * Uses a public IPFS gateway (ipfs.io) to access the content
- */
-function getIpfsGatewayUrl(cid: string): string {
-  // Remove any leading/trailing whitespace and ensure CID is valid
-  const cleanCid = cid.trim();
-  // Use ipfs.io gateway - a reliable public gateway
-  return `https://ipfs.io/ipfs/${cleanCid}`;
-}
+import type { IpfsGatewayConfig } from "@/types/playback";
+import {
+  DEFAULT_IPFS_GATEWAY,
+  buildIpfsGatewayUrl,
+} from "@/services/playbackResolver";
+import { loadGatewayConfig } from "@/services/playbackConfig";
 
 interface AnalysisSegment {
   start: number;
@@ -66,6 +61,7 @@ interface VideoAnalysisItemProps {
     error?: string;
     rootCid?: string;
   };
+  gatewayConfig: IpfsGatewayConfig;
   onPlay: (video: Video) => void;
   onAnalyze: (video: Video) => void;
   onRemove: (video: Video) => void;
@@ -80,6 +76,7 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
   analysisStatus,
   jobProgress = 0,
   uploadStatus,
+  gatewayConfig,
   onPlay,
   onAnalyze,
   onRemove,
@@ -116,7 +113,11 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
 
   const handleOpenRemote = () => {
     if (uploadStatus?.rootCid) {
-      const ipfsUrl = getIpfsGatewayUrl(uploadStatus.rootCid);
+      const { uri } = buildIpfsGatewayUrl(
+        uploadStatus.rootCid,
+        gatewayConfig
+      );
+      const ipfsUrl = uri;
       // Use window.open to open in default browser (works in Electron)
       window.open(ipfsUrl, '_blank');
       handleClose();
@@ -906,6 +907,24 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   searchQuery = "",
   onToggleShare,
 }) => {
+  const [gatewayConfig, setGatewayConfig] = useState<IpfsGatewayConfig>({
+    baseUrl: DEFAULT_IPFS_GATEWAY,
+  });
+
+  useEffect(() => {
+    const fetchGateway = async () => {
+      try {
+        const config = await loadGatewayConfig();
+        setGatewayConfig(config);
+      } catch (error) {
+        console.error("Failed to load gateway configuration:", error);
+        setGatewayConfig({ baseUrl: DEFAULT_IPFS_GATEWAY });
+      }
+    };
+
+    fetchGateway();
+  }, []);
+
   // Create list item component for list view
   const VideoListItem: React.FC<{
     video: Video;
@@ -950,7 +969,11 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
 
     const handleOpenRemote = () => {
       if (uploadStatus?.rootCid) {
-        const ipfsUrl = getIpfsGatewayUrl(uploadStatus.rootCid);
+        const { uri } = buildIpfsGatewayUrl(
+          uploadStatus.rootCid,
+          gatewayConfig
+        );
+        const ipfsUrl = uri;
         // Use window.open to open in default browser (works in Electron)
         window.open(ipfsUrl, '_blank');
         handleClose();
@@ -1767,6 +1790,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
         analysisStatus={analysisStatuses[video.path] || "pending"}
         jobProgress={jobProgresses[video.path] || 0}
         uploadStatus={uploadStatuses[video.path]}
+        gatewayConfig={gatewayConfig}
         onPlay={onPlay}
         onAnalyze={onAnalyze}
         onRemove={onRemove}

@@ -90,7 +90,10 @@ describe('useLitDecryption', () => {
     
     let decryptResult: string | null = null;
     await act(async () => {
-      decryptResult = await result.current.decryptVideo(mockUnencryptedVideo);
+      decryptResult = await result.current.decryptVideo(
+        mockUnencryptedVideo,
+        async () => new Uint8Array()
+      );
     });
     
     expect(decryptResult).toBeNull();
@@ -105,9 +108,6 @@ describe('useLitDecryption', () => {
     mockIpcRenderer.invoke.mockResolvedValueOnce({
       privateKey: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
     });
-    mockIpcRenderer.invoke.mockResolvedValueOnce({
-      data: new Uint8Array([1, 2, 3]),
-    });
     mockDeserializeEncryptionMetadata.mockReturnValue({
       ciphertext: 'test',
       dataToEncryptHash: 'hash',
@@ -115,10 +115,11 @@ describe('useLitDecryption', () => {
       chain: 'ethereum',
     });
     mockDecryptFileFromStorage.mockResolvedValue(new Blob(['test']));
+    const loadEncryptedData = jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
     
     // Decrypt a video to create a URL
     await act(async () => {
-      await result.current.decryptVideo(mockVideo);
+      await result.current.decryptVideo(mockVideo, loadEncryptedData);
     });
     
     // Clear the URL
@@ -138,7 +139,7 @@ describe('useLitDecryption', () => {
     const { result } = renderHook(() => useLitDecryption());
     
     await act(async () => {
-      await result.current.decryptVideo(mockVideo);
+      await result.current.decryptVideo(mockVideo, async () => new Uint8Array([1, 2, 3]));
     });
     
     expect(result.current.decryptionStatus.status).toBe('error');
@@ -156,7 +157,7 @@ describe('useLitDecryption', () => {
     const { result } = renderHook(() => useLitDecryption());
     
     await act(async () => {
-      await result.current.decryptVideo(mockVideo);
+      await result.current.decryptVideo(mockVideo, async () => new Uint8Array([1, 2, 3]));
     });
     
     expect(result.current.decryptionStatus.status).toBe('error');
@@ -181,7 +182,10 @@ describe('useLitDecryption', () => {
     const { result } = renderHook(() => useLitDecryption());
     
     await act(async () => {
-      await result.current.decryptVideo(mockVideo);
+      await result.current.decryptVideo(
+        mockVideo,
+        async () => new Uint8Array([1, 2, 3])
+      );
     });
     
     expect(result.current.isEncrypted).toBe(true);

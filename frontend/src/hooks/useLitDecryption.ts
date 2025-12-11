@@ -18,7 +18,10 @@ export interface DecryptionStatus {
 export interface UseLitDecryptionReturn {
   decryptedUrl: string | null;
   decryptionStatus: DecryptionStatus;
-  decryptVideo: (video: Video) => Promise<string | null>;
+  decryptVideo: (
+    video: Video,
+    loadEncryptedData: () => Promise<Uint8Array>
+  ) => Promise<string | null>;
   clearDecryptedUrl: () => void;
   isEncrypted: boolean;
 }
@@ -59,7 +62,7 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
    * Decrypt an encrypted video and return a blob URL for playback
    */
   const decryptVideo = useCallback(
-    async (video: Video): Promise<string | null> => {
+    async (video: Video, loadEncryptedData: () => Promise<Uint8Array>): Promise<string | null> => {
       // Check if video is encrypted
       if (!video.is_encrypted || !video.lit_encryption_metadata) {
         setIsEncrypted(false);
@@ -94,15 +97,13 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
           throw new Error('Invalid encryption metadata. The video may be corrupted.');
         }
 
-        // Read the encrypted file from disk
-        // The file on disk is the encrypted version
+        // Load encrypted data from provided source (local disk or remote gateway)
         setDecryptionStatus({
           status: 'decrypting',
           progress: 'Reading encrypted file...',
         });
 
-        const fileData = await ipcRenderer.invoke('read-video-file', video.path);
-        const encryptedData = new Uint8Array(fileData.data);
+        const encryptedData = await loadEncryptedData();
 
         // Decrypt the file using Lit Protocol
         const decryptedBlob = await decryptFileFromStorage(

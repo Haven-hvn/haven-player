@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -22,6 +22,10 @@ import ReactPlayer from 'react-player';
 import { videoService } from '@/services/api';
 import { Video, Timestamp } from '@/types/video';
 import { useLitDecryption } from '@/hooks/useLitDecryption';
+import { resolvePlaybackSource } from '@/services/playbackResolver';
+import type { PlaybackResolution } from '@/types/playback';
+import { loadGatewayConfig, fileExistsViaIpc } from '@/services/playbackConfig';
+import { ipcRenderer } from 'electron';
 
 const VideoPlayer: React.FC = () => {
   const { videoPath } = useParams<{ videoPath: string }>();
@@ -33,6 +37,7 @@ const VideoPlayer: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [playbackSource, setPlaybackSource] = useState<PlaybackResolution | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const playerRef = React.useRef<any>(null);
 
@@ -45,16 +50,40 @@ const VideoPlayer: React.FC = () => {
     isEncrypted,
   } = useLitDecryption();
 
-  // Determine the video URL to use (decrypted blob URL or original file path)
-  const videoUrl = isEncrypted && decryptedUrl 
-    ? decryptedUrl 
-    : video 
-      ? `file://${video.path}` 
-      : null;
+  const videoUrl = useMemo(() => {
+    if (isEncrypted && decryptedUrl) {
+      return decryptedUrl;
+    }
+    if (!playbackSource) {
+      return null;
+    }
+    if (playbackSource.type === "local") {
+      return `file://${encodeURI(playbackSource.uri)}`;
+    }
+    if (playbackSource.type === "ipfs") {
+      return playbackSource.uri;
+    }
+    return null;
+  }, [decryptedUrl, isEncrypted, playbackSource]);
 
   // Check if we're still preparing the video (loading or decrypting)
-  const isPreparing = loading || 
-    (isEncrypted && (decryptionStatus.status === 'loading' || decryptionStatus.status === 'decrypting'));
+  const isPreparing =
+    loading ||
+    (isEncrypted &&
+      (decryptionStatus.status === 'loading' ||
+        decryptionStatus.status === 'decrypting'));
+
+  const ipfsGatewayHost = useMemo(() => {
+    if (playbackSource?.type !== "ipfs") {
+      return null;
+    }
+
+    try {
+      return new URL(playbackSource.gatewayBase).host;
+    } catch {
+      return playbackSource.gatewayBase;
+    }
+  }, [playbackSource]);
 
   useEffect(() => {
     const fetchVideoData = async () => {
@@ -62,11 +91,17 @@ const VideoPlayer: React.FC = () => {
 
       try {
         setLoading(true);
+        setError(null);
+        setPlaybackSource(null);
+
         const decodedPath = decodeURIComponent(videoPath);
-        const [videoData, timestampsData] = await Promise.all([
-          videoService.getAll().then(videos => videos.find(v => v.path === decodedPath)),
+        const [videosData, timestampsData, gateway] = await Promise.all([
+          videoService.getAll(),
           videoService.getTimestamps(decodedPath),
+          loadGatewayConfig(),
         ]);
+
+        const videoData = videosData.find((v) => v.path === decodedPath);
 
         if (!videoData) {
           throw new Error('Video not found');
@@ -74,15 +109,45 @@ const VideoPlayer: React.FC = () => {
 
         setVideo(videoData);
         setTimestamps(timestampsData);
-        setError(null);
 
-        // If video is encrypted, start decryption
+        const source = await resolvePlaybackSource({
+          videoPath: decodedPath,
+          rootCid: videoData.filecoin_root_cid,
+          gatewayConfig: gateway,
+          checkFileExists: fileExistsViaIpc,
+          isEncrypted: videoData.is_encrypted ?? false,
+          litEncryptionMetadata: videoData.lit_encryption_metadata ?? null,
+        });
+
+        setPlaybackSource(source);
+
+        if (source.type === "unavailable") {
+          setError("Video missing locally and no IPFS CID is available.");
+          return;
+        }
+
         if (videoData.is_encrypted && videoData.lit_encryption_metadata) {
           console.log('[VideoPlayer] Video is encrypted, starting decryption...');
-          await decryptVideo(videoData);
+          const loadEncryptedData =
+            source.type === "local"
+              ? async () => {
+                  const fileData = await ipcRenderer.invoke('read-video-file', source.uri);
+                  return new Uint8Array(fileData.data);
+                }
+              : async () => {
+                  const response = await fetch(source.uri);
+                  if (!response.ok) {
+                    throw new Error('Failed to fetch encrypted video from gateway');
+                  }
+                  const buffer = await response.arrayBuffer();
+                  return new Uint8Array(buffer);
+                };
+
+          await decryptVideo(videoData, loadEncryptedData);
         }
       } catch (err) {
-        setError('Failed to load video');
+        const message = err instanceof Error ? err.message : 'Failed to load video';
+        setError(message);
         console.error('Error loading video:', err);
       } finally {
         setLoading(false);
@@ -238,6 +303,26 @@ const VideoPlayer: React.FC = () => {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             {video.title}
           </Typography>
+          {playbackSource?.type === "local" && (
+            <Chip
+              label="Local file"
+              size="small"
+              sx={{
+                backgroundColor: '#E0F7FA',
+                color: '#006064',
+              }}
+            />
+          )}
+          {playbackSource?.type === "ipfs" && ipfsGatewayHost && (
+            <Chip
+              label={`IPFS via ${ipfsGatewayHost}`}
+              size="small"
+              sx={{
+                backgroundColor: '#E8EAF6',
+                color: '#1A237E',
+              }}
+            />
+          )}
           {isEncrypted && (
             <Chip
               icon={<LockIcon sx={{ fontSize: 16 }} />}

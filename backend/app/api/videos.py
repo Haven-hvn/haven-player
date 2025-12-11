@@ -3,12 +3,16 @@ import os
 import json
 import uuid
 import aiofiles
+import hashlib
 from datetime import datetime, timezone
+from pathlib import Path
+import mimetypes
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.video import Video, Timestamp
 from app.models.pumpfun_coin import PumpFunCoin
+from app.services.arkiv_sync import ArkivSyncClient, ArkivSyncConfig, build_arkiv_config
 from collections import defaultdict
 from pydantic import BaseModel, ConfigDict
 from app.lib.phash_generator.phash_calculator import calculate_phash
@@ -26,6 +30,9 @@ class VideoCreate(BaseModel):
     has_ai_data: bool = False
     thumbnail_path: Optional[str] = None
     phash: Optional[str] = None
+    share_to_arkiv: Optional[bool] = None
+    creator_handle: Optional[str] = None
+    source_uri: Optional[str] = None
 
 class TimestampCreate(BaseModel):
     tag_name: str
@@ -45,12 +52,23 @@ class VideoResponse(BaseModel):
     position: int
     created_at: datetime
     phash: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    file_size: Optional[int] = None
+    file_extension: Optional[str] = None
+    mime_type: Optional[str] = None
+    codec: Optional[str] = None
+    creator_handle: Optional[str] = None
+    source_uri: Optional[str] = None
+    analysis_model: Optional[str] = None
+    share_to_arkiv: bool
+    arkiv_entity_key: Optional[str] = None
     mint_id: Optional[str] = None
     filecoin_root_cid: Optional[str] = None
     filecoin_piece_cid: Optional[str] = None
     filecoin_piece_id: Optional[int] = None
     filecoin_data_set_id: Optional[str] = None
     filecoin_uploaded_at: Optional[datetime] = None
+    cid_hash: Optional[str] = None
     # Lit Protocol encryption metadata
     is_encrypted: bool = False
     lit_encryption_metadata: Optional[str] = None
@@ -219,11 +237,29 @@ def get_grouped_videos(
     
     return groups
 
+def _build_file_metadata(file_path: str) -> tuple[Optional[int], Optional[str], Optional[str]]:
+    """Return file size, extension, and mime type for a given path."""
+    try:
+        file_size = os.path.getsize(file_path)
+    except OSError:
+        file_size = None
+    extension = Path(file_path).suffix.replace(".", "") if file_path else None
+    mime_type, _ = mimetypes.guess_type(file_path)
+    return file_size, extension, mime_type
+
+
+def _should_share_to_arkiv(requested: Optional[bool], config: ArkivSyncConfig) -> bool:
+    if requested is not None:
+        return requested
+    return config.enabled
+
+
 @router.post("/", response_model=VideoResponse)
 async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Video:
     # Get max position
     max_position = db.query(Video).order_by(Video.position.desc()).first()
     position = (max_position.position + 1) if max_position else 0
+    arkiv_config = build_arkiv_config()
 
     # Check for and process AI analysis file
     has_ai_data = process_ai_analysis_file(video.path, db)
@@ -241,27 +277,30 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
 
     # Calculate phash asynchronously
     try:
-        phash = await asyncio.to_thread(
-        calculate_phash, video.path
-        )
+        phash = await asyncio.to_thread(calculate_phash, video.path)
     except Exception as e:
-       print(f"Error calculating phash: {e}")
-       phash = None
+        print(f"Error calculating phash: {e}")
+        phash = None
 
-   # Check for duplicates using pHash
+    # Check for duplicates using pHash
     if phash:
-       existing_phashes = db.query(Video.id, Video.phash).filter(Video.phash.isnot(None)).all()
-       for vid_id, existing in existing_phashes:
-              distance = hex_to_hash(phash) - hex_to_hash(existing)
-              print(f"Comparing to video ID {vid_id} | distance: {distance}")
-              if distance <= 5:
-                   print(f"⚠️ Duplicate detected (Video ID {vid_id}, distance {distance}). Skipping insert.")
-                   raise HTTPException(
-                        status_code=409,
-                        detail=f"⚠️ Duplicate video detected! . Video was skipped."
-      )
-   
+        existing_phashes = (
+            db.query(Video.id, Video.phash).filter(Video.phash.isnot(None)).all()
+        )
+        for vid_id, existing in existing_phashes:
+            distance = hex_to_hash(phash) - hex_to_hash(existing)
+            print(f"Comparing to video ID {vid_id} | distance: {distance}")
+            if distance <= 5:
+                print(
+                    f"⚠️ Duplicate detected (Video ID {vid_id}, distance {distance}). Skipping insert."
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail="⚠️ Duplicate video detected! . Video was skipped.",
+                )
 
+    file_size, file_extension, mime_type = _build_file_metadata(video.path)
+    share_to_arkiv = _should_share_to_arkiv(video.share_to_arkiv, arkiv_config)
 
     db_video = Video(
         path=video.path,
@@ -270,11 +309,24 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
         has_ai_data=video.has_ai_data,
         thumbnail_path=video.thumbnail_path,
         position=position,
-        phash=phash
+        phash=phash,
+        file_size=file_size,
+        file_extension=file_extension,
+        mime_type=mime_type,
+        creator_handle=video.creator_handle,
+        source_uri=video.source_uri,
+        share_to_arkiv=share_to_arkiv,
     )
     db.add(db_video)
     db.commit()
     db.refresh(db_video)
+
+    arkiv_client = ArkivSyncClient(arkiv_config)
+    try:
+        arkiv_client.sync_video(db, db_video, [])
+    except Exception as err:
+        print(f"Arkiv sync skipped or failed for {db_video.path}: {err}")
+
     return db_video
 
 @router.post("/{video_path:path}/timestamps/", response_model=TimestampResponse)
@@ -340,6 +392,31 @@ class FilecoinMetadataUpdate(BaseModel):
     # Lit Protocol encryption metadata
     is_encrypted: bool = False
     lit_encryption_metadata: Optional[str] = None
+    encrypted_root_cid: Optional[str] = None
+
+class SharePreferenceUpdate(BaseModel):
+    share_to_arkiv: bool
+
+@router.put("/{video_path:path}/share", response_model=VideoResponse)
+def update_share_preference(
+    video_path: str, preference: SharePreferenceUpdate, db: Session = Depends(get_db)
+) -> Video:
+    video = db.query(Video).filter(Video.path == video_path).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    video.share_to_arkiv = preference.share_to_arkiv
+    db.commit()
+    db.refresh(video)
+
+    if video.share_to_arkiv:
+        arkiv_client = ArkivSyncClient(build_arkiv_config())
+        try:
+            arkiv_client.sync_video(db, video, video.timestamps)
+        except Exception as err:
+            print(f"Arkiv sync skipped or failed after enabling share for {video.path}: {err}")
+
+    return video
 
 @router.put("/{video_path:path}/filecoin-metadata", response_model=VideoResponse)
 def update_filecoin_metadata(
@@ -361,6 +438,16 @@ def update_filecoin_metadata(
     video.filecoin_data_set_id = metadata.data_set_id
     video.filecoin_uploaded_at = datetime.now(timezone.utc)
     
+    # Compute and store CID hash for Arkiv dedupe (SHA256 of root CID)
+    # metadata.root_cid is the exact CID string returned by the Filecoin network
+    # (from rootCid.toString() in the upload result, which comes from the CAR builder)
+    # This ensures we use the same CID that the decentralized Filecoin network recognizes
+    if metadata.root_cid:
+        video.cid_hash = hashlib.sha256(metadata.root_cid.encode("utf-8")).hexdigest()
+    # Store encrypted CID for Arkiv sync (used only when encrypted)
+    if metadata.encrypted_root_cid:
+        video.encrypted_filecoin_cid = metadata.encrypted_root_cid
+    
     # Update Lit Protocol encryption metadata if provided
     video.is_encrypted = metadata.is_encrypted
     if metadata.lit_encryption_metadata:
@@ -368,6 +455,12 @@ def update_filecoin_metadata(
     
     db.commit()
     db.refresh(video)
+
+    arkiv_client = ArkivSyncClient(build_arkiv_config())
+    try:
+        arkiv_client.sync_video(db, video, video.timestamps)
+    except Exception as err:
+        print(f"Arkiv sync skipped or failed after Filecoin update for {video.path}: {err}")
     return video
 
 @router.post("/upload")

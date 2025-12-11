@@ -66,6 +66,7 @@ interface VideoAnalysisItemProps {
   onAnalyze: (video: Video) => void;
   onRemove: (video: Video) => void;
   onUpload?: (video: Video) => void;
+  onToggleShare?: (video: Video, share: boolean) => void;
 }
 
 const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
@@ -80,6 +81,7 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
   onAnalyze,
   onRemove,
   onUpload,
+  onToggleShare,
 }) => {
   const [contextMenu, setContextMenu] = useState<{
     mouseX: number;
@@ -886,6 +888,7 @@ interface VideoAnalysisListProps {
   }>;
   hiddenVideos?: Set<string>;
   searchQuery?: string;
+  onToggleShare?: (video: Video, share: boolean) => void;
 }
 
 const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
@@ -902,6 +905,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   uploadStatuses = {},
   hiddenVideos = new Set(),
   searchQuery = "",
+  onToggleShare,
 }) => {
   const [gatewayConfig, setGatewayConfig] = useState<IpfsGatewayConfig>({
     baseUrl: DEFAULT_IPFS_GATEWAY,
@@ -933,7 +937,8 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
       error?: string;
       rootCid?: string;
     };
-  }> = ({ video, timestamps, analysisStatus, jobProgress, uploadStatus }) => {
+    onToggleShare?: (video: Video, share: boolean) => void;
+  }> = ({ video, timestamps, analysisStatus, jobProgress, uploadStatus, onToggleShare }) => {
     const [contextMenu, setContextMenu] = useState<{
       mouseX: number;
       mouseY: number;
@@ -1563,6 +1568,41 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
               />
             </MenuItem>
           )}
+          {onToggleShare && (
+            <MenuItem
+              onClick={() => {
+                onToggleShare(video, !video.share_to_arkiv);
+                handleClose();
+              }}
+              sx={{
+                fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                fontSize: "14px",
+                color: "#000000",
+                "&:hover": {
+                  backgroundColor: "#F5F5F5",
+                },
+              }}
+            >
+              <ListItemIcon>
+                <ContentCopyIcon
+                  sx={{
+                    color: video.share_to_arkiv ? "#FF9800" : "#4CAF50",
+                    fontSize: 18,
+                  }}
+                />
+              </ListItemIcon>
+              <ListItemText
+                primary={video.share_to_arkiv ? "Keep Local Only" : "Share to Arkiv"}
+                sx={{
+                  "& .MuiTypography-root": {
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontSize: "14px",
+                    fontWeight: 400,
+                  },
+                }}
+              />
+            </MenuItem>
+          )}
           {uploadStatus?.status === 'completed' && uploadStatus?.rootCid && (
             <>
               <MenuItem
@@ -1616,6 +1656,41 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
                 />
               </MenuItem>
             </>
+          )}
+          {onToggleShare && (
+            <MenuItem
+              onClick={() => {
+                onToggleShare(video, !video.share_to_arkiv);
+                handleClose();
+              }}
+              sx={{
+                fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                fontSize: "14px",
+                color: "#000000",
+                "&:hover": {
+                  backgroundColor: "#F5F5F5",
+                },
+              }}
+            >
+              <ListItemIcon>
+                <ContentCopyIcon
+                  sx={{
+                    color: video.share_to_arkiv ? "#FF9800" : "#4CAF50",
+                    fontSize: 18,
+                  }}
+                />
+              </ListItemIcon>
+              <ListItemText
+                primary={video.share_to_arkiv ? "Keep Local Only" : "Share to Arkiv"}
+                sx={{
+                  "& .MuiTypography-root": {
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontSize: "14px",
+                    fontWeight: 400,
+                  },
+                }}
+              />
+            </MenuItem>
           )}
           <MenuItem
             onClick={handleRemoveClick}
@@ -1720,6 +1795,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
         onAnalyze={onAnalyze}
         onRemove={onRemove}
         onUpload={onUpload}
+        onToggleShare={onToggleShare}
       />
     ) : (
       <VideoListItem

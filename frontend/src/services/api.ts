@@ -83,6 +83,14 @@ export const videoService = {
     );
     return response.data;
   },
+
+  updateSharePreference: async (videoPath: string, shareToArkiv: boolean): Promise<Video> => {
+    const response = await api.put<Video>(
+      `/videos/${encodeURIComponent(videoPath)}/share`,
+      { share_to_arkiv: shareToArkiv }
+    );
+    return response.data;
+  },
 };
 
 // Job-related API functions
@@ -113,6 +121,13 @@ export const getAllJobs = async (status?: string): Promise<JobProgress[]> => {
 
 export const cancelJob = async (jobId: number): Promise<void> => {
   await api.delete(`/jobs/${jobId}`);
+};
+
+export const restoreService = {
+  restoreFromArkiv: async (): Promise<{ success: boolean; restored: number; skipped: number }> => {
+    const response = await api.post<{ success: boolean; restored: number; skipped: number }>('/restore/arkiv');
+    return response.data;
+  },
 };
 
 // Stream-related API functions

@@ -36,6 +36,7 @@ import {
   Lock as LockIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig } from "@/types/filecoin";
+import { restoreService } from "@/services/api";
 import type { SettingsTab } from "@/context/SettingsNavigationContext";
 import type { IpfsGatewayConfig } from "@/types/playback";
 import {
@@ -96,6 +97,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filecoinError, setFilecoinError] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreSummary, setRestoreSummary] = useState<string | null>(null);
   const [config, setConfig] = useState<EditableAppConfig>(defaultAppConfig);
   const [filecoinConfig, setFilecoinConfig] =
     useState<FilecoinConfig>(initialFilecoinConfig ?? defaultFilecoinConfig);
@@ -267,6 +270,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setSaving(true);
       setError(null);
       setFilecoinError(null);
+      setRestoreSummary(null);
 
       if (isPlaybackTab) {
         const normalizedBase = normalizeGatewayBase(gatewayConfig.baseUrl);
@@ -316,6 +320,22 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRestoreFromArkiv = async () => {
+    try {
+      setRestoring(true);
+      setFilecoinError(null);
+      setRestoreSummary(null);
+      const result = await restoreService.restoreFromArkiv();
+      setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to restore from Arkiv";
+      setFilecoinError(message);
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -660,6 +680,28 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           are encrypted and stored securely on your device.
         </Typography>
       </Alert>
+
+      <Box sx={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
+        <Button
+          variant="outlined"
+          disabled={restoring}
+          onClick={handleRestoreFromArkiv}
+          startIcon={restoring ? <CircularProgress size={16} /> : undefined}
+        >
+          {restoring ? "Restoring..." : "Restore Catalog from Arkiv"}
+        </Button>
+        {restoreSummary && (
+          <Typography variant="body2" sx={{ color: "#4CAF50" }}>
+            {restoreSummary}
+          </Typography>
+        )}
+      </Box>
+
+      {filecoinError && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {filecoinError}
+        </Alert>
+      )}
     </Box>
   );
 

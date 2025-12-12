@@ -4,14 +4,15 @@ This is the frontend application for Haven Player, built with Electron, React, T
 
 ## Features
 
-- **Modern Light Theme Interface** with clean, minimal design
-- **Sidebar Navigation** with vertical icons
-- **Header with Video Counter** and add/analyze buttons
-- **Dynamic Video Analysis List** with timeline visualization
-- **Real-time Analysis Progress** indicators
-- **Video Player** with playback controls
-- **Filecoin Integration** for decentralized video storage
-- **Lit Protocol Encryption** for optional end-to-end video encryption
+This frontend now includes a **Haven “Loom” workspace** (Navigator / Canvas / Marginalia) that is **fully interactive using typed sample data** (no backend required for UI testing).
+
+Key UI surfaces:
+
+- **Artifacts**: rich objects with metadata, provenance, integrity indicators, access policy + “encrypt before upload” (UI-only), discussion, and curator notes
+- **Pipeline**: capture → analyze → archive → replay (simulated jobs, progress, outputs)
+- **Hubs**: collections, members/roles (UI-gated), governance proposals/voting (simulated), moderation queue/actions (simulated)
+- **Operators / DePIN**: operator marketplace, operator dashboard, rewards/settlement ledger (simulated)
+- **Threads overlay**: Loom “threads” via `three` + `@react-three/fiber` (interactive when the Marginalia “Threads” tab is active)
 
 ## Setup
 
@@ -35,9 +36,9 @@ npm run build
 npm start
 ```
 
-### Backend during development
-- Preferred: run via the Electron app (GUI). The backend is started by the app, and the Filecoin/Lit private key you set in the Filecoin modal (stored encrypted) is injected automatically—no manual exports needed.
-- If you run the backend standalone (outside the app), you must supply `FILECOIN_PRIVATE_KEY` (and optionally `FILECOIN_RPC_URL`) yourself to match the GUI configuration.
+### Backend note (for Loom UI testing)
+- The Loom workspace is designed to be **testable without a backend** (it uses sample data and local persistence).
+- Some older “video-app” features referenced in this README may not apply to the Loom workspace.
 
 ## Development
 
@@ -48,11 +49,13 @@ npm run dev
 
 ## Testing
 
+### Run unit tests
 Run the test suite:
 ```bash
 npm test
 ```
 
+### Run tests with coverage
 Run tests with coverage:
 ```bash
 npm run test:coverage
@@ -62,6 +65,30 @@ Watch mode for tests:
 ```bash
 npm run test:watch
 ```
+
+## Manual UI test checklist (Loom workspace)
+
+### Library / Artifacts
+- Select an artifact in **Library** → ensure the **Artifact detail** opens
+- Edit **title**, **access policy**, toggle **Encrypt before upload (UI-only)**
+- Add a **timestamp tag** and a **summary segment**
+- Add a **discussion comment** and verify it appears in Marginalia → Discussion
+- Edit **Curator notes** in the artifact view and in Marginalia → Curator notes (both should persist)
+
+### Reciprocity prompts
+- In the artifact view, use **Reciprocity prompts**:\n+  - “Verify provenance” should add a verification indicator and append a provenance step\n+  - “Add curator notes” should prefill notes when empty\n+  - “Tag a key moment” should prefill the timestamp/tag inputs
+
+### Pipeline (simulated)
+- Navigate to Pipeline → **Capture**:\n+  - “Ingest as new artifact + queue capture” should create an artifact and a capture job\n+- Create a job in any stage and click **Advance +10%** until completion\n+  - Analyze completion should append simulated tags/summaries\n+  - Archive completion should assign a simulated CID\n+- Archive → “Share to Arkiv” → Publish (simulated)\n+- Replay → change playback source and toggle provenance overlay (UI-only)
+
+### Hubs / social / governance / moderation
+- Open a Hub → Collections:\n+  - Create a collection\n+  - Add artifacts to the collection\n+  - Reorder items using Up/Down buttons\n+  - Remove an item from a collection\n+- Hub → Members & Roles:\n+  - Change a member role (Moderator/Archivist gating)\n+  - Add/remove a member (gated)\n+- Hub → Governance:\n+  - Create a proposal and vote Yes/No/Abstain\n+- Hub → Moderation:\n+  - Resolve a case with an action (gated)
+
+### Operators / DePIN
+- Operators → Marketplace:\n+  - Assign an operator to a queued/running capture/archive job\n+- Operators → Dashboard:\n+  - Verify assigned jobs appear\n+- Operators → Rewards & settlement:\n+  - Confirm rewards only accrue for completed jobs (“No Service, No Rewards”)
+
+### Threads overlay
+- Open Marginalia → **Threads** tab\n+- Use type filters (link/transclusion/discussion)\n+- Hover/click threads in the overlay to ensure selection syncs with the Marginalia Threads list
 
 ## Filecoin & Lit Protocol Integration
 
@@ -124,6 +151,7 @@ This will create distributables in the `out` folder.
 
 - **Electron Main Process**: `src/main.ts`
 - **React Components**: `src/components/`
+- **Haven sample-data domain**: `src/haven/`
 - **Custom Hooks**: `src/hooks/`
 - **API Services**: `src/services/`
 - **Type Definitions**: `src/types/`
@@ -144,6 +172,7 @@ This will create distributables in the `out` folder.
 - React 19 with TypeScript
 - Electron 39
 - Material-UI 7
+- three + @react-three/fiber (threads overlay)
 
 ### Blockchain
 - **ethers** - Ethereum wallet operations

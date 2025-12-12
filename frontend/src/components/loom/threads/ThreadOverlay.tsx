@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { useHavenStore } from "@/haven/state/havenStore";
 import type { Anchor, LoomThread } from "@/haven/model/types";
@@ -79,15 +79,15 @@ function ThreadsScene(props: {
           <mesh
             key={t.id}
             geometry={geometry}
-            onPointerOver={(e: THREE.Event) => {
+            onPointerOver={(e: ThreeEvent<PointerEvent>) => {
               e.stopPropagation();
               dispatch({ type: "selection:setHoveredThread", threadId: t.id });
             }}
-            onPointerOut={(e: THREE.Event) => {
+            onPointerOut={(e: ThreeEvent<PointerEvent>) => {
               e.stopPropagation();
               dispatch({ type: "selection:setHoveredThread", threadId: null });
             }}
-            onClick={(e: THREE.Event) => {
+            onClick={(e: ThreeEvent<MouseEvent>) => {
               e.stopPropagation();
               dispatch({ type: "selection:setSelectedThread", threadId: t.id });
               dispatch({ type: "selection:setMarginaliaTab", tab: "threads" });

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Box, IconButton, Typography, Divider, Collapse } from "@mui/material";
+import { Box, IconButton, Typography, Divider, Collapse, type SvgIconProps } from "@mui/material";
 import {
   Explore as ExploreIcon,
   VideoLibrary as AssetsIcon,
@@ -24,7 +24,7 @@ interface SidebarProps {
 }
 
 type SectionsState = { main: boolean; personal: boolean };
-type NavItem = { icon: React.ElementType; label: string; path: string; active: boolean };
+type NavItem = { icon: React.ComponentType<SvgIconProps>; label: string; path: string; active: boolean };
 
 const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
   const { onRefresh, onSettings, onHelp } = props;
@@ -66,7 +66,7 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
     [location.pathname]
   );
 
-  const personalItems = [
+  const personalItems: Array<{ icon: React.ComponentType<SvgIconProps>; label: string; active: boolean }> = [
     { icon: MyVideosIcon, label: "My Videos", active: false },
     { icon: LikesIcon, label: "Likes", active: false },
     { icon: FoldersIcon, label: "Folders", active: false },

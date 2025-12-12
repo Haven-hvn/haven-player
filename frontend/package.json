@@ -29,6 +29,8 @@
     "@types/node": "24.10.1",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
+    "@types/three": "^0.176.0",
+    "@types/three": "^0.176.0",
     "autoprefixer": "10.4.22",
     "buffer": "6.0.3",
     "concurrently": "9.2.1",

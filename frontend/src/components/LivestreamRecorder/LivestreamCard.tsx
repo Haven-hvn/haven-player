@@ -234,11 +234,10 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
         ) : (
           <CardMedia
             component="img"
-            height="160"
             image={item.thumbnail}
             alt={item.name}
             onError={() => setImageError(true)}
-            sx={{ objectFit: "cover" }}
+            sx={{ height: "160px", objectFit: "cover" }}
           />
         )}
 
@@ -461,7 +460,7 @@ const LivestreamCard: React.FC<LivestreamCardProps> = ({
 
           <IconButton
             size="small"
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation();
               handleContextMenu(e);
             }}

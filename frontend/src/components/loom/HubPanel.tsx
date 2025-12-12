@@ -332,14 +332,14 @@ function CollectionCard(props: {
                 opacity: isDragging ? 0.75 : 1,
               }}
               draggable={props.canCurate}
-              onDragStart={(e) => {
+              onDragStart={(e: React.DragEvent<HTMLDivElement>) => {
                 if (!props.canCurate) return;
                 setDragFromIndex(idx);
                 setDragOverIndex(idx);
                 e.dataTransfer.effectAllowed = "move";
                 e.dataTransfer.setData("text/plain", String(idx));
               }}
-              onDragOver={(e) => {
+              onDragOver={(e: React.DragEvent<HTMLDivElement>) => {
                 if (!props.canCurate) return;
                 e.preventDefault(); // allow drop
                 setDragOverIndex(idx);
@@ -349,7 +349,7 @@ function CollectionCard(props: {
                 if (!props.canCurate) return;
                 setDragOverIndex(null);
               }}
-              onDrop={(e) => {
+              onDrop={(e: React.DragEvent<HTMLDivElement>) => {
                 if (!props.canCurate) return;
                 e.preventDefault();
                 const raw = e.dataTransfer.getData("text/plain");

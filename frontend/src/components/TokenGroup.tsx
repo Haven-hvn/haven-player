@@ -184,7 +184,7 @@ const TokenGroupComponent: React.FC<TokenGroupProps> = ({
         {/* Expand/Collapse Icon */}
         <IconButton
           size="small"
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.stopPropagation();
             setExpanded(!expanded);
           }}

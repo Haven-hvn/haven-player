@@ -79,15 +79,15 @@ function ThreadsScene(props: {
           <mesh
             key={t.id}
             geometry={geometry}
-            onPointerOver={(e) => {
+            onPointerOver={(e: THREE.Event) => {
               e.stopPropagation();
               dispatch({ type: "selection:setHoveredThread", threadId: t.id });
             }}
-            onPointerOut={(e) => {
+            onPointerOut={(e: THREE.Event) => {
               e.stopPropagation();
               dispatch({ type: "selection:setHoveredThread", threadId: null });
             }}
-            onClick={(e) => {
+            onClick={(e: THREE.Event) => {
               e.stopPropagation();
               dispatch({ type: "selection:setSelectedThread", threadId: t.id });
               dispatch({ type: "selection:setMarginaliaTab", tab: "threads" });

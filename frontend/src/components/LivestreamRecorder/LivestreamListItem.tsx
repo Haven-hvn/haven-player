@@ -216,17 +216,24 @@ const LivestreamListItem: React.FC<LivestreamListItemProps> = ({
             </Box>
           ) : (
             <Box
-              component="img"
-              src={item.thumbnail}
-              alt={item.name}
-              onError={() => setImageError(true)}
               sx={{
                 width: "100%",
                 height: "100%",
-                objectFit: "cover",
                 display: "block",
               }}
-            />
+            >
+              <img
+                src={item.thumbnail}
+                alt={item.name}
+                onError={() => setImageError(true)}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
+            </Box>
           )}
 
           {/* Live badge */}
@@ -493,7 +500,7 @@ const LivestreamListItem: React.FC<LivestreamListItemProps> = ({
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: 2 }}>
           <IconButton
             size="small"
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation();
               handleContextMenu(e);
             }}

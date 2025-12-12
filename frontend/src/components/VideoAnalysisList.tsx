@@ -693,7 +693,7 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
               >
                 <IconButton
                   size="small"
-                  onClick={(e) => {
+                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                     e.stopPropagation();
                     handleContextMenu(e);
                   }}
@@ -1469,7 +1469,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
               >
                 <IconButton
                   size="small"
-                  onClick={(e) => {
+                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                     e.stopPropagation();
                     handleContextMenu(e);
                   }}

@@ -1,5 +1,4 @@
-import type { IsoDateTime, PipelineStage } from "@/haven/model/enums";
-import type { HubRole } from "@/haven/model/enums";
+import type { IsoDateTime, PipelineStage, HubRole, ModerationAction } from "@/haven/model/enums";
 import type {
   Artifact,
   ArtifactAnalysisTag,
@@ -10,7 +9,6 @@ import type {
   GovernanceProposal,
   GovernanceProposalStatus,
   HubMember,
-  ModerationAction,
   ModerationCase,
   HavenState,
   HavenView,

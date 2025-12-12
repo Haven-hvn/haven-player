@@ -102,9 +102,9 @@ const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
           >
             <CardMedia
               component="img"
-              height="200"
               image={video.thumbnail_path || '/placeholder.jpg'}
               alt={video.title}
+              sx={{ height: "200px", objectFit: "cover" }}
             />
             <CardContent sx={{ flexGrow: 1, position: 'relative' }}>
               <Typography gutterBottom variant="h6" component="div" noWrap>
@@ -115,7 +115,7 @@ const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
               </Typography>
               <IconButton
                 sx={{ position: 'absolute', top: 8, right: 8 }}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                   e.stopPropagation();
                   handleMenuOpen(e, video);
                 }}

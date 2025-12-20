@@ -196,19 +196,17 @@ export interface EvmBalanceResponse {
   rpc_url: string;
 }
 
+const { ipcRenderer } = require('electron');
+
 export const evmService = {
-  validateConfig: async (privateKey?: string, rpcUrl?: string): Promise<EvmConfigResponse> => {
-    const params: Record<string, string> = {};
-    if (privateKey) params.private_key = privateKey;
-    if (rpcUrl) params.rpc_url = rpcUrl;
-    const response = await api.get<EvmConfigResponse>('/config/evm-config', { params });
-    return response.data;
+  validateConfig: async (rpcUrl?: string): Promise<EvmConfigResponse> => {
+    // Use IPC to validate config - private key is loaded from secure storage in main process
+    const result = await ipcRenderer.invoke('validate-evm-config', { rpcUrl });
+    return result;
   },
-  checkBalance: async (privateKey?: string, rpcUrl?: string): Promise<EvmBalanceResponse> => {
-    const params: Record<string, string> = {};
-    if (privateKey) params.private_key = privateKey;
-    if (rpcUrl) params.rpc_url = rpcUrl;
-    const response = await api.get<EvmBalanceResponse>('/config/evm-balance', { params });
-    return response.data;
+  checkBalance: async (rpcUrl?: string): Promise<EvmBalanceResponse> => {
+    // Use IPC to check balance - private key is loaded from secure storage in main process
+    const result = await ipcRenderer.invoke('check-evm-balance', { rpcUrl });
+    return result;
   },
 };

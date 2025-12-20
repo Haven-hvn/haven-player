@@ -168,23 +168,21 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
 
 @router.get("/evm-config")
 def validate_evm_configuration(
-    private_key: str | None = None,
     rpc_url: str | None = None
 ) -> dict:
     """
     Validate EVM configuration and return wallet address and chain info.
-    Useful for frontend to display wallet address when configuring Filecoin/Arkiv.
+    Reads private key from environment variables only (never from request).
+    Useful for backend that already has FILECOIN_PRIVATE_KEY set.
     
     Args:
-        private_key: Optional private key to validate (if not provided, reads from env)
         rpc_url: Optional RPC URL (if not provided, reads from env or uses default)
         
     Returns:
         Dictionary with wallet_address, chain_name, and native_token_symbol
     """
-    # Get values from params or environment
-    if not private_key:
-        private_key = os.getenv("FILECOIN_PRIVATE_KEY") or os.getenv("ARKIV_PRIVATE_KEY")
+    # Only read from environment variables - never accept private key in request
+    private_key = os.getenv("FILECOIN_PRIVATE_KEY") or os.getenv("ARKIV_PRIVATE_KEY")
     
     if not rpc_url:
         rpc_url = os.getenv("ARKIV_RPC_URL") or os.getenv("FILECOIN_RPC_URL") or "https://mendoza.hoodi.arkiv.network/rpc"
@@ -192,7 +190,7 @@ def validate_evm_configuration(
     if not private_key:
         raise HTTPException(
             status_code=400,
-            detail="Private key is required. Provide it as a parameter or set FILECOIN_PRIVATE_KEY environment variable."
+            detail="Private key not configured. Set FILECOIN_PRIVATE_KEY environment variable."
         )
     
     try:
@@ -211,15 +209,14 @@ def validate_evm_configuration(
 
 @router.get("/evm-balance")
 def check_evm_balance(
-    private_key: str | None = None,
     rpc_url: str | None = None
 ) -> dict:
     """
     Check wallet balance for gas tokens on the specified EVM chain.
-    Useful for frontend to show users if they have enough gas before using blockchain features.
+    Reads private key from environment variables only (never from request).
+    Useful for backend that already has FILECOIN_PRIVATE_KEY set.
     
     Args:
-        private_key: Optional private key (if not provided, reads from env)
         rpc_url: Optional RPC URL (if not provided, reads from env or uses default)
         
     Returns:
@@ -229,9 +226,8 @@ def check_evm_balance(
     from app.services.evm_utils import check_wallet_balance
     from web3 import Web3
     
-    # Get values from params or environment
-    if not private_key:
-        private_key = os.getenv("FILECOIN_PRIVATE_KEY") or os.getenv("ARKIV_PRIVATE_KEY")
+    # Only read from environment variables - never accept private key in request
+    private_key = os.getenv("FILECOIN_PRIVATE_KEY") or os.getenv("ARKIV_PRIVATE_KEY")
     
     if not rpc_url:
         rpc_url = os.getenv("ARKIV_RPC_URL") or os.getenv("FILECOIN_RPC_URL") or "https://mendoza.hoodi.arkiv.network/rpc"
@@ -239,7 +235,7 @@ def check_evm_balance(
     if not private_key:
         raise HTTPException(
             status_code=400,
-            detail="Private key is required. Provide it as a parameter or set FILECOIN_PRIVATE_KEY environment variable."
+            detail="Private key not configured. Set FILECOIN_PRIVATE_KEY environment variable."
         )
     
     try:

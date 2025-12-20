@@ -38,6 +38,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
+  ContentCopy as ContentCopyIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService, evmService } from "@/services/api";
@@ -359,14 +360,14 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
             rpcUrl = rpcUrl.replace("ws://", "http://");
           }
 
-          const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+          const balance = await evmService.checkBalance(rpcUrl);
           setBalanceInfo(balance);
           
           // Warn if balance is insufficient but don't block save
           if (!balance.has_sufficient_balance) {
             setFilecoinError(
               `⚠️ Low gas balance detected: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
-              `Please send ${balance.native_token_symbol} to ${balance.wallet_address.slice(0, 6)}...${balance.wallet_address.slice(-4)} for gas fees. ` +
+              `Please send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees. ` +
               `Configuration saved, but you may encounter errors when uploading.`
             );
           }
@@ -390,21 +391,21 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         await onSaveFilecoin(filecoinConfig);
       } else if (isArkivTab) {
         // Automatically check gas balance when enabling Arkiv sync
-        if (arkivConfig.syncEnabled && filecoinConfig.privateKey?.trim()) {
+        if (arkivConfig.syncEnabled) {
           setCheckingBalance(true);
           setBalanceError(null);
           setBalanceInfo(null);
           
           try {
             const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
-            const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+            const balance = await evmService.checkBalance(rpcUrl);
             setBalanceInfo(balance);
             
             // Warn if balance is insufficient but don't block save
             if (!balance.has_sufficient_balance) {
               setArkivError(
                 `⚠️ Low gas balance detected: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
-                `Please send ${balance.native_token_symbol} to ${balance.wallet_address.slice(0, 6)}...${balance.wallet_address.slice(-4)} for gas fees. ` +
+                `Please send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees. ` +
                 `Configuration saved, but Arkiv sync may fail.`
               );
             }
@@ -751,11 +752,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   );
 
   const handleCheckBalance = async () => {
-    if (!filecoinConfig.privateKey.trim()) {
-      setBalanceError("Please enter a private key first");
-      return;
-    }
-
     try {
       setCheckingBalance(true);
       setBalanceError(null);
@@ -770,7 +766,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         rpcUrl = rpcUrl.replace("ws://", "http://");
       }
 
-      const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+      const balance = await evmService.checkBalance(rpcUrl);
       setBalanceInfo(balance);
     } catch (err) {
       setBalanceError(
@@ -846,7 +842,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         <Button
           variant="outlined"
           onClick={handleCheckBalance}
-          disabled={checkingBalance || !filecoinConfig.privateKey.trim()}
+              disabled={checkingBalance}
           startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />}
           sx={{
             alignSelf: "flex-start",
@@ -865,9 +861,26 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
               },
             }}
           >
-            <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.5 }}>
-              Wallet: {balanceInfo.wallet_address.slice(0, 6)}...{balanceInfo.wallet_address.slice(-4)}
-            </Typography>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                Wallet: {balanceInfo.wallet_address}
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={() => {
+                  navigator.clipboard.writeText(balanceInfo.wallet_address);
+                }}
+                sx={{
+                  padding: 0.5,
+                  "&:hover": {
+                    backgroundColor: "rgba(0, 0, 0, 0.04)",
+                  },
+                }}
+                title="Copy wallet address"
+              >
+                <ContentCopyIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Box>
             <Typography variant="body2">
               Chain: {balanceInfo.chain_name}
             </Typography>
@@ -1066,21 +1079,21 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
                 }));
                 
                 // Automatically check balance when enabling Arkiv sync
-                if (newSyncEnabled && filecoinConfig.privateKey?.trim()) {
+                if (newSyncEnabled) {
                   setCheckingBalance(true);
                   setBalanceError(null);
                   setBalanceInfo(null);
                   
                   try {
                     const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
-                    const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+                    const balance = await evmService.checkBalance(rpcUrl);
                     setBalanceInfo(balance);
                     
                     // Warn if balance is insufficient
                     if (!balance.has_sufficient_balance) {
                       setArkivError(
                         `⚠️ Low gas balance: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
-                        `Send ${balance.native_token_symbol} to ${balance.wallet_address.slice(0, 6)}...${balance.wallet_address.slice(-4)} for gas fees.`
+                        `Send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees.`
                       );
                     } else {
                       setArkivError(null);
@@ -1156,18 +1169,13 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
             <Button
               variant="outlined"
               onClick={async () => {
-                if (!filecoinConfig.privateKey?.trim()) {
-                  setBalanceError("Please configure a private key in Filecoin settings first");
-                  return;
-                }
-
                 try {
                   setCheckingBalance(true);
                   setBalanceError(null);
                   setBalanceInfo(null);
 
                   const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
-                  const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+                  const balance = await evmService.checkBalance(rpcUrl);
                   setBalanceInfo(balance);
                 } catch (err) {
                   setBalanceError(
@@ -1177,7 +1185,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
                   setCheckingBalance(false);
                 }
               }}
-              disabled={checkingBalance || !arkivConfig.enabled || !filecoinConfig.privateKey?.trim()}
+              disabled={checkingBalance || !arkivConfig.enabled}
               startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />}
               sx={{
                 alignSelf: "flex-start",
@@ -1196,9 +1204,26 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
                   },
                 }}
               >
-                <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.5 }}>
-                  Wallet: {balanceInfo.wallet_address.slice(0, 6)}...{balanceInfo.wallet_address.slice(-4)}
-                </Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    Wallet: {balanceInfo.wallet_address}
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    onClick={() => {
+                      navigator.clipboard.writeText(balanceInfo.wallet_address);
+                    }}
+                    sx={{
+                      padding: 0.5,
+                      "&:hover": {
+                        backgroundColor: "rgba(0, 0, 0, 0.04)",
+                      },
+                    }}
+                    title="Copy wallet address"
+                  >
+                    <ContentCopyIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Box>
                 <Typography variant="body2">
                   Chain: {balanceInfo.chain_name}
                 </Typography>

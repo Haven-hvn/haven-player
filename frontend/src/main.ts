@@ -463,6 +463,169 @@ ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string; sy
     console.error('Failed to save Arkiv config:', error);
     throw new Error(`Failed to save Arkiv config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+});
+
+// Helper function to detect chain and token from RPC URL
+function detectChainFromRpcUrl(rpcUrl: string): { chainName: string; tokenSymbol: string } {
+  const rpcLower = rpcUrl.toLowerCase();
+  
+  // Ethereum networks
+  if (rpcLower.includes('ethereum') || rpcLower.includes('mainnet') || rpcLower.includes('eth')) {
+    if (rpcLower.includes('sepolia') || rpcLower.includes('goerli')) {
+      return { chainName: 'Ethereum Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Ethereum', tokenSymbol: 'ETH' };
+  }
+  
+  // Polygon networks
+  if (rpcLower.includes('polygon') || rpcLower.includes('matic')) {
+    if (rpcLower.includes('mumbai') || rpcLower.includes('testnet')) {
+      return { chainName: 'Polygon Testnet', tokenSymbol: 'MATIC' };
+    }
+    return { chainName: 'Polygon', tokenSymbol: 'MATIC' };
+  }
+  
+  // Binance Smart Chain
+  if (rpcLower.includes('bsc') || rpcLower.includes('binance')) {
+    if (rpcLower.includes('testnet')) {
+      return { chainName: 'BSC Testnet', tokenSymbol: 'BNB' };
+    }
+    return { chainName: 'BSC', tokenSymbol: 'BNB' };
+  }
+  
+  // Avalanche
+  if (rpcLower.includes('avalanche') || rpcLower.includes('avax')) {
+    if (rpcLower.includes('fuji') || rpcLower.includes('testnet')) {
+      return { chainName: 'Avalanche Testnet', tokenSymbol: 'AVAX' };
+    }
+    return { chainName: 'Avalanche', tokenSymbol: 'AVAX' };
+  }
+  
+  // Arbitrum
+  if (rpcLower.includes('arbitrum')) {
+    if (rpcLower.includes('goerli') || rpcLower.includes('testnet')) {
+      return { chainName: 'Arbitrum Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Arbitrum', tokenSymbol: 'ETH' };
+  }
+  
+  // Optimism
+  if (rpcLower.includes('optimism') || rpcLower.includes('optimistic')) {
+    if (rpcLower.includes('goerli') || rpcLower.includes('testnet')) {
+      return { chainName: 'Optimism Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Optimism', tokenSymbol: 'ETH' };
+  }
+  
+  // Base
+  if (rpcLower.includes('base')) {
+    if (rpcLower.includes('goerli') || rpcLower.includes('sepolia') || rpcLower.includes('testnet')) {
+      return { chainName: 'Base Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Base', tokenSymbol: 'ETH' };
+  }
+  
+  // Filecoin
+  if (rpcLower.includes('filecoin') || rpcLower.includes('fil')) {
+    if (rpcLower.includes('calibration') || rpcLower.includes('testnet')) {
+      return { chainName: 'Filecoin Calibration', tokenSymbol: 'tFIL' };
+    }
+    return { chainName: 'Filecoin', tokenSymbol: 'FIL' };
+  }
+  
+  // Local/unknown
+  if (rpcLower.includes('localhost') || rpcLower.includes('127.0.0.1')) {
+    return { chainName: 'Local Network', tokenSymbol: 'ETH' };
+  }
+  
+  // Default fallback
+  return { chainName: 'EVM Chain', tokenSymbol: 'gas tokens' };
+}
+
+// IPC handler to validate EVM config and return wallet address
+ipcMain.handle('validate-evm-config', async (_event, { rpcUrl }: { rpcUrl?: string }) => {
+  try {
+    const config = await loadDecryptedFilecoinConfig();
+    if (!config?.privateKey) {
+      throw new Error('Private key not configured. Please configure Filecoin settings first.');
+    }
+    
+    // Normalize private key
+    let normalizedKey = config.privateKey.trim();
+    if (!normalizedKey.startsWith('0x')) {
+      normalizedKey = `0x${normalizedKey}`;
+    }
+    
+    // Use ethers to get wallet address
+    const { ethers } = require('ethers');
+    const wallet = new ethers.Wallet(normalizedKey);
+    const walletAddress = wallet.address;
+    
+    // Detect chain from RPC URL
+    const finalRpcUrl = rpcUrl || config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc';
+    const { chainName, tokenSymbol } = detectChainFromRpcUrl(finalRpcUrl);
+    
+    return {
+      wallet_address: walletAddress,
+      chain_name: chainName,
+      native_token_symbol: tokenSymbol,
+      rpc_url: finalRpcUrl,
+    };
+  } catch (error) {
+    console.error('Failed to validate EVM config:', error);
+    throw new Error(`Failed to validate EVM config: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// IPC handler to check EVM wallet balance
+ipcMain.handle('check-evm-balance', async (_event, { rpcUrl }: { rpcUrl?: string }) => {
+  try {
+    const config = await loadDecryptedFilecoinConfig();
+    if (!config?.privateKey) {
+      throw new Error('Private key not configured. Please configure Filecoin settings first.');
+    }
+    
+    // Normalize private key
+    let normalizedKey = config.privateKey.trim();
+    if (!normalizedKey.startsWith('0x')) {
+      normalizedKey = `0x${normalizedKey}`;
+    }
+    
+    // Use ethers to get wallet address
+    const { ethers } = require('ethers');
+    const wallet = new ethers.Wallet(normalizedKey);
+    const walletAddress = wallet.address;
+    
+    // Determine RPC URL (convert WebSocket to HTTP if needed)
+    let finalRpcUrl = rpcUrl || config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc';
+    if (finalRpcUrl.startsWith('wss://')) {
+      finalRpcUrl = finalRpcUrl.replace('wss://', 'https://');
+    } else if (finalRpcUrl.startsWith('ws://')) {
+      finalRpcUrl = finalRpcUrl.replace('ws://', 'http://');
+    }
+    
+    // Detect chain from RPC URL
+    const { chainName, tokenSymbol } = detectChainFromRpcUrl(finalRpcUrl);
+    
+    // Create provider and check balance
+    const provider = new ethers.JsonRpcProvider(finalRpcUrl);
+    const balanceWei = await provider.getBalance(walletAddress);
+    const balanceEther = parseFloat(ethers.formatEther(balanceWei));
+    const hasSufficientBalance = balanceWei > 0n;
+    
+    return {
+      wallet_address: walletAddress,
+      chain_name: chainName,
+      native_token_symbol: tokenSymbol,
+      balance_wei: balanceWei.toString(),
+      balance_ether: balanceEther,
+      has_sufficient_balance: hasSufficientBalance,
+      rpc_url: finalRpcUrl,
+    };
+  } catch (error) {
+    console.error('Failed to check EVM balance:', error);
+    throw new Error(`Failed to check wallet balance: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }); 
 
 async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean } | null> {

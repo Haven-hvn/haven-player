@@ -80,6 +80,8 @@ export interface UploadProgress {
   stage: 'preparing' | 'encrypting' | 'creating-car' | 'checking-payments' | 'uploading' | 'validating' | 'completed';
   progress: number; // 0-100
   message: string;
+  bytesUploaded?: number; // Optional: bytes uploaded so far
+  totalBytes?: number; // Optional: total bytes to upload
 }
 
 export interface UploadOptions {
@@ -190,7 +192,7 @@ async function createCarFromVideo(
   try {
     onProgress?.({
       stage: 'creating-car',
-      progress: 0,
+      progress: 10,
       message: 'Creating CAR file from video...',
     });
 
@@ -205,7 +207,7 @@ async function createCarFromVideo(
 
     onProgress?.({
       stage: 'creating-car',
-      progress: 50,
+      progress: 11,
       message: 'CAR file created. Reading contents...',
     });
 
@@ -214,7 +216,7 @@ async function createCarFromVideo(
 
     onProgress?.({
       stage: 'creating-car',
-      progress: 100,
+      progress: 13,
       message: 'CAR file ready',
     });
 
@@ -354,12 +356,15 @@ export async function uploadVideoToFilecoin(
   // Track encryption metadata if encryption is enabled
   let encryptionMetadata: LitEncryptionMetadata | undefined;
   let isEncrypted = false;
+  
+  // Track upload progress interval for cleanup
+  let progressInterval: NodeJS.Timeout | undefined;
 
   try {
     // Step 1: Prepare file (encrypt if enabled)
     onProgress?.({
       stage: 'preparing',
-      progress: 5,
+      progress: 2,
       message: 'Preparing video for upload...',
     });
 
@@ -372,7 +377,7 @@ export async function uploadVideoToFilecoin(
       
       onProgress?.({
         stage: 'encrypting',
-        progress: 10,
+        progress: 4,
         message: 'Encrypting video with Lit Protocol...',
       });
       
@@ -387,7 +392,7 @@ export async function uploadVideoToFilecoin(
           (message: string) => {
             onProgress?.({
               stage: 'encrypting',
-              progress: 20,
+              progress: 8,
               message,
             });
           }
@@ -413,7 +418,7 @@ export async function uploadVideoToFilecoin(
         
         onProgress?.({
           stage: 'encrypting',
-          progress: 35,
+          progress: 12,
           message: 'Encryption complete',
         });
       } catch (encryptError) {
@@ -451,7 +456,7 @@ export async function uploadVideoToFilecoin(
 
     onProgress?.({
       stage: 'checking-payments',
-      progress: 50,
+      progress: 14,
       message: 'Initializing Filecoin connection...',
     });
 
@@ -492,25 +497,25 @@ export async function uploadVideoToFilecoin(
           if (event.type === 'checking-balances') {
             onProgress?.({
               stage: 'checking-payments',
-              progress: 55,
+              progress: 15,
               message: 'Checking wallet balances...',
             });
           } else if (event.type === 'checking-allowances') {
             onProgress?.({
               stage: 'checking-payments',
-              progress: 60,
+              progress: 16,
               message: 'Checking allowances...',
             });
           } else if (event.type === 'configuring-allowances') {
             onProgress?.({
               stage: 'checking-payments',
-              progress: 65,
+              progress: 17,
               message: 'Configuring allowances...',
             });
           } else if (event.type === 'validating-capacity') {
             onProgress?.({
               stage: 'checking-payments',
-              progress: 70,
+              progress: 18,
               message: 'Validating payment capacity...',
             });
           }
@@ -537,7 +542,7 @@ export async function uploadVideoToFilecoin(
 
     onProgress?.({
       stage: 'checking-payments',
-      progress: 75,
+      progress: 19,
       message: 'Creating storage context...',
     });
 
@@ -561,26 +566,68 @@ export async function uploadVideoToFilecoin(
       providerInfo 
     };
 
-    onProgress?.({
-      stage: 'uploading',
-      progress: 80,
-      message: 'Uploading to Filecoin...',
-    });
-
     // Step 5: Execute upload
     // The filecoin-pin package calculates piece CID internally during upload
     // Type assertion needed due to multiformats version mismatch between root and filecoin-pin's nested multiformats
     // Both CID types are structurally compatible, just from different package versions
+    
+    // Track upload progress with time-based estimation
+    const totalBytes = carBytes.length;
+    const uploadStartTime = Date.now();
+    const uploadStartProgress = 20;
+    const uploadEndProgress = 85;
+    const progressRange = uploadEndProgress - uploadStartProgress;
+    
+    // Estimate upload duration based on file size (conservative estimate: ~1MB/s)
+    // This is just for UI feedback - actual upload speed may vary
+    const estimatedUploadDurationMs = Math.max(5000, (totalBytes / (1024 * 1024)) * 1000); // At least 5 seconds
+    
+    // Start simulated progress update
+    const startProgressSimulation = () => {
+      progressInterval = setInterval(() => {
+        const elapsed = Date.now() - uploadStartTime;
+        const progressRatio = Math.min(0.95, elapsed / estimatedUploadDurationMs); // Cap at 95% until actual completion
+        const currentProgress = uploadStartProgress + (progressRange * progressRatio);
+        const estimatedBytesUploaded = Math.floor(totalBytes * progressRatio);
+        const mbUploaded = (estimatedBytesUploaded / (1024 * 1024)).toFixed(2);
+        const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
+        
+        onProgress?.({
+          stage: 'uploading',
+          progress: Math.floor(currentProgress),
+          message: `Uploading to Filecoin... ${mbUploaded} MB / ${totalMB} MB`,
+          bytesUploaded: estimatedBytesUploaded,
+          totalBytes: totalBytes,
+        });
+      }, 500); // Update every 500ms
+    };
+    
+    onProgress?.({
+      stage: 'uploading',
+      progress: uploadStartProgress,
+      message: `Uploading to Filecoin... 0 MB / ${(totalBytes / (1024 * 1024)).toFixed(2)} MB`,
+      bytesUploaded: 0,
+      totalBytes: totalBytes,
+    });
+    
+    startProgressSimulation();
+    
     const uploadResult = await executeUpload(synapseService, carBytes, rootCid, {
       logger,
       contextId: file.name,
       onProgress: (event: { type: string; data?: { retryCount?: number } }) => {
         switch (event.type) {
           case 'onUploadComplete': {
+            // Clear progress simulation
+            if (progressInterval) {
+              clearInterval(progressInterval);
+            }
             onProgress?.({
               stage: 'uploading',
-              progress: 85,
-              message: 'Upload complete, adding to dataset...',
+              progress: uploadEndProgress,
+              message: `Upload complete (${(totalBytes / (1024 * 1024)).toFixed(2)} MB), adding to dataset...`,
+              bytesUploaded: totalBytes,
+              totalBytes: totalBytes,
             });
             break;
           }
@@ -655,6 +702,11 @@ export async function uploadVideoToFilecoin(
       encryptedRootCid = encryptedCid.ciphertext;
     }
 
+    // Clear progress interval if still running
+    if (progressInterval) {
+      clearInterval(progressInterval);
+    }
+
     return {
       rootCid: rootCid.toString(),
       pieceCid: uploadResult.pieceCid,
@@ -669,6 +721,11 @@ export async function uploadVideoToFilecoin(
       encryptedRootCid,
     };
   } catch (error) {
+    // Clear progress interval on error
+    if (progressInterval) {
+      clearInterval(progressInterval);
+    }
+    
     // Extract detailed error information
     const errorDetails = error instanceof Error ? {
       message: error.message,

@@ -1308,7 +1308,7 @@ const VideoPlayer: React.FC = () => {
               />
             )}
 
-            {/* Loading overlay */}
+            {/* Loading overlay - pointerEvents: none to allow controls to still work */}
             {!playerReady && !state.error && (
               <Box
                 sx={{
@@ -1318,6 +1318,7 @@ const VideoPlayer: React.FC = () => {
                   alignItems: 'center',
                   justifyContent: 'center',
                   backgroundColor: '#000',
+                  pointerEvents: 'none',
                 }}
               >
                 <CircularProgress sx={{ color: '#a855f7' }} />
@@ -1342,6 +1343,7 @@ const VideoPlayer: React.FC = () => {
             justifyContent: 'flex-end',
             background: 'linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.4) 30%, transparent 60%)',
             pointerEvents: 'none',
+            zIndex: 20, // Ensure controls are above all overlays
           }}
         >
           {/* Top bar */}

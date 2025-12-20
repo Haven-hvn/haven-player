@@ -1606,58 +1606,58 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
             </MenuItem>
           )}
           {uploadStatus?.status === 'completed' && uploadStatus?.rootCid && (
-            <>
-              <MenuItem
-                onClick={handleOpenRemote}
+            <MenuItem
+              onClick={handleOpenRemote}
+              sx={{
+                fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                fontSize: "14px",
+                color: "#000000",
+                "&:hover": {
+                  backgroundColor: "#F5F5F5",
+                },
+              }}
+            >
+              <ListItemIcon>
+                <OpenInNewIcon sx={{ color: "#4CAF50", fontSize: 18 }} />
+              </ListItemIcon>
+              <ListItemText
+                primary="Open Remote (IPFS)"
                 sx={{
-                  fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-                  fontSize: "14px",
-                  color: "#000000",
-                  "&:hover": {
-                    backgroundColor: "#F5F5F5",
+                  "& .MuiTypography-root": {
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontSize: "14px",
+                    fontWeight: 400,
                   },
                 }}
-              >
-                <ListItemIcon>
-                  <OpenInNewIcon sx={{ color: "#4CAF50", fontSize: 18 }} />
-                </ListItemIcon>
-                <ListItemText
-                  primary="Open Remote (IPFS)"
-                  sx={{
-                    "& .MuiTypography-root": {
-                      fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-                      fontSize: "14px",
-                      fontWeight: 400,
-                    },
-                  }}
-                />
-              </MenuItem>
-              <MenuItem
-                onClick={handleCopyCid}
+              />
+            </MenuItem>
+          )}
+          {uploadStatus?.status === 'completed' && uploadStatus?.rootCid && (
+            <MenuItem
+              onClick={handleCopyCid}
+              sx={{
+                fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                fontSize: "14px",
+                color: "#000000",
+                "&:hover": {
+                  backgroundColor: "#F5F5F5",
+                },
+              }}
+            >
+              <ListItemIcon>
+                <ContentCopyIcon sx={{ color: "#2196F3", fontSize: 18 }} />
+              </ListItemIcon>
+              <ListItemText
+                primary="Copy IPFS CID"
                 sx={{
-                  fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-                  fontSize: "14px",
-                  color: "#000000",
-                  "&:hover": {
-                    backgroundColor: "#F5F5F5",
+                  "& .MuiTypography-root": {
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontSize: "14px",
+                    fontWeight: 400,
                   },
                 }}
-              >
-                <ListItemIcon>
-                  <ContentCopyIcon sx={{ color: "#2196F3", fontSize: 18 }} />
-                </ListItemIcon>
-                <ListItemText
-                  primary="Copy IPFS CID"
-                  sx={{
-                    "& .MuiTypography-root": {
-                      fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-                      fontSize: "14px",
-                      fontWeight: 400,
-                    },
-                  }}
-                />
-              </MenuItem>
-            </>
+              />
+            </MenuItem>
           )}
           {onToggleShare && (
             <MenuItem

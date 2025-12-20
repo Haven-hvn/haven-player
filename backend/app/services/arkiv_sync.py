@@ -373,47 +373,74 @@ class ArkivSyncClient:
             logger.debug("Video marked as local-only; skipping Arkiv sync")
             return None
 
+        logger.info(
+            "🔄 Starting Arkiv sync for video: %s | "
+            "Entity Key: %s | "
+            "Has Filecoin CID: %s | "
+            "Is Encrypted: %s | "
+            "Timestamps: %d",
+            video.path,
+            video.arkiv_entity_key or "None (will create)",
+            "Yes" if video.filecoin_root_cid else "No",
+            "Yes" if video.is_encrypted else "No",
+            len(timestamps)
+        )
+
         client = self._get_client()
 
         payload = _build_payload(video, timestamps)
         attributes = _build_attributes(video, timestamps)
         payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
-        if video.arkiv_entity_key:
-            logger.info("Updating Arkiv entity for video %s", video.path)
-            _entity_key, receipt = client.arkiv.update_entity(
-                EntityKey(video.arkiv_entity_key),
+        try:
+            if video.arkiv_entity_key:
+                logger.info("📝 Updating existing Arkiv entity for video %s (entity key: %s)", video.path, video.arkiv_entity_key)
+                _entity_key, receipt = client.arkiv.update_entity(
+                    EntityKey(video.arkiv_entity_key),
+                    payload=payload_bytes,
+                    content_type="application/json",
+                    attributes=Attributes(attributes),
+                    expires_in=self.config.expires_in,
+                )
+                _log_transaction_info(
+                    receipt=receipt,
+                    rpc_url=self.config.rpc_url,
+                    operation="update",
+                    entity_key=video.arkiv_entity_key
+                )
+                logger.info("✅ Successfully updated Arkiv entity for video %s", video.path)
+                return EntityKey(video.arkiv_entity_key)
+
+            logger.info("🆕 Creating new Arkiv entity for video %s", video.path)
+            entity_key, receipt = client.arkiv.create_entity(
                 payload=payload_bytes,
                 content_type="application/json",
                 attributes=Attributes(attributes),
                 expires_in=self.config.expires_in,
             )
+
+            video.arkiv_entity_key = str(entity_key)
+            db_session.commit()
+            db_session.refresh(video)
+            
             _log_transaction_info(
                 receipt=receipt,
                 rpc_url=self.config.rpc_url,
-                operation="update",
-                entity_key=video.arkiv_entity_key
+                operation="create",
+                entity_key=str(entity_key)
             )
-            return EntityKey(video.arkiv_entity_key)
-
-        logger.info("Creating Arkiv entity for video %s", video.path)
-        entity_key, receipt = client.arkiv.create_entity(
-            payload=payload_bytes,
-            content_type="application/json",
-            attributes=Attributes(attributes),
-            expires_in=self.config.expires_in,
-        )
-
-        video.arkiv_entity_key = str(entity_key)
-        db_session.commit()
-        db_session.refresh(video)
-        
-        _log_transaction_info(
-            receipt=receipt,
-            rpc_url=self.config.rpc_url,
-            operation="create",
-            entity_key=str(entity_key)
-        )
-        
-        return entity_key
+            
+            logger.info("✅ Successfully created Arkiv entity for video %s (entity key: %s)", video.path, str(entity_key))
+            return entity_key
+        except Exception as exc:
+            logger.error(
+                "❌ Arkiv sync operation failed for video %s | "
+                "Entity Key: %s | "
+                "Error: %s",
+                video.path,
+                video.arkiv_entity_key or "None",
+                exc,
+                exc_info=True
+            )
+            raise
 

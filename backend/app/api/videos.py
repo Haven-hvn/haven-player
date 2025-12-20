@@ -4,6 +4,7 @@ import json
 import uuid
 import aiofiles
 import hashlib
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 import mimetypes
@@ -21,6 +22,7 @@ from app.lib.thumbnail_generator import generate_video_thumbnail
 from imagehash import hex_to_hash
 import asyncio
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 def _is_valid_phash(phash: Optional[str]) -> bool:
@@ -353,7 +355,7 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
     try:
         arkiv_client.sync_video(db, db_video, [])
     except Exception as err:
-        print(f"Arkiv sync skipped or failed for {db_video.path}: {err}")
+        logger.error("❌ Arkiv sync failed for video %s: %s", db_video.path, err, exc_info=True)
 
     return db_video
 
@@ -442,7 +444,7 @@ def update_share_preference(
         try:
             arkiv_client.sync_video(db, video, video.timestamps)
         except Exception as err:
-            print(f"Arkiv sync skipped or failed after enabling share for {video.path}: {err}")
+            logger.error("❌ Arkiv sync failed after enabling share for video %s: %s", video.path, err, exc_info=True)
 
     return video
 
@@ -488,7 +490,7 @@ def update_filecoin_metadata(
     try:
         arkiv_client.sync_video(db, video, video.timestamps)
     except Exception as err:
-        print(f"Arkiv sync skipped or failed after Filecoin update for {video.path}: {err}")
+        logger.error("❌ Arkiv sync failed after Filecoin update for video %s: %s", video.path, err, exc_info=True)
     return video
 
 @router.post("/upload")

@@ -772,7 +772,8 @@ const VideoPlayer: React.FC = () => {
       controls.pause();
       setPlayed(0);
     }
-  }, [videoUrl, controls, setPlayed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoUrl]);
 
   // Fetch video data
   useEffect(() => {

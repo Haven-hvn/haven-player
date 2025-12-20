@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
 export interface VideoState {
   playing: boolean;
@@ -201,6 +201,10 @@ export const useVideoControls = (
   const lastProgressTimeRef = useRef<number>(0);
   const savedTimeRef = useRef<number>(0);
   const isRecoveringRef = useRef<boolean>(false);
+  
+  // Use refs for values accessed in callbacks to prevent infinite loops
+  const retryCountRef = useRef<number>(0);
+  const playingRef = useRef<boolean>(false);
 
   const [state, setState] = useState<VideoState>({
     playing: false,
@@ -285,12 +289,21 @@ export const useVideoControls = (
     };
   }, []);
 
+  // Keep refs in sync with state
+  useEffect(() => {
+    retryCountRef.current = state.retryCount;
+  }, [state.retryCount]);
+
+  useEffect(() => {
+    playingRef.current = state.playing;
+  }, [state.playing]);
+
   // Stall detection - monitor for playback progress
   useEffect(() => {
     if (state.playing && !state.buffering && !state.error && !state.isStalled) {
       const checkInterval = setInterval(() => {
         const video = playerRef.current;
-        if (video && state.playing) {
+        if (video && playingRef.current) {
           const currentProgress = video.currentTime;
           if (currentProgress === lastProgressTimeRef.current && !video.paused && !video.ended) {
             // No progress in the last check interval - might be stalled
@@ -319,15 +332,15 @@ export const useVideoControls = (
   // Attempt automatic recovery
   const attemptRecovery = useCallback(async () => {
     const video = playerRef.current;
-    if (!video || state.retryCount >= maxRetries) {
+    if (!video || retryCountRef.current >= maxRetries) {
       console.error('[VideoControls] Max retries reached, cannot recover');
       return false;
     }
 
     isRecoveringRef.current = true;
-    const delay = calculateRetryDelay(state.retryCount, retryDelayMs);
+    const delay = calculateRetryDelay(retryCountRef.current, retryDelayMs);
     
-    console.log(`[VideoControls] Attempting recovery (attempt ${state.retryCount + 1}/${maxRetries}) in ${delay}ms`);
+    console.log(`[VideoControls] Attempting recovery (attempt ${retryCountRef.current + 1}/${maxRetries}) in ${delay}ms`);
 
     return new Promise<boolean>((resolve) => {
       retryTimeoutRef.current = setTimeout(async () => {
@@ -380,7 +393,7 @@ export const useVideoControls = (
           }
 
           // Restore playing state
-          if (state.playing) {
+          if (playingRef.current) {
             await video.play();
           }
 
@@ -391,6 +404,7 @@ export const useVideoControls = (
             retryCount: 0,
             buffering: false,
           }));
+          retryCountRef.current = 0;
 
           isRecoveringRef.current = false;
           onRecovery?.();
@@ -398,16 +412,17 @@ export const useVideoControls = (
           resolve(true);
         } catch (err) {
           console.error('[VideoControls] Recovery attempt failed:', err);
-          setState((prev) => ({
-            ...prev,
-            retryCount: prev.retryCount + 1,
-          }));
+          setState((prev) => {
+            const newCount = prev.retryCount + 1;
+            retryCountRef.current = newCount;
+            return { ...prev, retryCount: newCount };
+          });
           isRecoveringRef.current = false;
           resolve(false);
         }
       }, delay);
     });
-  }, [state.retryCount, state.playing, maxRetries, retryDelayMs, loadTimeoutMs, onRecovery]);
+  }, [maxRetries, retryDelayMs, loadTimeoutMs, onRecovery]);
 
   const play = useCallback(async () => {
     const video = playerRef.current;
@@ -416,6 +431,7 @@ export const useVideoControls = (
     try {
       await video.play();
       setState((prev) => ({ ...prev, playing: true, error: null }));
+      playingRef.current = true;
     } catch (err) {
       const error = err as Error;
       console.error('[VideoControls] Play error:', error.name, error.message);
@@ -424,16 +440,20 @@ export const useVideoControls = (
       if (error.name === 'NotAllowedError') {
         // Autoplay was prevented - this is expected, not an error
         setState((prev) => ({ ...prev, playing: false }));
+        playingRef.current = false;
       } else if (error.name === 'NotSupportedError') {
         const videoError = createError('format', undefined, 'This video format cannot be played.');
         setState((prev) => ({ ...prev, error: videoError, playing: false }));
+        playingRef.current = false;
         onError?.(videoError);
       } else if (error.name === 'AbortError') {
         // Play was interrupted by a pause or load - not an error
         setState((prev) => ({ ...prev, playing: false }));
+        playingRef.current = false;
       } else {
         const videoError = createError('unknown', undefined, error.message);
         setState((prev) => ({ ...prev, error: videoError, playing: false }));
+        playingRef.current = false;
         onError?.(videoError);
       }
     }
@@ -444,16 +464,17 @@ export const useVideoControls = (
     if (video) {
       video.pause();
       setState((prev) => ({ ...prev, playing: false }));
+      playingRef.current = false;
     }
   }, []);
 
   const togglePlay = useCallback(() => {
-    if (state.playing) {
+    if (playingRef.current) {
       pause();
     } else {
       play();
     }
-  }, [state.playing, play, pause]);
+  }, [play, pause]);
 
   const setVolume = useCallback((volume: number) => {
     const clampedVolume = Math.max(0, Math.min(1, volume));
@@ -670,6 +691,7 @@ export const useVideoControls = (
       // No error info available
       const error = createError('unknown');
       setState((prev) => ({ ...prev, error, playing: false, buffering: false }));
+      playingRef.current = false;
       onError?.(error);
       return;
     }
@@ -686,15 +708,16 @@ export const useVideoControls = (
       buffering: false,
       isStalled: false,
     }));
+    playingRef.current = false;
     
     onError?.(error);
 
     // Attempt automatic recovery for recoverable errors
-    if (error.recoverable && state.retryCount < maxRetries) {
+    if (error.recoverable && retryCountRef.current < maxRetries) {
       console.log('[VideoControls] Error is recoverable, will attempt recovery');
       attemptRecovery();
     }
-  }, [createError, onError, state.retryCount, maxRetries, attemptRecovery]);
+  }, [createError, onError, maxRetries, attemptRecovery]);
 
   const handleBuffer = useCallback((buffering: boolean) => {
     setState((prev) => ({ ...prev, buffering }));
@@ -710,10 +733,10 @@ export const useVideoControls = (
         setState((prev) => ({ 
           ...prev, 
           isStalled: true,
-          error: prev.retryCount < maxRetries ? null : error,
+          error: retryCountRef.current < maxRetries ? null : error,
         }));
         
-        if (state.retryCount < maxRetries) {
+        if (retryCountRef.current < maxRetries) {
           attemptRecovery();
         } else {
           onError?.(error);
@@ -726,7 +749,7 @@ export const useVideoControls = (
         stallTimeoutRef.current = null;
       }
     }
-  }, [createError, stallTimeoutMs, state.retryCount, maxRetries, attemptRecovery, onError]);
+  }, [createError, stallTimeoutMs, maxRetries, attemptRecovery, onError]);
 
   const handleEnded = useCallback(() => {
     if (!state.loop) {
@@ -768,14 +791,14 @@ export const useVideoControls = (
     loadTimeoutRef.current = setTimeout(() => {
       console.warn('[VideoControls] Load timeout');
       const error = createError('timeout');
-      if (state.retryCount < maxRetries) {
+      if (retryCountRef.current < maxRetries) {
         attemptRecovery();
       } else {
         setState((prev) => ({ ...prev, error }));
         onError?.(error);
       }
     }, loadTimeoutMs);
-  }, [createError, loadTimeoutMs, state.retryCount, maxRetries, attemptRecovery, onError]);
+  }, [createError, loadTimeoutMs, maxRetries, attemptRecovery, onError]);
 
   const handleLoadedData = useCallback(() => {
     console.log('[VideoControls] Data loaded');
@@ -813,7 +836,7 @@ export const useVideoControls = (
     setState((prev) => ({ ...prev, duration }));
   }, []);
 
-  const controls: VideoControls = {
+  const controls: VideoControls = useMemo(() => ({
     play,
     pause,
     togglePlay,
@@ -833,7 +856,27 @@ export const useVideoControls = (
     retry,
     clearError,
     resetPlayer,
-  };
+  }), [
+    play,
+    pause,
+    togglePlay,
+    setVolume,
+    toggleMute,
+    setPlaybackRate,
+    seek,
+    seekRelative,
+    toggleFullscreen,
+    togglePip,
+    toggleLoop,
+    toggleRemainingTime,
+    skipForward,
+    skipBackward,
+    frameForward,
+    frameBackward,
+    retry,
+    clearError,
+    resetPlayer,
+  ]);
 
   return {
     state,

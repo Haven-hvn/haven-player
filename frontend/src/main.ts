@@ -123,7 +123,8 @@ ipcMain.handle('get-filecoin-config', async () => {
   try {
     const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
     if (fs.existsSync(configPath)) {
-      const data = fs.readFileSync(configPath, 'utf-8');
+      const fileBuffer = fs.readFileSync(configPath);
+      const data = fileBuffer.toString('utf-8');
       const config = JSON.parse(data);
       
       // Decrypt private key if available (never stored in plaintext)
@@ -229,7 +230,8 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
 async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number } | null> {
   const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
   if (!fs.existsSync(configPath)) return null;
-  const data = fs.readFileSync(configPath, 'utf-8');
+  const fileBuffer = fs.readFileSync(configPath);
+  const data = fileBuffer.toString('utf-8');
   const config = JSON.parse(data);
 
   if (!config.encryptedPrivateKey) {

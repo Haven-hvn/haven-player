@@ -487,9 +487,11 @@ const VideoPlayer: React.FC = () => {
               controls={false}
               light={false}
               pip={false}
+              // @ts-expect-error - react-player config type doesn't match exactly
               config={playerConfig}
               onReady={handleReady}
               onError={handleError}
+              // @ts-expect-error - react-player onProgress signature varies by player type
               onProgress={handleProgress}
               progressInterval={100}
             />

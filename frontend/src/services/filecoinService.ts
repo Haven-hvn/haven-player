@@ -108,131 +108,6 @@ const SOURCE_TMP_PREFIX = 'haven-filecoin-src-';
 
 const unixfsCarBuilder = createUnixfsCarBuilder();
 
-async function derivePieceCid(
-  storage: unknown,
-  carPath: string,
-  carBytes: Uint8Array,
-  logger: Logger
-): Promise<string | undefined> {
-  const storageObj = storage as Record<string, unknown> | undefined;
-  if (!storageObj) {
-    return undefined;
-  }
-
-  // Discover keys across prototype chain (own + non-enumerable)
-  const protoKeys: string[] = [];
-  const maxDepth = 5;
-  let current: unknown = storageObj;
-  for (let depth = 0; depth < maxDepth && current && typeof current === 'object'; depth += 1) {
-    try {
-      const keys = Reflect.ownKeys(current)
-        .map((k) => (typeof k === 'string' ? k : k.toString()))
-        .filter((k) => k !== '__proto__');
-      protoKeys.push(...keys);
-    } catch {
-      // ignore
-    }
-    current = Object.getPrototypeOf(current);
-  }
-
-  const candidates: Array<{ name: string; argType: 'path' | 'bytes' }> = [];
-  const seen = new Set<string>();
-  const addCandidate = (name: string, argType: 'path' | 'bytes') => {
-    const key = `${name}:${argType}`;
-    if (!seen.has(key)) {
-      candidates.push({ name, argType });
-      seen.add(key);
-    }
-  };
-
-  // Preferred known helpers
-  [
-    { name: 'generatePieceCidFromFile', argType: 'path' as const },
-    { name: 'generatePieceCIDFromFile', argType: 'path' as const },
-    { name: 'generatePieceCidFromCAR', argType: 'path' as const },
-    { name: 'generatePieceCIDFromCAR', argType: 'path' as const },
-    { name: 'generatePieceCidFromCARFile', argType: 'path' as const },
-    { name: 'generatePieceCIDFromCARFile', argType: 'path' as const },
-    { name: 'calculatePieceCidFromCAR', argType: 'path' as const },
-    { name: 'calculatePieceCIDFromCAR', argType: 'path' as const },
-    { name: 'calculatePieceCid', argType: 'path' as const },
-    { name: 'calculatePieceCID', argType: 'path' as const },
-    { name: 'getPieceCidFromFile', argType: 'path' as const },
-    { name: 'getPieceCIDFromFile', argType: 'path' as const },
-    { name: 'getPieceCidFromCAR', argType: 'path' as const },
-    { name: 'getPieceCIDFromCAR', argType: 'path' as const },
-    { name: 'pieceCidFromFile', argType: 'path' as const },
-    { name: 'pieceCIDFromFile', argType: 'path' as const },
-    { name: 'pieceCidFromCAR', argType: 'path' as const },
-    { name: 'pieceCIDFromCAR', argType: 'path' as const },
-    { name: 'pieceCid', argType: 'path' as const },
-    { name: 'pieceCID', argType: 'path' as const },
-    { name: 'calculatePieceCidFromBytes', argType: 'bytes' as const },
-    { name: 'calculatePieceCIDFromBytes', argType: 'bytes' as const },
-    { name: 'generatePieceCidFromBytes', argType: 'bytes' as const },
-    { name: 'generatePieceCIDFromBytes', argType: 'bytes' as const },
-    { name: 'calculateCommP', argType: 'path' as const },
-    { name: 'generateCommP', argType: 'path' as const },
-    { name: 'commP', argType: 'path' as const },
-    { name: 'computePieceCID', argType: 'path' as const },
-    { name: 'computePieceCid', argType: 'path' as const },
-  ].forEach(({ name, argType }) => addCandidate(name, argType));
-
-  // Dynamically discover any piece/comm/cid helpers exposed by storage
-  const dynamicKeys = Array.from(new Set(protoKeys)).filter((key) => {
-    const val = (storageObj as Record<string, unknown>)[key];
-    return typeof val === 'function' && /(piece|cid|comm)/i.test(key);
-  });
-  dynamicKeys.forEach((name) => {
-    addCandidate(name, 'path');
-    addCandidate(name, 'bytes');
-  });
-
-  const attempted: string[] = [];
-  for (const candidate of candidates) {
-    const maybeFn = storageObj[candidate.name];
-    if (typeof maybeFn !== 'function') {
-      continue;
-    }
-
-    try {
-      const arg = candidate.argType === 'path' ? carPath : carBytes;
-      const result = await (maybeFn as (input: unknown) => unknown).call(storageObj, arg);
-      if (result) {
-        const pieceCid = `${result}`;
-        logger.info('Derived PieceCID from storage helper', { pieceCid, method: candidate.name });
-        return pieceCid;
-      }
-    } catch (error) {
-      logger.warn('PieceCID derivation attempt failed', {
-        method: candidate.name,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    attempted.push(candidate.name);
-  }
-
-  logger.warn('Unable to derive PieceCID from storage helpers; proceeding without one', {
-    attemptedMethods: Array.from(new Set(attempted)).slice(0, 50),
-    discoveredMethods: dynamicKeys.slice(0, 50),
-    discoveredPrototypeKeys: protoKeys.slice(0, 50),
-  });
-  return undefined;
-}
-
-async function computePieceCidLocally(carBytes: Uint8Array, logger: Logger): Promise<string | undefined> {
-  logger.warn('Local PieceCID computation not available (no accessible commP library configured)');
-  return undefined;
-}
-
-function normalizePieceCid(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  // If helper returned multiple comma-separated CIDs, pick the first
-  const first = raw.split(',').map((s) => s.trim()).find((s) => s.length > 0);
-  return first;
-}
-
 async function runCleanup(cleanups: CleanupCallback[], logger: ReturnType<typeof createLogger>, context: string): Promise<void> {
   // Run in reverse order to unwind resources
   const tasks = [...cleanups].reverse();
@@ -686,12 +561,6 @@ export async function uploadVideoToFilecoin(
       providerInfo 
     };
 
-    // Derive PieceCID if the storage helper provides one (required by PDP upload)
-    let pieceCid = normalizePieceCid(await derivePieceCid(storage, carPath, carBytes, logger));
-    if (!pieceCid) {
-      pieceCid = normalizePieceCid(await computePieceCidLocally(carBytes, logger));
-    }
-
     onProgress?.({
       stage: 'uploading',
       progress: 80,
@@ -699,13 +568,12 @@ export async function uploadVideoToFilecoin(
     });
 
     // Step 5: Execute upload
+    // The filecoin-pin package calculates piece CID internally during upload
     // Type assertion needed due to multiformats version mismatch between root and filecoin-pin's nested multiformats
     // Both CID types are structurally compatible, just from different package versions
     const uploadResult = await executeUpload(synapseService, carBytes, rootCid, {
       logger,
       contextId: file.name,
-      carPath,
-      pieceCid,
       onProgress: (event: { type: string; data?: { retryCount?: number } }) => {
         switch (event.type) {
           case 'onUploadComplete': {
@@ -732,7 +600,7 @@ export async function uploadVideoToFilecoin(
             });
             break;
           }
-          case 'ipniAdvertisement.retryUpdate': {
+          case 'ipniProviderResults.retryUpdate': {
             const retryCount = event.data?.retryCount ?? 0;
             const attemptCount = retryCount === 0 ? 1 : retryCount + 1;
             onProgress?.({
@@ -742,7 +610,7 @@ export async function uploadVideoToFilecoin(
             });
             break;
           }
-          case 'ipniAdvertisement.complete': {
+          case 'ipniProviderResults.complete': {
             onProgress?.({
               stage: 'validating',
               progress: 98,
@@ -750,7 +618,7 @@ export async function uploadVideoToFilecoin(
             });
             break;
           }
-          case 'ipniAdvertisement.failed': {
+          case 'ipniProviderResults.failed': {
             // Don't fail the upload, just warn - IPNI can take time
             onProgress?.({
               stage: 'validating',

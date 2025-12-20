@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { platform } from 'os';
 import { registerRenderCrashLogger } from './utils/registerRenderCrashLogger';
 import { uploadVideoToFilecoin } from './services/filecoinService';
 import type { FilecoinConfig } from './types/filecoin';
@@ -13,6 +14,126 @@ const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'devel
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
+
+// Helper function to find Python executable and venv info, checking for virtual environment first
+function findPythonExecutable(backendDir: string): { pythonPath: string; venvPath: string | null } {
+  const isWindows = platform() === 'win32';
+  const pythonName = isWindows ? 'python.exe' : 'python';
+  
+  // Check for venv in backend directory
+  const venvPaths = [
+    path.join(backendDir, 'venv'),
+    path.join(backendDir, '.venv'),
+  ];
+  
+  for (const venvPath of venvPaths) {
+    if (fs.existsSync(venvPath)) {
+      const pythonPath = isWindows
+        ? path.join(venvPath, 'Scripts', pythonName)
+        : path.join(venvPath, 'bin', pythonName);
+      
+      if (fs.existsSync(pythonPath)) {
+        console.log(`✅ Found Python in virtual environment: ${pythonPath}`);
+        return { pythonPath, venvPath };
+      }
+    }
+  }
+  
+  // Fall back to system Python
+  console.log(`⚠️ No virtual environment found, using system Python: ${pythonName}`);
+  return { pythonPath: pythonName, venvPath: null };
+}
+
+// Helper function to activate venv environment variables
+function activateVenvEnvironment(venvPath: string | null, backendDir: string, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const isWindows = platform() === 'win32';
+  const env = { ...baseEnv };
+  
+  if (venvPath) {
+    // Set VIRTUAL_ENV variable (like activate script does)
+    env.VIRTUAL_ENV = venvPath;
+    
+    // Add venv's Scripts/bin to PATH (prepend so venv takes precedence)
+    const venvBinPath = isWindows
+      ? path.join(venvPath, 'Scripts')
+      : path.join(venvPath, 'bin');
+    
+    const currentPath = env.PATH || env.Path || '';
+    const pathSeparator = isWindows ? ';' : ':';
+    env.PATH = `${venvBinPath}${pathSeparator}${currentPath}`;
+    if (isWindows) {
+      env.Path = env.PATH; // Windows uses both PATH and Path
+    }
+    
+    console.log(`🔧 Activated virtual environment: ${venvPath}`);
+    console.log(`   Added to PATH: ${venvBinPath}`);
+  } else {
+    console.log(`⚠️ No virtual environment to activate, using system Python`);
+  }
+  
+  return env;
+}
+
+// Helper function to spawn backend process with proper Windows handling
+function spawnBackendProcess(
+  pythonExecutable: string,
+  venvPath: string | null,
+  backendDir: string,
+  baseEnv: NodeJS.ProcessEnv
+): ChildProcess {
+  const isWindows = platform() === 'win32';
+  const args = ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'];
+  
+  // Activate venv environment (sets PATH, VIRTUAL_ENV, etc.)
+  const env = activateVenvEnvironment(venvPath, backendDir, baseEnv);
+  
+  console.log(`🐍 Starting backend with Python: ${pythonExecutable}`);
+  console.log(`📁 Backend directory: ${backendDir}`);
+  console.log(`💻 Platform: ${platform()}`);
+  if (venvPath) {
+    console.log(`🔧 Virtual environment: ${venvPath}`);
+  }
+  
+  if (isWindows) {
+    // On Windows, use shell: true to ensure proper command execution
+    // This prevents the empty command window issue and ensures commands execute
+    const process = spawn(pythonExecutable, args, {
+      cwd: backendDir,
+      env,
+      shell: true,
+      stdio: 'inherit',
+    });
+    
+    process.on('error', (error) => {
+      console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
+      console.error(`   Python executable: ${pythonExecutable}`);
+      console.error(`   Backend directory: ${backendDir}`);
+      if (venvPath) {
+        console.error(`   Virtual environment: ${venvPath}`);
+      }
+    });
+    
+    return process;
+  } else {
+    // On Unix-like systems, use standard spawn
+    const process = spawn(pythonExecutable, args, {
+      cwd: backendDir,
+      env,
+      stdio: 'inherit',
+    });
+    
+    process.on('error', (error) => {
+      console.error(`❌ Failed to start backend process: ${error.message}`);
+      console.error(`   Python executable: ${pythonExecutable}`);
+      console.error(`   Backend directory: ${backendDir}`);
+      if (venvPath) {
+        console.error(`   Virtual environment: ${venvPath}`);
+      }
+    });
+    
+    return process;
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -89,15 +210,8 @@ async function tryStartBackend(): Promise<void> {
     };
 
     console.log('🚀 Auto-starting backend with configured environment variables...');
-    backendProcess = spawn(
-      'python',
-      ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
-      {
-        cwd: backendDir,
-        env,
-        stdio: 'inherit',
-      }
-    );
+    const { pythonPath, venvPath } = findPythonExecutable(backendDir);
+    backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
 
     backendProcess.on('exit', (code) => {
       console.log(`Backend process exited with code ${code}`);
@@ -374,7 +488,7 @@ ipcMain.handle('start-backend', async () => {
   }
 
   // Load Arkiv RPC URL from config
-  let arkivRpcUrl = 'http://127.0.0.1:8545';
+  let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
   try {
     const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     if (fs.existsSync(arkivConfigPath)) {
@@ -398,15 +512,8 @@ ipcMain.handle('start-backend', async () => {
     ARKIV_RPC_URL: arkivRpcUrl,
   };
 
-  backendProcess = spawn(
-    'python',
-    ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
-    {
-      cwd: backendDir,
-      env,
-      stdio: 'inherit',
-    }
-  );
+  const { pythonPath, venvPath } = findPythonExecutable(backendDir);
+  backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
 
   backendProcess.on('exit', (code) => {
     console.log(`Backend process exited with code ${code}`);
@@ -470,7 +577,7 @@ ipcMain.handle('restart-backend', async () => {
   }
 
   // Load Arkiv RPC URL from config
-  let arkivRpcUrl = 'http://127.0.0.1:8545';
+  let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
   try {
     const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     if (fs.existsSync(arkivConfigPath)) {
@@ -493,15 +600,8 @@ ipcMain.handle('restart-backend', async () => {
     ARKIV_RPC_URL: arkivRpcUrl,
   };
 
-  backendProcess = spawn(
-    'python',
-    ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
-    {
-      cwd: backendDir,
-      env,
-      stdio: 'inherit',
-    }
-  );
+  const { pythonPath, venvPath } = findPythonExecutable(backendDir);
+  backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
 
   backendProcess.on('exit', (code) => {
     console.log(`Backend process exited with code ${code}`);

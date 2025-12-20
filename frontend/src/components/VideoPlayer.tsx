@@ -845,8 +845,15 @@ const VideoPlayer: React.FC = () => {
     };
 
     fetchVideoData();
-    return () => clearDecryptedUrl();
-  }, [videoPath, decryptVideo, clearDecryptedUrl]);
+    // Cleanup is handled separately to avoid dependency issues
+  }, [videoPath, decryptVideo]);
+  
+  // Cleanup decrypted URL on unmount (separate effect to avoid re-running fetchVideoData)
+  useEffect(() => {
+    return () => {
+      clearDecryptedUrl();
+    };
+  }, [clearDecryptedUrl]);
 
   // Handle source switching decryption
   useEffect(() => {

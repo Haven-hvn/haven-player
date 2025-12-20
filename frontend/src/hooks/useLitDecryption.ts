@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Video } from '@/types/video';
 import type { FilecoinConfig } from '@/types/filecoin';
 import {
@@ -46,17 +46,26 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
     };
   }, [decryptedUrl]);
 
+  // Use a ref to track decryptedUrl for cleanup without causing re-renders
+  const decryptedUrlRef = useRef<string | null>(null);
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    decryptedUrlRef.current = decryptedUrl;
+  }, [decryptedUrl]);
+
   /**
    * Clear the decrypted URL and revoke the blob URL
+   * Uses ref to avoid changing function reference when decryptedUrl changes
    */
   const clearDecryptedUrl = useCallback(() => {
-    if (decryptedUrl) {
-      URL.revokeObjectURL(decryptedUrl);
+    if (decryptedUrlRef.current) {
+      URL.revokeObjectURL(decryptedUrlRef.current);
     }
     setDecryptedUrl(null);
     setDecryptionStatus({ status: 'idle', progress: '' });
     setIsEncrypted(false);
-  }, [decryptedUrl]);
+  }, []);
 
   /**
    * Decrypt an encrypted video and return a blob URL for playback

@@ -296,7 +296,7 @@ const VideoPlayer: React.FC = () => {
     setPlaybackError(null);
   };
 
-  const handleError = (error: Error | string) => {
+  const handleError = (error: unknown) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[VideoPlayer] Playback error:', errorMessage, 'URL:', videoUrl?.substring(0, 100));
     setPlaybackError(errorMessage);
@@ -306,6 +306,53 @@ const VideoPlayer: React.FC = () => {
   const handleBack = () => {
     navigate('/');
   };
+
+  // Determine player config based on URL type - MUST be before any early returns (Rules of Hooks)
+  const playerConfig = useMemo(() => {
+    if (!videoUrl) return undefined;
+    
+    console.log('[VideoPlayer] Configuring player for URL:', videoUrl.substring(0, 100));
+    
+    // For file:// URLs, use fileConfig with proper attributes
+    if (videoUrl.startsWith('file://')) {
+      return {
+        file: {
+          attributes: {
+            controls: false,
+            preload: 'auto' as const,
+            crossOrigin: 'anonymous' as const,
+          },
+          forceVideo: true,
+        },
+      };
+    }
+    
+    // For blob URLs (decrypted videos), use fileConfig
+    if (videoUrl.startsWith('blob:')) {
+      return {
+        file: {
+          attributes: {
+            controls: false,
+            preload: 'auto' as const,
+            crossOrigin: 'anonymous' as const,
+          },
+          forceVideo: true,
+        },
+      };
+    }
+    
+    // For HTTP/HTTPS URLs (IPFS), use fileConfig with video attributes
+    return {
+      file: {
+        attributes: {
+          controls: false,
+          preload: 'auto' as const,
+          crossOrigin: 'anonymous' as const,
+        },
+        forceVideo: true,
+      },
+    };
+  }, [videoUrl]);
 
   // Show loading state (for video loading or decryption)
   if (isPreparing) {
@@ -390,53 +437,6 @@ const VideoPlayer: React.FC = () => {
     );
   }
 
-  // Determine player config based on URL type
-  const playerConfig = useMemo(() => {
-    if (!videoUrl) return undefined;
-    
-    console.log('[VideoPlayer] Configuring player for URL:', videoUrl.substring(0, 100));
-    
-    // For file:// URLs, use fileConfig with proper attributes
-    if (videoUrl.startsWith('file://')) {
-      return {
-        file: {
-          attributes: {
-            controls: false,
-            preload: 'auto',
-            crossOrigin: 'anonymous',
-          },
-          forceVideo: true,
-        },
-      };
-    }
-    
-    // For blob URLs (decrypted videos), use fileConfig
-    if (videoUrl.startsWith('blob:')) {
-      return {
-        file: {
-          attributes: {
-            controls: false,
-            preload: 'auto',
-            crossOrigin: 'anonymous',
-          },
-          forceVideo: true,
-        },
-      };
-    }
-    
-    // For HTTP/HTTPS URLs (IPFS), use fileConfig with video attributes
-    return {
-      file: {
-        attributes: {
-          controls: false,
-          preload: 'auto',
-          crossOrigin: 'anonymous',
-        },
-        forceVideo: true,
-      },
-    };
-  }, [videoUrl]);
-
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
       <Box sx={{ position: 'relative', flexGrow: 1, backgroundColor: '#000' }}>
@@ -451,9 +451,12 @@ const VideoPlayer: React.FC = () => {
               controls={false}
               light={false}
               pip={false}
+              // @ts-expect-error - react-player config type doesn't match exactly
               config={playerConfig}
               onReady={handleReady}
+              // @ts-expect-error - react-player onError signature varies by player type
               onError={handleError}
+              // @ts-expect-error - react-player onProgress signature varies by player type
               onProgress={handleProgress}
               onDuration={handleDuration}
               progressInterval={100}

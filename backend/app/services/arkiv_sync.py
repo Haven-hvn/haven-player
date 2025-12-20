@@ -5,7 +5,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Iterable, Protocol
+from typing import Callable, Iterable, Protocol, Any
 
 from arkiv import Arkiv
 from arkiv.account import NamedAccount
@@ -16,6 +16,91 @@ from sqlalchemy.orm import Session
 from app.models.video import Timestamp, Video
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_transaction_hash(receipt: Any) -> str | None:
+    """
+    Extract transaction hash from Arkiv SDK receipt object.
+    
+    The receipt object structure may vary, but typically contains:
+    - receipt.transactionHash
+    - receipt.hash
+    - receipt.txHash
+    - Or nested in receipt.receipt.transactionHash
+    
+    Returns the transaction hash as a string, or None if not found.
+    """
+    if not receipt:
+        return None
+    
+    # Try common attribute names
+    for attr_name in ['transactionHash', 'hash', 'txHash', 'transaction_hash']:
+        if hasattr(receipt, attr_name):
+            value = getattr(receipt, attr_name)
+            if value:
+                return str(value)
+    
+    # Try dictionary access if receipt is dict-like
+    if isinstance(receipt, dict):
+        for key in ['transactionHash', 'hash', 'txHash', 'transaction_hash']:
+            if key in receipt and receipt[key]:
+                return str(receipt[key])
+    
+    # Try nested receipt object
+    if hasattr(receipt, 'receipt'):
+        nested_receipt = receipt.receipt
+        for attr_name in ['transactionHash', 'hash', 'txHash', 'transaction_hash']:
+            if hasattr(nested_receipt, attr_name):
+                value = getattr(nested_receipt, attr_name)
+                if value:
+                    return str(value)
+    
+    return None
+
+
+def _log_transaction_info(receipt: Any, rpc_url: str, operation: str, entity_key: str | None = None) -> None:
+    """
+    Log transaction information for developers to check on block explorer.
+    
+    Args:
+        receipt: The transaction receipt from Arkiv SDK
+        rpc_url: The RPC URL used for the transaction (helps identify the network)
+        operation: Either "create" or "update"
+        entity_key: The Arkiv entity key if available
+    """
+    transaction_hash = _extract_transaction_hash(receipt)
+    
+    if transaction_hash:
+        # Determine network from RPC URL for helpful logging
+        network_hint = "unknown network"
+        if "localhost" in rpc_url or "127.0.0.1" in rpc_url:
+            network_hint = "local network"
+        elif "sepolia" in rpc_url.lower():
+            network_hint = "Sepolia testnet"
+        elif "mainnet" in rpc_url.lower() or "ethereum" in rpc_url.lower():
+            network_hint = "Ethereum mainnet"
+        
+        logger.info(
+            "✅ Arkiv %s transaction confirmed | "
+            "Transaction Hash: %s | "
+            "Network: %s | "
+            "RPC URL: %s | "
+            "Entity Key: %s | "
+            "View on block explorer using the transaction hash above",
+            operation,
+            transaction_hash,
+            network_hint,
+            rpc_url,
+            entity_key or "N/A"
+        )
+    else:
+        logger.warning(
+            "⚠️ Arkiv %s transaction completed but could not extract transaction hash from receipt. "
+            "Receipt type: %s | Receipt: %s",
+            operation,
+            type(receipt).__name__,
+            str(receipt)[:200] if receipt else "None"
+        )
 
 
 @dataclass
@@ -296,17 +381,23 @@ class ArkivSyncClient:
 
         if video.arkiv_entity_key:
             logger.info("Updating Arkiv entity for video %s", video.path)
-            client.arkiv.update_entity(
+            _entity_key, receipt = client.arkiv.update_entity(
                 EntityKey(video.arkiv_entity_key),
                 payload=payload_bytes,
                 content_type="application/json",
                 attributes=Attributes(attributes),
                 expires_in=self.config.expires_in,
             )
+            _log_transaction_info(
+                receipt=receipt,
+                rpc_url=self.config.rpc_url,
+                operation="update",
+                entity_key=video.arkiv_entity_key
+            )
             return EntityKey(video.arkiv_entity_key)
 
         logger.info("Creating Arkiv entity for video %s", video.path)
-        entity_key, _receipt = client.arkiv.create_entity(
+        entity_key, receipt = client.arkiv.create_entity(
             payload=payload_bytes,
             content_type="application/json",
             attributes=Attributes(attributes),
@@ -316,5 +407,13 @@ class ArkivSyncClient:
         video.arkiv_entity_key = str(entity_key)
         db_session.commit()
         db_session.refresh(video)
+        
+        _log_transaction_info(
+            receipt=receipt,
+            rpc_url=self.config.rpc_url,
+            operation="create",
+            entity_key=str(entity_key)
+        )
+        
         return entity_key
 

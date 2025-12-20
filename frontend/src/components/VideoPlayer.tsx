@@ -277,10 +277,20 @@ const VideoPlayer: React.FC = () => {
 
   const handleProgress: (state: { played: number; playedSeconds: number; loaded: number; loadedSeconds: number }) => void = (state) => {
     setPlayed(state.played);
-  };
-
-  const handleDuration = (duration: number) => {
-    setDuration(duration);
+    // Also update duration if we get it from progress
+    if (state.loadedSeconds > 0 && duration === 0) {
+      // Try to get duration from player if available
+      if (playerRef.current) {
+        try {
+          const player = playerRef.current.getInternalPlayer();
+          if (player && typeof player.duration === 'number' && !isNaN(player.duration) && player.duration > 0) {
+            setDuration(player.duration);
+          }
+        } catch (err) {
+          // Ignore errors
+        }
+      }
+    }
   };
 
   const handleSeek = (_: Event, value: number | number[]) => {
@@ -294,6 +304,32 @@ const VideoPlayer: React.FC = () => {
     console.log('[VideoPlayer] Player ready, URL:', videoUrl?.substring(0, 100));
     setPlayerReady(true);
     setPlaybackError(null);
+    // Get duration from player ref since onDuration isn't supported for file player
+    // Use setTimeout to ensure the internal player is fully initialized
+    setTimeout(() => {
+      if (playerRef.current) {
+        try {
+          const player = playerRef.current.getInternalPlayer();
+          if (player && typeof player.duration === 'number' && !isNaN(player.duration) && player.duration > 0) {
+            setDuration(player.duration);
+            console.log('[VideoPlayer] Duration:', player.duration);
+          } else if (player && player.readyState >= 2) {
+            // If duration not available yet, try to get it from loadedmetadata
+            const checkDuration = () => {
+              if (player && typeof player.duration === 'number' && !isNaN(player.duration) && player.duration > 0) {
+                setDuration(player.duration);
+                console.log('[VideoPlayer] Duration (from metadata):', player.duration);
+              }
+            };
+            player.addEventListener('loadedmetadata', checkDuration);
+            // Also check immediately
+            checkDuration();
+          }
+        } catch (err) {
+          console.warn('[VideoPlayer] Could not get duration from player:', err);
+        }
+      }
+    }, 100);
   };
 
   const handleError = (error: unknown) => {
@@ -447,18 +483,14 @@ const VideoPlayer: React.FC = () => {
               url={videoUrl}
               width="100%"
               height="100%"
-              playing={playing && playerReady}
+              playing={playing}
               controls={false}
               light={false}
               pip={false}
-              // @ts-expect-error - react-player config type doesn't match exactly
               config={playerConfig}
               onReady={handleReady}
-              // @ts-expect-error - react-player onError signature varies by player type
               onError={handleError}
-              // @ts-expect-error - react-player onProgress signature varies by player type
               onProgress={handleProgress}
-              onDuration={handleDuration}
               progressInterval={100}
             />
             {playbackError && (
@@ -534,7 +566,7 @@ const VideoPlayer: React.FC = () => {
           <IconButton 
             onClick={handlePlayPause} 
             size="large"
-            disabled={!playerReady || !!playbackError || !videoUrl}
+            disabled={!!playbackError || !videoUrl}
           >
             {playing ? <PauseIcon /> : <PlayIcon />}
           </IconButton>

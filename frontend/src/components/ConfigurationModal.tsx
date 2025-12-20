@@ -37,6 +37,7 @@ import {
   AccountTree as ArkivIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
+  Refresh as RefreshIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService } from "@/services/api";
@@ -109,6 +110,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [arkivError, setArkivError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreSummary, setRestoreSummary] = useState<string | null>(null);
+  const [restartingBackend, setRestartingBackend] = useState(false);
+  const [backendRestartMessage, setBackendRestartMessage] = useState<string | null>(null);
   const [config, setConfig] = useState<EditableAppConfig>(defaultAppConfig);
   const [filecoinConfig, setFilecoinConfig] =
     useState<FilecoinConfig>(initialFilecoinConfig ?? defaultFilecoinConfig);
@@ -380,6 +383,24 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setArkivError(message);
     } finally {
       setRestoring(false);
+    }
+  };
+
+  const handleRestartBackend = async () => {
+    try {
+      setRestartingBackend(true);
+      setArkivError(null);
+      setBackendRestartMessage(null);
+      const result = await ipcRenderer.invoke("restart-backend");
+      setBackendRestartMessage(result.message || "Backend restarted successfully");
+      // Reload Arkiv config to update the enabled status
+      await loadArkivConfig();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to restart backend";
+      setArkivError(message);
+    } finally {
+      setRestartingBackend(false);
     }
   };
 
@@ -935,6 +956,42 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           Configure a private key in Filecoin settings to enable restore functionality.
         </Typography>
       )}
+
+      <Divider sx={{ my: 2 }} />
+
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 500, color: "#424242" }}>
+          Backend Configuration
+        </Typography>
+        <Typography variant="body2" sx={{ color: "#6B6B6B", fontSize: "12px" }}>
+          After changing the Arkiv RPC URL or Filecoin private key, you must restart the backend for changes to take effect.
+        </Typography>
+        <Box sx={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
+          <Button
+            variant="contained"
+            disabled={restartingBackend}
+            onClick={handleRestartBackend}
+            startIcon={restartingBackend ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
+            sx={{
+              backgroundColor: "#1976D2",
+              color: "#FFFFFF",
+              "&:hover": {
+                backgroundColor: "#1565C0",
+              },
+              "&:disabled": {
+                backgroundColor: "#BDBDBD",
+              },
+            }}
+          >
+            {restartingBackend ? "Restarting..." : "Restart Backend"}
+          </Button>
+          {backendRestartMessage && (
+            <Typography variant="body2" sx={{ color: "#4CAF50" }}>
+              {backendRestartMessage}
+            </Typography>
+          )}
+        </Box>
+      </Box>
 
       {arkivError && (
         <Alert severity="error" sx={{ mt: 2 }}>

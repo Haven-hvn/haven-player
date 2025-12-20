@@ -35,9 +35,23 @@ npm run build
 npm start
 ```
 
-### Backend during development
-- Preferred: run via the Electron app (GUI). The backend is started by the app, and the Filecoin/Lit private key you set in the Filecoin modal (stored encrypted) is injected automatically—no manual exports needed.
-- If you run the backend standalone (outside the app), you must supply `FILECOIN_PRIVATE_KEY` (and optionally `FILECOIN_RPC_URL`) yourself to match the GUI configuration.
+### Backend Configuration
+The Electron app automatically starts the backend when launched, **but only if you have configured your Filecoin private key first**.
+
+**First-time setup:**
+1. Start the Electron app (`npm start`)
+2. Open **Settings** (gear icon) > **Filecoin** tab
+3. Enter your Ethereum private key and save
+4. Go to **Settings** > **Arkiv** tab
+5. Click **"Restart Backend"** to start the backend with your config
+
+**Subsequent launches:**
+- The app will auto-start the backend using your saved configuration
+- Environment variables (`FILECOIN_PRIVATE_KEY`, `ARKIV_RPC_URL`, etc.) are injected automatically
+
+**Running backend standalone (outside the app):**
+- You must supply `FILECOIN_PRIVATE_KEY` and optionally `FILECOIN_RPC_URL`, `ARKIV_RPC_URL` yourself
+- Example: `FILECOIN_PRIVATE_KEY=0x... python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`
 
 ## Development
 

@@ -55,7 +55,66 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+// Attempt to start backend automatically if config is available
+async function tryStartBackend(): Promise<void> {
+  try {
+    const cfg = await loadDecryptedFilecoinConfig();
+    if (!cfg || !cfg.privateKey) {
+      console.log('📋 Backend not auto-started: Filecoin config not yet configured. Use Settings > Filecoin to configure, then Settings > Arkiv to restart backend.');
+      return;
+    }
+
+    // Load Arkiv RPC URL from config
+    let arkivRpcUrl = 'http://127.0.0.1:8545';
+    try {
+      const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
+      if (fs.existsSync(arkivConfigPath)) {
+        const fileBuffer = fs.readFileSync(arkivConfigPath);
+        const data = fileBuffer.toString('utf-8');
+        const arkivConfig = JSON.parse(data);
+        if (arkivConfig.rpcUrl) {
+          arkivRpcUrl = arkivConfig.rpcUrl;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load Arkiv config for auto-start:', err);
+    }
+
+    const backendDir = path.join(app.getAppPath(), '..', 'backend');
+    const env = {
+      ...process.env,
+      FILECOIN_PRIVATE_KEY: cfg.privateKey,
+      FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
+      ARKIV_RPC_URL: arkivRpcUrl,
+    };
+
+    console.log('🚀 Auto-starting backend with configured environment variables...');
+    backendProcess = spawn(
+      'python',
+      ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
+      {
+        cwd: backendDir,
+        env,
+        stdio: 'inherit',
+      }
+    );
+
+    backendProcess.on('exit', (code) => {
+      console.log(`Backend process exited with code ${code}`);
+      backendProcess = null;
+    });
+
+    console.log(`✅ Backend auto-started with PID: ${backendProcess.pid}`);
+  } catch (err) {
+    console.error('Failed to auto-start backend:', err);
+  }
+}
+
+app.whenReady().then(async () => {
+  createWindow();
+  // Auto-start backend after window is created
+  await tryStartBackend();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -355,6 +414,101 @@ ipcMain.handle('start-backend', async () => {
   });
 
   return { pid: backendProcess.pid, message: 'Backend started' };
+});
+
+ipcMain.handle('stop-backend', async () => {
+  if (!backendProcess || backendProcess.killed) {
+    return { success: true, message: 'Backend not running' };
+  }
+
+  return new Promise((resolve) => {
+    backendProcess!.on('exit', () => {
+      backendProcess = null;
+      resolve({ success: true, message: 'Backend stopped' });
+    });
+
+    backendProcess!.kill('SIGTERM');
+
+    // Force kill after 5 seconds if graceful shutdown fails
+    setTimeout(() => {
+      if (backendProcess && !backendProcess.killed) {
+        backendProcess.kill('SIGKILL');
+        backendProcess = null;
+        resolve({ success: true, message: 'Backend force stopped' });
+      }
+    }, 5000);
+  });
+});
+
+ipcMain.handle('restart-backend', async () => {
+  // Stop the backend first
+  if (backendProcess && !backendProcess.killed) {
+    await new Promise<void>((resolve) => {
+      backendProcess!.on('exit', () => {
+        backendProcess = null;
+        resolve();
+      });
+      backendProcess!.kill('SIGTERM');
+      // Force kill after 3 seconds
+      setTimeout(() => {
+        if (backendProcess && !backendProcess.killed) {
+          backendProcess.kill('SIGKILL');
+          backendProcess = null;
+        }
+        resolve();
+      }, 3000);
+    });
+  }
+
+  // Wait a moment for port to be released
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  // Start the backend with fresh config
+  const cfg = await loadDecryptedFilecoinConfig();
+  if (!cfg || !cfg.privateKey) {
+    throw new Error('Filecoin config with private key is not available. Please configure Filecoin settings first.');
+  }
+
+  // Load Arkiv RPC URL from config
+  let arkivRpcUrl = 'http://127.0.0.1:8545';
+  try {
+    const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
+    if (fs.existsSync(arkivConfigPath)) {
+      const fileBuffer = fs.readFileSync(arkivConfigPath);
+      const data = fileBuffer.toString('utf-8');
+      const arkivConfig = JSON.parse(data);
+      if (arkivConfig.rpcUrl) {
+        arkivRpcUrl = arkivConfig.rpcUrl;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load Arkiv config for backend restart:', err);
+  }
+
+  const backendDir = path.join(app.getAppPath(), '..', 'backend');
+  const env = {
+    ...process.env,
+    FILECOIN_PRIVATE_KEY: cfg.privateKey,
+    FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
+    ARKIV_RPC_URL: arkivRpcUrl,
+  };
+
+  backendProcess = spawn(
+    'python',
+    ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
+    {
+      cwd: backendDir,
+      env,
+      stdio: 'inherit',
+    }
+  );
+
+  backendProcess.on('exit', (code) => {
+    console.log(`Backend process exited with code ${code}`);
+    backendProcess = null;
+  });
+
+  return { pid: backendProcess.pid, message: 'Backend restarted with new configuration' };
 });
 
 app.on('before-quit', () => {

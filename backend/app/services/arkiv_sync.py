@@ -327,49 +327,6 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
     return payload
 
 
-class ArkivSyncClient:
-    """
-    Handles pushing video metadata to Arkiv using the Arkiv SDK.
-
-    Network calls are skipped when disabled or missing key.
-    """
-
-    def __init__(
-        self,
-        config: ArkivSyncConfig,
-        arkiv_factory: Callable[..., ArkivClientProtocol] | None = None,
-    ) -> None:
-        self.config = config
-        self._arkiv_factory = arkiv_factory or self._default_factory
-        self._client: ArkivClientProtocol | None = None
-
-    def _default_factory(self, provider_url: str, private_key: str) -> ArkivClientProtocol:
-        provider = ProviderBuilder().custom(provider_url).build()
-        account = NamedAccount.from_private_key("haven-node", private_key)
-        return Arkiv(provider=provider, account=account)
-
-    def _get_client(self) -> ArkivClientProtocol:
-        if self._client is None:
-            if not self.config.private_key:
-                raise ValueError("Arkiv private key missing")
-            self._client = self._arkiv_factory(self.config.rpc_url, self.config.private_key)
-        return self._client
-
-    def fetch_entities(self) -> list:
-        """
-        Fetch all Arkiv entities for the current account.
-        """
-        if not self.config.enabled:
-            return []
-        client = self._get_client()
-        # Select all fields; SDK defaults to all fields when no projection specified
-        try:
-            return list(client.arkiv.select().fetch())
-        except Exception as exc:
-            logger.error("Failed to fetch Arkiv entities: %s", exc)
-            return []
-
-
 def _download_from_ipfs(cid: str, gateway_url: str = "https://ipfs.io/ipfs/") -> bytes:
     """
     Download file from IPFS gateway using CID.
@@ -444,6 +401,9 @@ def _recalculate_video_metadata(
         result["codec"] = None
     
     return result
+
+
+class ArkivSyncClient:
     """
     Handles pushing video metadata to Arkiv using the Arkiv SDK.
 

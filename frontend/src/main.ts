@@ -82,7 +82,7 @@ function spawnBackendProcess(
   baseEnv: NodeJS.ProcessEnv
 ): ChildProcess {
   const isWindows = platform() === 'win32';
-  const args = ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'];
+  const uvicornArgs = ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'];
   
   // Activate venv environment (sets PATH, VIRTUAL_ENV, etc.)
   const env = activateVenvEnvironment(venvPath, backendDir, baseEnv);
@@ -93,30 +93,68 @@ function spawnBackendProcess(
   if (venvPath) {
     console.log(`🔧 Virtual environment: ${venvPath}`);
   }
-  console.log(`📝 Command: ${pythonExecutable} ${args.join(' ')}`);
   
-  // Use spawn directly with the Python executable
-  // On Windows, we spawn python.exe directly (no shell needed when using full path)
-  // The detached option on Windows creates a new process group
-  const childProcess = spawn(pythonExecutable, args, {
-    cwd: backendDir,
-    env,
-    stdio: 'inherit',
-    // On Windows, don't use shell - spawn the exe directly
-    // This avoids quoting issues with cmd.exe
-    detached: false,
-    windowsHide: false,
-  });
+  let childProcess: ChildProcess;
   
-  childProcess.on('error', (error) => {
-    console.error(`❌ Failed to start backend process: ${error.message}`);
-    console.error(`   Python executable: ${pythonExecutable}`);
-    console.error(`   Arguments: ${args.join(' ')}`);
-    console.error(`   Backend directory: ${backendDir}`);
-    if (venvPath) {
-      console.error(`   Virtual environment: ${venvPath}`);
-    }
-  });
+  if (isWindows) {
+    // On Windows, spawn a visible cmd window so users can see backend logs
+    // Use 'start' command to open a new window with a title
+    // /k keeps the window open after the command finishes (so we can see errors)
+    const pythonCommand = `"${pythonExecutable}" ${uvicornArgs.join(' ')}`;
+    
+    // Build the full command:
+    // start "Window Title" /D "working_dir" cmd /k "command"
+    const startArgs = [
+      '/c',
+      'start',
+      '"Haven Player Backend"',  // Window title (must be in quotes)
+      '/D',
+      `"${backendDir}"`,  // Working directory
+      'cmd',
+      '/k',  // Keep window open
+      pythonCommand
+    ];
+    
+    console.log(`📝 Windows command: cmd.exe ${startArgs.join(' ')}`);
+    
+    childProcess = spawn('cmd.exe', startArgs, {
+      cwd: backendDir,
+      env,
+      stdio: 'ignore',  // Detach from parent stdio
+      detached: true,   // Run independently
+      windowsHide: false,
+    });
+    
+    // Unref so the parent process can exit independently
+    childProcess.unref();
+    
+    childProcess.on('error', (error) => {
+      console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
+      console.error(`   Python executable: ${pythonExecutable}`);
+      console.error(`   Backend directory: ${backendDir}`);
+      if (venvPath) {
+        console.error(`   Virtual environment: ${venvPath}`);
+      }
+    });
+  } else {
+    // On Unix-like systems, use standard spawn with inherited stdio
+    console.log(`📝 Command: ${pythonExecutable} ${uvicornArgs.join(' ')}`);
+    
+    childProcess = spawn(pythonExecutable, uvicornArgs, {
+      cwd: backendDir,
+      env,
+      stdio: 'inherit',
+    });
+    
+    childProcess.on('error', (error) => {
+      console.error(`❌ Failed to start backend process: ${error.message}`);
+      console.error(`   Python executable: ${pythonExecutable}`);
+      console.error(`   Backend directory: ${backendDir}`);
+      if (venvPath) {
+        console.error(`   Virtual environment: ${venvPath}`);
+      }
+    });
+  }
   
   return childProcess;
 }

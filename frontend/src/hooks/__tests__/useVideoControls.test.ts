@@ -34,13 +34,14 @@ class MockHTMLVideoElement {
   public paused = true;
   public buffered = {
     length: 1,
-    start: () => 0,
-    end: () => 50,
+    start: (index: number) => 0,
+    end: (index: number) => 50,
   };
 
   play = jest.fn().mockResolvedValue(undefined);
   pause = jest.fn();
   load = jest.fn();
+  requestPictureInPicture = jest.fn().mockResolvedValue({});
 }
 
 // Mock document methods
@@ -127,7 +128,7 @@ describe('useVideoControls', () => {
     it('should play video', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.controls.play();
@@ -140,7 +141,7 @@ describe('useVideoControls', () => {
     it('should pause video', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.controls.play();
@@ -157,7 +158,7 @@ describe('useVideoControls', () => {
     it('should toggle play/pause', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.controls.togglePlay();
@@ -216,7 +217,7 @@ describe('useVideoControls', () => {
     it('should set playback rate and save to localStorage', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.controls.setPlaybackRate(1.5);
@@ -233,7 +234,7 @@ describe('useVideoControls', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.duration = 100;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -252,7 +253,7 @@ describe('useVideoControls', () => {
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.duration = 100;
       mockVideo.currentTime = 30;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -270,7 +271,7 @@ describe('useVideoControls', () => {
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.duration = 100;
       mockVideo.currentTime = 95;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -288,7 +289,7 @@ describe('useVideoControls', () => {
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.duration = 100;
       mockVideo.currentTime = 20;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -306,7 +307,7 @@ describe('useVideoControls', () => {
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.duration = 100;
       mockVideo.currentTime = 30;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -326,7 +327,7 @@ describe('useVideoControls', () => {
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.duration = 100;
       mockVideo.currentTime = 10;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -345,7 +346,7 @@ describe('useVideoControls', () => {
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.duration = 100;
       mockVideo.currentTime = 10;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -364,7 +365,7 @@ describe('useVideoControls', () => {
     it('should toggle fullscreen on', async () => {
       const { result } = renderHook(() => useVideoControls());
       const mockContainer = { requestFullscreen: mockRequestFullscreen };
-      (result.current.containerRef as { current: typeof mockContainer }).current = mockContainer as unknown as HTMLDivElement;
+      (result.current.containerRef as unknown as { current: typeof mockContainer }).current = mockContainer;
 
       await act(async () => {
         await result.current.controls.toggleFullscreen();
@@ -400,7 +401,7 @@ describe('useVideoControls', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.requestPictureInPicture = mockRequestPictureInPicture;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       await act(async () => {
         await result.current.controls.togglePip();
@@ -447,7 +448,7 @@ describe('useVideoControls', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.currentTime = 45;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.controls.retry();
@@ -464,7 +465,7 @@ describe('useVideoControls', () => {
       const mockVideo = new MockHTMLVideoElement();
       mockVideo.currentTime = 25;
       mockVideo.duration = 100;
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.setDuration(100);
@@ -492,7 +493,7 @@ describe('useVideoControls', () => {
       const onReady = jest.fn();
       const { result } = renderHook(() => useVideoControls({ onReady }));
       const mockVideo = new MockHTMLVideoElement();
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       act(() => {
         result.current.handleReady();
@@ -644,7 +645,7 @@ describe('useVideoControls', () => {
     it('should reset player state when resetPlayer is called', () => {
       const { result } = renderHook(() => useVideoControls());
       const mockVideo = new MockHTMLVideoElement();
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       // Set some state first
       act(() => {
@@ -748,7 +749,7 @@ describe('useVideoControls', () => {
       const { result } = renderHook(() => useVideoControls({ onRecovery, retryDelayMs: 10 }));
       const mockVideo = new MockHTMLVideoElement();
       Object.defineProperty(mockVideo, 'duration', { value: 100, writable: true });
-      (result.current.playerRef as { current: MockHTMLVideoElement }).current = mockVideo as unknown as HTMLVideoElement;
+      (result.current.playerRef as unknown as { current: MockHTMLVideoElement }).current = mockVideo;
 
       // Trigger retry - note: full recovery test would require mocking more video element behavior
       act(() => {

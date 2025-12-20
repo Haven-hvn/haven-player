@@ -24,6 +24,8 @@ describe('useKeyboardShortcuts', () => {
     frameForward: jest.fn(),
     frameBackward: jest.fn(),
     retry: jest.fn(),
+    clearError: jest.fn(),
+    resetPlayer: jest.fn(),
   };
 
   const defaultState: VideoState = {
@@ -41,6 +43,10 @@ describe('useKeyboardShortcuts', () => {
     loop: false,
     showRemainingTime: false,
     error: null,
+    retryCount: 0,
+    isStalled: false,
+    networkState: 'idle',
+    readyState: 'nothing',
   };
 
   const dispatchKeyEvent = (key: string, shiftKey = false) => {

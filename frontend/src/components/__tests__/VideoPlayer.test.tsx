@@ -299,11 +299,9 @@ describe('VideoPlayer', () => {
       renderVideoPlayer();
 
       await waitFor(() => {
-        // Find the play button (initially paused)
-        const playButton = screen.getByTestId ? 
-          document.querySelector('[data-testid="PlayArrowIcon"]') :
-          document.querySelector('svg[data-testid="PlayArrowIcon"]');
-        expect(playButton || document.querySelector('.MuiSvgIcon-root')).toBeInTheDocument();
+        // Find the play button (initially paused) - check for any icon element
+        const iconElements = document.querySelectorAll('.MuiSvgIcon-root');
+        expect(iconElements.length).toBeGreaterThan(0);
       });
     });
 

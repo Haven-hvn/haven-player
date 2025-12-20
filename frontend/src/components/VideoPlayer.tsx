@@ -811,10 +811,13 @@ const VideoPlayer: React.FC = () => {
 
         setPlaybackSource(source);
 
+        // Default to local playback when available (both local+IPFS or local-only)
         if (source.type === 'both') {
-          setSelectedSource('local');
+          setSelectedSource('local'); // Prefer local when both available
+        } else if (source.type === 'local') {
+          setSelectedSource('local'); // Explicitly set for local-only
         } else if (source.type === 'ipfs') {
-          setSelectedSource('ipfs');
+          setSelectedSource('ipfs'); // Only use IPFS when local not available
         }
 
         if (source.type === 'unavailable') {

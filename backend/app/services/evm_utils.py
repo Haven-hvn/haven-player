@@ -122,6 +122,10 @@ def detect_chain_from_rpc_url(rpc_url: str) -> Tuple[str, str]:
             return ("Filecoin Calibration", "tFIL")
         return ("Filecoin", "FIL")
     
+    # Arkiv (uses GLM as gas token)
+    if "arkiv" in rpc_lower or "hoodi" in rpc_lower or "mendoza" in rpc_lower:
+        return ("Arkiv", "GLM")
+    
     # Local/unknown
     if "localhost" in rpc_lower or "127.0.0.1" in rpc_lower:
         return ("Local Network", "ETH")

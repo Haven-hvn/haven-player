@@ -48,7 +48,7 @@ class DummyArkivModule:
         content_type: str,
         attributes: Attributes,
         expires_in: int,
-    ) -> tuple[EntityKey, object]:
+    ) -> object:  # Returns TransactionReceipt, not a tuple
         self.updated.append(
             {
                 "key": key,
@@ -58,7 +58,7 @@ class DummyArkivModule:
                 "expires_in": expires_in,
             }
         )
-        return key, object()
+        return object()  # Just return receipt, not a tuple
 
 
 class DummyArkivClient:
@@ -248,7 +248,7 @@ def test_sync_handles_413_error_gracefully() -> None:
             content_type: str,
             attributes: Attributes,
             expires_in: int,
-        ) -> tuple[EntityKey, object]:
+        ) -> object:  # Returns TransactionReceipt, not a tuple
             response = Mock(spec=Response)
             response.status_code = 413
             raise HTTPError(response=response)

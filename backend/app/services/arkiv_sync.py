@@ -222,7 +222,7 @@ class ArkivEntityClient(Protocol):
         content_type: str,
         attributes: Attributes,
         expires_in: int,
-    ) -> tuple[EntityKey, object]:
+    ) -> object:  # Returns TransactionReceipt, not a tuple
         ...
 
 
@@ -692,7 +692,7 @@ class ArkivSyncClient:
         try:
             if video.arkiv_entity_key:
                 logger.info("📝 Updating existing Arkiv entity for video %s (entity key: %s)", video.path, video.arkiv_entity_key)
-                _entity_key, receipt = client.arkiv.update_entity(
+                receipt = client.arkiv.update_entity(
                     EntityKey(video.arkiv_entity_key),
                     payload=payload_bytes,
                     content_type="application/json",

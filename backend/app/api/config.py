@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.models.database import get_db
 from app.models.config import AppConfig
+from app.services.evm_utils import validate_evm_config, InsufficientGasError
 
 router = APIRouter()
 
@@ -164,6 +165,106 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     db.commit()
     db.refresh(config)
     return config
+
+@router.get("/evm-config")
+def validate_evm_configuration(
+    private_key: str | None = None,
+    rpc_url: str | None = None
+) -> dict:
+    """
+    Validate EVM configuration and return wallet address and chain info.
+    Useful for frontend to display wallet address when configuring Filecoin/Arkiv.
+    
+    Args:
+        private_key: Optional private key to validate (if not provided, reads from env)
+        rpc_url: Optional RPC URL (if not provided, reads from env or uses default)
+        
+    Returns:
+        Dictionary with wallet_address, chain_name, and native_token_symbol
+    """
+    # Get values from params or environment
+    if not private_key:
+        private_key = os.getenv("FILECOIN_PRIVATE_KEY") or os.getenv("ARKIV_PRIVATE_KEY")
+    
+    if not rpc_url:
+        rpc_url = os.getenv("ARKIV_RPC_URL") or os.getenv("FILECOIN_RPC_URL") or "https://mendoza.hoodi.arkiv.network/rpc"
+    
+    if not private_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Private key is required. Provide it as a parameter or set FILECOIN_PRIVATE_KEY environment variable."
+        )
+    
+    try:
+        wallet_address, chain_name, token_symbol = validate_evm_config(private_key, rpc_url)
+        return {
+            "wallet_address": wallet_address,
+            "chain_name": chain_name,
+            "native_token_symbol": token_symbol,
+            "rpc_url": rpc_url
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to validate EVM config: {str(e)}")
+
+
+@router.get("/evm-balance")
+def check_evm_balance(
+    private_key: str | None = None,
+    rpc_url: str | None = None
+) -> dict:
+    """
+    Check wallet balance for gas tokens on the specified EVM chain.
+    Useful for frontend to show users if they have enough gas before using blockchain features.
+    
+    Args:
+        private_key: Optional private key (if not provided, reads from env)
+        rpc_url: Optional RPC URL (if not provided, reads from env or uses default)
+        
+    Returns:
+        Dictionary with wallet_address, chain_name, native_token_symbol, balance_wei, 
+        balance_ether (human-readable), and has_sufficient_balance
+    """
+    from app.services.evm_utils import check_wallet_balance
+    from web3 import Web3
+    
+    # Get values from params or environment
+    if not private_key:
+        private_key = os.getenv("FILECOIN_PRIVATE_KEY") or os.getenv("ARKIV_PRIVATE_KEY")
+    
+    if not rpc_url:
+        rpc_url = os.getenv("ARKIV_RPC_URL") or os.getenv("FILECOIN_RPC_URL") or "https://mendoza.hoodi.arkiv.network/rpc"
+    
+    if not private_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Private key is required. Provide it as a parameter or set FILECOIN_PRIVATE_KEY environment variable."
+        )
+    
+    try:
+        wallet_address, chain_name, token_symbol, balance_wei, has_sufficient = check_wallet_balance(
+            private_key, rpc_url
+        )
+        
+        # Convert wei to ether for human-readable format
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        balance_ether = float(w3.from_wei(int(balance_wei), 'ether'))
+        
+        return {
+            "wallet_address": wallet_address,
+            "chain_name": chain_name,
+            "native_token_symbol": token_symbol,
+            "balance_wei": str(balance_wei),
+            "balance_ether": balance_ether,
+            "has_sufficient_balance": has_sufficient,
+            "rpc_url": rpc_url
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check wallet balance: {str(e)}")
+
 
 @router.get("/gateway", response_model=GatewayConfig)
 def get_gateway_config() -> GatewayConfig:

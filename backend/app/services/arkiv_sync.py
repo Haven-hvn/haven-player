@@ -12,8 +12,14 @@ from arkiv.account import NamedAccount
 from arkiv.provider import ProviderBuilder
 from arkiv.types import Attributes, EntityKey
 from sqlalchemy.orm import Session
+from web3.exceptions import Web3RPCError
 
 from app.models.video import Timestamp, Video
+from app.services.evm_utils import (
+    InsufficientGasError,
+    handle_evm_gas_error,
+    validate_evm_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,8 @@ def _extract_transaction_hash(receipt: Any) -> str | None:
                     return str(value)
     
     return None
+
+
 
 
 def _log_transaction_info(receipt: Any, rpc_url: str, operation: str, entity_key: str | None = None) -> None:
@@ -119,6 +127,8 @@ def build_arkiv_config() -> ArkivSyncConfig:
     
     The ARKIV_SYNC_ENABLED environment variable controls whether sync is enabled
     (user toggle in UI). If not set, defaults to False for safety.
+    
+    Validates EVM configuration and logs wallet address for gas error handling.
     """
     shared_key = os.getenv("FILECOIN_PRIVATE_KEY")
     legacy_override = os.getenv("ARKIV_PRIVATE_KEY")
@@ -133,6 +143,22 @@ def build_arkiv_config() -> ArkivSyncConfig:
     
     # Arkiv is enabled only if both: user toggle is on AND private key exists
     enabled = bool(private_key) and sync_enabled
+    
+    # Validate EVM config and log wallet info when enabled (for gas error handling)
+    if enabled and private_key:
+        try:
+            wallet_address, chain_name, token_symbol = validate_evm_config(private_key, rpc_url)
+            logger.info(
+                "✅ Arkiv sync enabled | "
+                "Chain: %s | "
+                "Wallet Address: %s | "
+                "Ensure you have %s for gas fees",
+                chain_name,
+                wallet_address,
+                token_symbol
+            )
+        except Exception as e:
+            logger.warning("Failed to validate Arkiv EVM config: %s", e)
     
     if private_key and not sync_enabled:
         logger.info("🔒 Arkiv sync is disabled by user setting (ARKIV_SYNC_ENABLED=false)")
@@ -455,6 +481,30 @@ class ArkivSyncClient:
             
             logger.info("✅ Successfully created Arkiv entity for video %s (entity key: %s)", video.path, str(entity_key))
             return entity_key
+        except Web3RPCError as exc:
+            # Check if this is an insufficient funds error (works across all EVM chains)
+            from app.services.evm_utils import is_insufficient_funds_error
+            if is_insufficient_funds_error(exc):
+                # Use shared EVM gas error handler
+                gas_error = handle_evm_gas_error(
+                    exc,
+                    self.config.private_key,
+                    self.config.rpc_url,
+                    context=f"Arkiv sync for video {video.path}"
+                )
+                raise gas_error
+            else:
+                # Other Web3RPCError - log and re-raise
+                logger.error(
+                    "❌ Arkiv sync operation failed for video %s | "
+                    "Entity Key: %s | "
+                    "Error: %s",
+                    video.path,
+                    video.arkiv_entity_key or "None",
+                    exc,
+                    exc_info=True
+                )
+                raise
         except Exception as exc:
             logger.error(
                 "❌ Arkiv sync operation failed for video %s | "

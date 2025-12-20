@@ -85,10 +85,31 @@ export const useVideos = () => {
           errorMessage = axiosError.response.data.detail;
         } else if (axiosError.response?.status === 409) {
           errorMessage = 'Duplicate video detected! Video was skipped.';
+        } else if (axiosError.response?.status === 402) {
+          // Payment Required - insufficient gas (shouldn't happen on create, but handle it)
+          errorMessage = axiosError.response.data?.detail || 'Insufficient gas funds';
         }
       } else if (err instanceof Error) {
         errorMessage = err.message;
       }
+      
+        // Log gas error with wallet address and token info if present
+        // Works across all EVM chains (Ethereum, Polygon, BSC, Avalanche, etc.)
+        if (errorMessage.includes('address:')) {
+          // Extract token symbol (e.g., "ETH", "MATIC", "BNB", "AVAX")
+          const tokenMatch = errorMessage.match(/Insufficient\s+(\w+)\s+for\s+gas/i);
+          const tokenSymbol = tokenMatch ? tokenMatch[1] : 'gas tokens';
+          
+          const addressMatch = errorMessage.match(/address:\s*([0-9a-fA-Fx]{42,})/i);
+          if (addressMatch) {
+            const walletAddress = addressMatch[1];
+            console.error(
+              `❌ Arkiv sync failed due to insufficient gas funds (${tokenSymbol}) | ` +
+              `Wallet Address: ${walletAddress} | ` +
+              `Please send ${tokenSymbol} to this address`
+            );
+          }
+        }
       
       setError(errorMessage);
       console.error('Error adding video:', err);
@@ -104,15 +125,54 @@ export const useVideos = () => {
 
   const updateVideoSharePreference = useCallback(
     async (videoPath: string, shareToArkiv: boolean) => {
-      const updated = await videoService.updateSharePreference(videoPath, shareToArkiv);
-      setVideos(prev => prev.map(v => (v.path === videoPath ? updated : v)));
-      setVideoGroups(prev =>
-        prev.map(group => ({
-          ...group,
-          videos: group.videos.map(v => (v.path === videoPath ? updated : v)),
-        }))
-      );
-      return updated;
+      try {
+        const updated = await videoService.updateSharePreference(videoPath, shareToArkiv);
+        setVideos(prev => prev.map(v => (v.path === videoPath ? updated : v)));
+        setVideoGroups(prev =>
+          prev.map(group => ({
+            ...group,
+            videos: group.videos.map(v => (v.path === videoPath ? updated : v)),
+          }))
+        );
+        setError(null);
+        return updated;
+      } catch (err: unknown) {
+        // Extract error message from axios error response
+        let errorMessage = 'Failed to update share preference';
+        if (err && typeof err === 'object' && 'response' in err) {
+          const axiosError = err as { response?: { data?: { detail?: string }; status?: number } };
+          if (axiosError.response?.data?.detail) {
+            errorMessage = axiosError.response.data.detail;
+          } else if (axiosError.response?.status === 402) {
+            // Payment Required - insufficient gas
+            errorMessage = axiosError.response.data?.detail || 'Insufficient gas funds';
+          }
+        } else if (err instanceof Error) {
+          errorMessage = err.message;
+        }
+        
+        // Log gas error with wallet address and token info if present
+        // Works across all EVM chains (Ethereum, Polygon, BSC, Avalanche, etc.)
+        if (errorMessage.includes('address:')) {
+          // Extract token symbol (e.g., "ETH", "MATIC", "BNB", "AVAX")
+          const tokenMatch = errorMessage.match(/Insufficient\s+(\w+)\s+for\s+gas/i);
+          const tokenSymbol = tokenMatch ? tokenMatch[1] : 'gas tokens';
+          
+          const addressMatch = errorMessage.match(/address:\s*([0-9a-fA-Fx]{42,})/i);
+          if (addressMatch) {
+            const walletAddress = addressMatch[1];
+            console.error(
+              `❌ Arkiv sync failed due to insufficient gas funds (${tokenSymbol}) | ` +
+              `Wallet Address: ${walletAddress} | ` +
+              `Please send ${tokenSymbol} to this address`
+            );
+          }
+        }
+        
+        setError(errorMessage);
+        console.error('Error updating share preference:', err);
+        throw new Error(errorMessage);
+      }
     },
     []
   );

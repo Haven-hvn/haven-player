@@ -751,6 +751,34 @@ const MainApp: React.FC = () => {
                 await refreshVideos();
               } catch (error) {
                 console.error("Failed to update share preference:", error);
+                // Show notification for gas errors (works across all EVM chains)
+                if (error instanceof Error && error.message.includes('address:')) {
+                  // Extract token symbol and wallet address
+                  const tokenMatch = error.message.match(/Insufficient\s+(\w+)\s+for\s+gas/i);
+                  const tokenSymbol = tokenMatch ? tokenMatch[1] : 'gas tokens';
+                  
+                  const addressMatch = error.message.match(/address:\s*([0-9a-fA-Fx]{42,})/i);
+                  if (addressMatch) {
+                    const walletAddress = addressMatch[1];
+                    setNotification({
+                      open: true,
+                      severity: "error",
+                      message: `Insufficient ${tokenSymbol} for gas. Please send ${tokenSymbol} to: ${walletAddress}`,
+                    });
+                  } else {
+                    setNotification({
+                      open: true,
+                      severity: "error",
+                      message: error.message,
+                    });
+                  }
+                } else {
+                  setNotification({
+                    open: true,
+                    severity: "error",
+                    message: error instanceof Error ? error.message : "Failed to update share preference",
+                  });
+                }
               }
             }}
             uploadStatuses={mergedUploadStatuses}

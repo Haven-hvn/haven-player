@@ -86,6 +86,29 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           });
           console.log(`✅ Saved Filecoin metadata for ${videoPath}${result.isEncrypted ? ' (encrypted)' : ''}`);
         } catch (error) {
+          // Check if this is a gas error (works across all EVM chains)
+          if (error && typeof error === 'object' && 'response' in error) {
+            const axiosError = error as { response?: { data?: { detail?: string }; status?: number } };
+            if (axiosError.response?.status === 402) {
+              // Payment Required - insufficient gas
+              const errorMessage = axiosError.response.data?.detail || 'Insufficient gas funds';
+              if (errorMessage.includes('address:')) {
+                // Extract token symbol (e.g., "ETH", "MATIC", "BNB", "AVAX")
+                const tokenMatch = errorMessage.match(/Insufficient\s+(\w+)\s+for\s+gas/i);
+                const tokenSymbol = tokenMatch ? tokenMatch[1] : 'gas tokens';
+                
+                const addressMatch = errorMessage.match(/address:\s*([0-9a-fA-Fx]{42,})/i);
+                if (addressMatch) {
+                  const walletAddress = addressMatch[1];
+                  console.error(
+                    `❌ Arkiv sync failed due to insufficient gas funds (${tokenSymbol}) after Filecoin upload | ` +
+                    `Wallet Address: ${walletAddress} | ` +
+                    `Please send ${tokenSymbol} to this address`
+                  );
+                }
+              }
+            }
+          }
           console.error(`❌ Failed to save Filecoin metadata for ${videoPath}:`, error);
           // Don't throw - upload was successful, just metadata save failed
         }

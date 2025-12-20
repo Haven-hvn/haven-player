@@ -40,7 +40,7 @@ import {
   Refresh as RefreshIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
-import { restoreService } from "@/services/api";
+import { restoreService, evmService } from "@/services/api";
 import type { SettingsTab } from "@/context/SettingsNavigationContext";
 import type { IpfsGatewayConfig } from "@/types/playback";
 import {
@@ -122,6 +122,18 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     baseUrl: DEFAULT_IPFS_GATEWAY,
   });
   const [gatewayStatus, setGatewayStatus] = useState<
+    "idle" | "checking" | "ok" | "error"
+  >("idle");
+  const [gatewayStatusMessage, setGatewayStatusMessage] = useState<string | null>(null);
+  const [checkingBalance, setCheckingBalance] = useState(false);
+  const [balanceInfo, setBalanceInfo] = useState<{
+    wallet_address: string;
+    chain_name: string;
+    native_token_symbol: string;
+    balance_ether: number;
+    has_sufficient_balance: boolean;
+  } | null>(null);
+  const [balanceError, setBalanceError] = useState<string | null>(null);<
     "idle" | "checking" | "ok" | "error"
   >("idle");
   const [gatewayStatusMessage, setGatewayStatusMessage] = useState<string | null>(
@@ -338,6 +350,41 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           return;
         }
 
+        // Automatically check gas balance when enabling Filecoin
+        setCheckingBalance(true);
+        setBalanceError(null);
+        setBalanceInfo(null);
+        
+        try {
+          // Use HTTP RPC URL for balance checking (convert wss:// to https:// if needed)
+          let rpcUrl = filecoinConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1";
+          if (rpcUrl.startsWith("wss://")) {
+            rpcUrl = rpcUrl.replace("wss://", "https://");
+          } else if (rpcUrl.startsWith("ws://")) {
+            rpcUrl = rpcUrl.replace("ws://", "http://");
+          }
+
+          const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+          setBalanceInfo(balance);
+          
+          // Warn if balance is insufficient but don't block save
+          if (!balance.has_sufficient_balance) {
+            setFilecoinError(
+              `⚠️ Low gas balance detected: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
+              `Please send ${balance.native_token_symbol} to ${balance.wallet_address.slice(0, 6)}...${balance.wallet_address.slice(-4)} for gas fees. ` +
+              `Configuration saved, but you may encounter errors when uploading.`
+            );
+          }
+        } catch (balanceErr) {
+          // Log but don't block save - balance check is informational
+          console.warn("Failed to check gas balance:", balanceErr);
+          setBalanceError(
+            balanceErr instanceof Error ? balanceErr.message : "Failed to check gas balance"
+          );
+        } finally {
+          setCheckingBalance(false);
+        }
+
         await ipcRenderer.invoke("save-filecoin-config", {
           privateKey: filecoinConfig.privateKey,
           rpcUrl: filecoinConfig.rpcUrl,
@@ -347,6 +394,36 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 
         await onSaveFilecoin(filecoinConfig);
       } else if (isArkivTab) {
+        // Automatically check gas balance when enabling Arkiv sync
+        if (arkivConfig.syncEnabled && filecoinConfig.privateKey?.trim()) {
+          setCheckingBalance(true);
+          setBalanceError(null);
+          setBalanceInfo(null);
+          
+          try {
+            const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
+            const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+            setBalanceInfo(balance);
+            
+            // Warn if balance is insufficient but don't block save
+            if (!balance.has_sufficient_balance) {
+              setArkivError(
+                `⚠️ Low gas balance detected: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
+                `Please send ${balance.native_token_symbol} to ${balance.wallet_address.slice(0, 6)}...${balance.wallet_address.slice(-4)} for gas fees. ` +
+                `Configuration saved, but Arkiv sync may fail.`
+              );
+            }
+          } catch (balanceErr) {
+            // Log but don't block save - balance check is informational
+            console.warn("Failed to check gas balance:", balanceErr);
+            setBalanceError(
+              balanceErr instanceof Error ? balanceErr.message : "Failed to check gas balance"
+            );
+          } finally {
+            setCheckingBalance(false);
+          }
+        }
+
         await ipcRenderer.invoke("save-arkiv-config", {
           rpcUrl: arkivConfig.rpcUrl,
           syncEnabled: arkivConfig.syncEnabled,
@@ -357,7 +434,10 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         await onSave(config);
       }
 
-      onClose();
+      // Only close if no critical errors (warnings are OK)
+      if (!filecoinError && !arkivError) {
+        onClose();
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to save configuration";
@@ -675,6 +755,37 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     </Box>
   );
 
+  const handleCheckBalance = async () => {
+    if (!filecoinConfig.privateKey.trim()) {
+      setBalanceError("Please enter a private key first");
+      return;
+    }
+
+    try {
+      setCheckingBalance(true);
+      setBalanceError(null);
+      setBalanceInfo(null);
+
+      // Use HTTP RPC URL for balance checking (convert wss:// to https:// if needed)
+      let rpcUrl = filecoinConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1";
+      // Convert WebSocket URL to HTTP for balance checking
+      if (rpcUrl.startsWith("wss://")) {
+        rpcUrl = rpcUrl.replace("wss://", "https://");
+      } else if (rpcUrl.startsWith("ws://")) {
+        rpcUrl = rpcUrl.replace("ws://", "http://");
+      }
+
+      const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+      setBalanceInfo(balance);
+    } catch (err) {
+      setBalanceError(
+        err instanceof Error ? err.message : "Failed to check balance"
+      );
+    } finally {
+      setCheckingBalance(false);
+    }
+  };
+
   const renderFilecoinContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
       <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
@@ -684,12 +795,15 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         fullWidth
         label="Private Key"
         value={filecoinConfig.privateKey}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           setFilecoinConfig((prev: FilecoinConfig) => ({
             ...prev,
             privateKey: e.target.value,
-          }))
-        }
+          }));
+          // Clear balance info when private key changes
+          setBalanceInfo(null);
+          setBalanceError(null);
+        }}
         placeholder="Enter your private key from MetaMask"
         type="password"
         required
@@ -700,12 +814,15 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         fullWidth
         label="RPC URL (optional)"
         value={filecoinConfig.rpcUrl ?? ""}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           setFilecoinConfig((prev: FilecoinConfig) => ({
             ...prev,
             rpcUrl: e.target.value,
-          }))
-        }
+          }));
+          // Clear balance info when RPC URL changes
+          setBalanceInfo(null);
+          setBalanceError(null);
+        }}
         placeholder="wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1"
         helperText="Filecoin RPC endpoint (WebSocket wss:// or HTTP https://). Default: Calibration testnet WebSocket"
       />
@@ -724,6 +841,58 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         placeholder="Leave empty to create new"
         helperText="Use existing data set ID or leave empty to create a new one"
       />
+
+      <Divider sx={{ my: 1 }} />
+
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 500, color: "#424242" }}>
+          Gas Balance Check
+        </Typography>
+        <Button
+          variant="outlined"
+          onClick={handleCheckBalance}
+          disabled={checkingBalance || !filecoinConfig.privateKey.trim()}
+          startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />}
+          sx={{
+            alignSelf: "flex-start",
+            textTransform: "none",
+          }}
+        >
+          {checkingBalance ? "Checking..." : "Check Gas Balance"}
+        </Button>
+
+        {balanceInfo && (
+          <Alert
+            severity={balanceInfo.has_sufficient_balance ? "success" : "warning"}
+            sx={{
+              "& .MuiAlert-icon": {
+                color: balanceInfo.has_sufficient_balance ? "#4CAF50" : "#FF9800",
+              },
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.5 }}>
+              Wallet: {balanceInfo.wallet_address.slice(0, 6)}...{balanceInfo.wallet_address.slice(-4)}
+            </Typography>
+            <Typography variant="body2">
+              Chain: {balanceInfo.chain_name}
+            </Typography>
+            <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+              Balance: {balanceInfo.balance_ether.toFixed(6)} {balanceInfo.native_token_symbol}
+            </Typography>
+            {!balanceInfo.has_sufficient_balance && (
+              <Typography variant="body2" sx={{ mt: 1, fontStyle: "italic" }}>
+                ⚠️ Low balance! Please send {balanceInfo.native_token_symbol} to this address for gas fees.
+              </Typography>
+            )}
+          </Alert>
+        )}
+
+        {balanceError && (
+          <Alert severity="error">
+            {balanceError}
+          </Alert>
+        )}
+      </Box>
 
       <Alert
         severity="info"
@@ -894,12 +1063,48 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           control={
             <Switch
               checked={arkivConfig.syncEnabled}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                const newSyncEnabled = e.target.checked;
                 setArkivConfig((prev: ArkivConfig) => ({
                   ...prev,
-                  syncEnabled: e.target.checked,
-                }))
-              }
+                  syncEnabled: newSyncEnabled,
+                }));
+                
+                // Automatically check balance when enabling Arkiv sync
+                if (newSyncEnabled && filecoinConfig.privateKey?.trim()) {
+                  setCheckingBalance(true);
+                  setBalanceError(null);
+                  setBalanceInfo(null);
+                  
+                  try {
+                    const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
+                    const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+                    setBalanceInfo(balance);
+                    
+                    // Warn if balance is insufficient
+                    if (!balance.has_sufficient_balance) {
+                      setArkivError(
+                        `⚠️ Low gas balance: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
+                        `Send ${balance.native_token_symbol} to ${balance.wallet_address.slice(0, 6)}...${balance.wallet_address.slice(-4)} for gas fees.`
+                      );
+                    } else {
+                      setArkivError(null);
+                    }
+                  } catch (balanceErr) {
+                    console.warn("Failed to check gas balance:", balanceErr);
+                    setBalanceError(
+                      balanceErr instanceof Error ? balanceErr.message : "Failed to check gas balance"
+                    );
+                  } finally {
+                    setCheckingBalance(false);
+                  }
+                } else if (!newSyncEnabled) {
+                  // Clear balance info when disabling
+                  setBalanceInfo(null);
+                  setBalanceError(null);
+                  setArkivError(null);
+                }
+              }}
               disabled={!arkivConfig.enabled}
               color="success"
             />
@@ -932,16 +1137,95 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         fullWidth
         label="Arkiv RPC URL"
         value={arkivConfig.rpcUrl ?? ""}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           setArkivConfig((prev: ArkivConfig) => ({
             ...prev,
             rpcUrl: e.target.value,
-          }))
-        }
+          }));
+          // Clear balance info when RPC URL changes
+          setBalanceInfo(null);
+          setBalanceError(null);
+        }}
         placeholder="https://mendoza.hoodi.arkiv.network/rpc"
         helperText="Ethereum RPC endpoint for Arkiv blockchain. Default: https://mendoza.hoodi.arkiv.network/rpc"
         disabled={!arkivConfig.syncEnabled}
       />
+
+      {arkivConfig.enabled && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 500, color: "#424242" }}>
+              Gas Balance Check
+            </Typography>
+            <Button
+              variant="outlined"
+              onClick={async () => {
+                if (!filecoinConfig.privateKey?.trim()) {
+                  setBalanceError("Please configure a private key in Filecoin settings first");
+                  return;
+                }
+
+                try {
+                  setCheckingBalance(true);
+                  setBalanceError(null);
+                  setBalanceInfo(null);
+
+                  const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
+                  const balance = await evmService.checkBalance(filecoinConfig.privateKey, rpcUrl);
+                  setBalanceInfo(balance);
+                } catch (err) {
+                  setBalanceError(
+                    err instanceof Error ? err.message : "Failed to check balance"
+                  );
+                } finally {
+                  setCheckingBalance(false);
+                }
+              }}
+              disabled={checkingBalance || !arkivConfig.enabled || !filecoinConfig.privateKey?.trim()}
+              startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />}
+              sx={{
+                alignSelf: "flex-start",
+                textTransform: "none",
+              }}
+            >
+              {checkingBalance ? "Checking..." : "Check Gas Balance"}
+            </Button>
+
+            {balanceInfo && (
+              <Alert
+                severity={balanceInfo.has_sufficient_balance ? "success" : "warning"}
+                sx={{
+                  "& .MuiAlert-icon": {
+                    color: balanceInfo.has_sufficient_balance ? "#4CAF50" : "#FF9800",
+                  },
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.5 }}>
+                  Wallet: {balanceInfo.wallet_address.slice(0, 6)}...{balanceInfo.wallet_address.slice(-4)}
+                </Typography>
+                <Typography variant="body2">
+                  Chain: {balanceInfo.chain_name}
+                </Typography>
+                <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                  Balance: {balanceInfo.balance_ether.toFixed(6)} {balanceInfo.native_token_symbol}
+                </Typography>
+                {!balanceInfo.has_sufficient_balance && (
+                  <Typography variant="body2" sx={{ mt: 1, fontStyle: "italic" }}>
+                    ⚠️ Low balance! Please send {balanceInfo.native_token_symbol} to this address for gas fees.
+                  </Typography>
+                )}
+              </Alert>
+            )}
+
+            {balanceError && (
+              <Alert severity="error">
+                {balanceError}
+              </Alert>
+            )}
+          </Box>
+        </>
+      )}
 
       <Alert
         severity="info"

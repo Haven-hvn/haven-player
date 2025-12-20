@@ -14,6 +14,7 @@ from app.models.database import get_db
 from app.models.video import Video, Timestamp
 from app.models.pumpfun_coin import PumpFunCoin
 from app.services.arkiv_sync import ArkivSyncClient, ArkivSyncConfig, build_arkiv_config
+from app.services.evm_utils import InsufficientGasError
 from collections import defaultdict
 from pydantic import BaseModel, ConfigDict
 from app.lib.phash_generator.phash_calculator import calculate_phash
@@ -366,6 +367,21 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
     arkiv_client = ArkivSyncClient(arkiv_config)
     try:
         arkiv_client.sync_video(db, db_video, [])
+    except InsufficientGasError as gas_err:
+        # Log the gas error with wallet address and chain info
+        logger.error(
+            "❌ Arkiv sync failed due to insufficient gas for video %s | "
+            "Chain: %s | "
+            "Wallet Address: %s | "
+            "User needs to send %s to this address",
+            db_video.path,
+            gas_err.chain_name or "EVM Chain",
+            gas_err.wallet_address,
+            gas_err.native_token_symbol,
+            exc_info=True
+        )
+        # Note: We don't raise HTTPException here to avoid breaking video creation
+        # The video is still created, but Arkiv sync failed
     except Exception as err:
         logger.error("❌ Arkiv sync failed for video %s: %s", db_video.path, err, exc_info=True)
 
@@ -455,6 +471,23 @@ def update_share_preference(
         arkiv_client = ArkivSyncClient(build_arkiv_config())
         try:
             arkiv_client.sync_video(db, video, video.timestamps)
+        except InsufficientGasError as gas_err:
+            logger.error(
+                "❌ Arkiv sync failed due to insufficient gas after enabling share for video %s | "
+                "Chain: %s | "
+                "Wallet Address: %s | "
+                "User needs to send %s to this address",
+                video.path,
+                gas_err.chain_name or "EVM Chain",
+                gas_err.wallet_address,
+                gas_err.native_token_symbol,
+                exc_info=True
+            )
+            # Raise HTTPException to notify the user
+            raise HTTPException(
+                status_code=402,  # Payment Required
+                detail=f"Insufficient {gas_err.native_token_symbol} for gas. Please send {gas_err.native_token_symbol} to address: {gas_err.wallet_address}"
+            )
         except Exception as err:
             logger.error("❌ Arkiv sync failed after enabling share for video %s: %s", video.path, err, exc_info=True)
 
@@ -515,6 +548,23 @@ def update_filecoin_metadata(
     arkiv_client = ArkivSyncClient(arkiv_config)
     try:
         arkiv_client.sync_video(db, video, video.timestamps)
+    except InsufficientGasError as gas_err:
+        logger.error(
+            "❌ Arkiv sync failed due to insufficient gas after Filecoin update for video %s | "
+            "Chain: %s | "
+            "Wallet Address: %s | "
+            "User needs to send %s to this address",
+            video.path,
+            gas_err.chain_name or "EVM Chain",
+            gas_err.wallet_address,
+            gas_err.native_token_symbol,
+            exc_info=True
+        )
+        # Raise HTTPException to notify the user
+        raise HTTPException(
+            status_code=402,  # Payment Required
+            detail=f"Insufficient {gas_err.native_token_symbol} for gas. Please send {gas_err.native_token_symbol} to address: {gas_err.wallet_address}"
+        )
     except Exception as err:
         logger.error("❌ Arkiv sync failed after Filecoin update for video %s: %s", video.path, err, exc_info=True)
     return video

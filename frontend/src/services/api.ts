@@ -178,3 +178,37 @@ export const gatewayService = {
     return { baseUrl: response.data.base_url };
   },
 };
+
+export interface EvmConfigResponse {
+  wallet_address: string;
+  chain_name: string;
+  native_token_symbol: string;
+  rpc_url: string;
+}
+
+export interface EvmBalanceResponse {
+  wallet_address: string;
+  chain_name: string;
+  native_token_symbol: string;
+  balance_wei: string;
+  balance_ether: number;
+  has_sufficient_balance: boolean;
+  rpc_url: string;
+}
+
+export const evmService = {
+  validateConfig: async (privateKey?: string, rpcUrl?: string): Promise<EvmConfigResponse> => {
+    const params: Record<string, string> = {};
+    if (privateKey) params.private_key = privateKey;
+    if (rpcUrl) params.rpc_url = rpcUrl;
+    const response = await api.get<EvmConfigResponse>('/config/evm-config', { params });
+    return response.data;
+  },
+  checkBalance: async (privateKey?: string, rpcUrl?: string): Promise<EvmBalanceResponse> => {
+    const params: Record<string, string> = {};
+    if (privateKey) params.private_key = privateKey;
+    if (rpcUrl) params.rpc_url = rpcUrl;
+    const response = await api.get<EvmBalanceResponse>('/config/evm-balance', { params });
+    return response.data;
+  },
+};

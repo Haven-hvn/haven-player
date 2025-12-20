@@ -125,6 +125,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     "idle" | "checking" | "ok" | "error"
   >("idle");
   const [gatewayStatusMessage, setGatewayStatusMessage] = useState<string | null>(null);
+  const [loadingGateway, setLoadingGateway] = useState(false);
   const [checkingBalance, setCheckingBalance] = useState(false);
   const [balanceInfo, setBalanceInfo] = useState<{
     wallet_address: string;
@@ -133,13 +134,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     balance_ether: number;
     has_sufficient_balance: boolean;
   } | null>(null);
-  const [balanceError, setBalanceError] = useState<string | null>(null);<
-    "idle" | "checking" | "ok" | "error"
-  >("idle");
-  const [gatewayStatusMessage, setGatewayStatusMessage] = useState<string | null>(
-    null
-  );
-  const [loadingGateway, setLoadingGateway] = useState(false);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
 
   const isFilecoinTab =
     activeTab === "filecoin" || activeTab === "encryption";

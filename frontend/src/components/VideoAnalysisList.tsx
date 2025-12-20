@@ -347,11 +347,12 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
               }}
             >
               <IconButton
-                onClick={() =>
+                onClick={(e) => {
+                  e.stopPropagation();
                   analysisStatus === "completed"
                     ? onPlay(video)
-                    : onAnalyze(video)
-                }
+                    : onAnalyze(video);
+                }}
                 sx={{
                   backgroundColor: "#FFFFFF",
                   color: "#000000",
@@ -1189,11 +1190,12 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
                 }}
               >
                 <IconButton
-                  onClick={() =>
+                  onClick={(e) => {
+                    e.stopPropagation();
                     analysisStatus === "completed"
                       ? onPlay(video)
-                      : onAnalyze(video)
-                  }
+                      : onAnalyze(video);
+                  }}
                   sx={{
                     backgroundColor: "#FFFFFF",
                     color: "#000000",

@@ -20,7 +20,20 @@ export interface IpfsGatewayPlaybackSource extends PlaybackSourceBase {
   cid: string;
 }
 
-export type PlaybackSource = LocalPlaybackSource | IpfsGatewayPlaybackSource;
+export interface BothPlaybackSources extends PlaybackSourceBase {
+  type: "both";
+  local: {
+    uri: string;
+    reason: "local-exists";
+  };
+  ipfs: {
+    uri: string;
+    gatewayBase: string;
+    cid: string;
+  };
+}
+
+export type PlaybackSource = LocalPlaybackSource | IpfsGatewayPlaybackSource | BothPlaybackSources;
 
 export interface PlaybackResolutionInput {
   videoPath: string;
@@ -37,4 +50,6 @@ export interface PlaybackResolutionFailure {
 }
 
 export type PlaybackResolution = PlaybackSource | PlaybackResolutionFailure;
+
+export type SelectedSource = "local" | "ipfs";
 

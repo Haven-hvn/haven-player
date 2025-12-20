@@ -45,7 +45,7 @@ describe("buildIpfsGatewayUrl", () => {
 describe("resolvePlaybackSource", () => {
   const gatewayConfig = { baseUrl: "https://custom.gateway/ipfs" };
 
-  it("prefers local when file exists", async () => {
+  it("returns both when local file exists and IPFS CID is available", async () => {
     const result = await resolvePlaybackSource({
       videoPath: "/tmp/video.mp4",
       rootCid: "QmRemote",
@@ -56,11 +56,37 @@ describe("resolvePlaybackSource", () => {
     });
 
     expect(result).toEqual({
+      type: "both",
+      local: {
+        uri: "/tmp/video.mp4",
+        reason: "local-exists",
+      },
+      ipfs: {
+        uri: "https://custom.gateway/ipfs/QmRemote",
+        gatewayBase: "https://custom.gateway/ipfs/",
+        cid: "QmRemote",
+      },
+      isEncrypted: true,
+      litEncryptionMetadata: "meta",
+    });
+  });
+
+  it("returns local only when file exists but no CID", async () => {
+    const result = await resolvePlaybackSource({
+      videoPath: "/tmp/video.mp4",
+      rootCid: null,
+      gatewayConfig,
+      checkFileExists: makeCheck(true),
+      isEncrypted: false,
+      litEncryptionMetadata: null,
+    });
+
+    expect(result).toEqual({
       type: "local",
       uri: "/tmp/video.mp4",
       reason: "local-exists",
-      isEncrypted: true,
-      litEncryptionMetadata: "meta",
+      isEncrypted: false,
+      litEncryptionMetadata: null,
     });
   });
 

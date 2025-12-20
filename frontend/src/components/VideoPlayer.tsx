@@ -9,6 +9,9 @@ import {
   CircularProgress,
   Alert,
   Chip,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
 } from '@mui/material';
 import {
   PlayArrow as PlayIcon,
@@ -17,13 +20,15 @@ import {
   SkipPrevious as SkipPreviousIcon,
   ArrowBack as ArrowBackIcon,
   Lock as LockIcon,
+  Storage as StorageIcon,
+  CloudQueue as CloudIcon,
 } from '@mui/icons-material';
 import ReactPlayer from 'react-player';
 import { videoService } from '@/services/api';
 import { Video, Timestamp } from '@/types/video';
 import { useLitDecryption } from '@/hooks/useLitDecryption';
 import { resolvePlaybackSource } from '@/services/playbackResolver';
-import type { PlaybackResolution } from '@/types/playback';
+import type { PlaybackResolution, SelectedSource } from '@/types/playback';
 import { loadGatewayConfig, fileExistsViaIpc } from '@/services/playbackConfig';
 import { ipcRenderer } from 'electron';
 
@@ -38,6 +43,7 @@ const VideoPlayer: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [playbackSource, setPlaybackSource] = useState<PlaybackResolution | null>(null);
+  const [selectedSource, setSelectedSource] = useState<SelectedSource>("local");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const playerRef = React.useRef<any>(null);
 
@@ -50,8 +56,30 @@ const VideoPlayer: React.FC = () => {
     isEncrypted,
   } = useLitDecryption();
 
+  // Determine if we should treat the video as encrypted based on selected source
+  // Local files are assumed to be unencrypted, only IPFS sources may be encrypted
+  const shouldTreatAsEncrypted = useMemo(() => {
+    if (!playbackSource || !video) {
+      return false;
+    }
+    // Local-only sources are never encrypted
+    if (playbackSource.type === "local") {
+      return false;
+    }
+    // For "both" type, only treat as encrypted if IPFS is selected
+    if (playbackSource.type === "both") {
+      return selectedSource === "ipfs" && (video.is_encrypted ?? false);
+    }
+    // IPFS-only sources may be encrypted
+    if (playbackSource.type === "ipfs") {
+      return video.is_encrypted ?? false;
+    }
+    return false;
+  }, [playbackSource, selectedSource, video]);
+
   const videoUrl = useMemo(() => {
-    if (isEncrypted && decryptedUrl) {
+    // Only use decrypted URL if we're treating it as encrypted (IPFS source)
+    if (shouldTreatAsEncrypted && isEncrypted && decryptedUrl) {
       return decryptedUrl;
     }
     if (!playbackSource) {
@@ -63,26 +91,39 @@ const VideoPlayer: React.FC = () => {
     if (playbackSource.type === "ipfs") {
       return playbackSource.uri;
     }
+    if (playbackSource.type === "both") {
+      if (selectedSource === "local") {
+        return `file://${encodeURI(playbackSource.local.uri)}`;
+      }
+      return playbackSource.ipfs.uri;
+    }
     return null;
-  }, [decryptedUrl, isEncrypted, playbackSource]);
+  }, [decryptedUrl, isEncrypted, playbackSource, selectedSource, shouldTreatAsEncrypted]);
 
   // Check if we're still preparing the video (loading or decrypting)
   const isPreparing =
     loading ||
-    (isEncrypted &&
+    (shouldTreatAsEncrypted &&
+      isEncrypted &&
       (decryptionStatus.status === 'loading' ||
         decryptionStatus.status === 'decrypting'));
 
   const ipfsGatewayHost = useMemo(() => {
-    if (playbackSource?.type !== "ipfs") {
-      return null;
+    if (playbackSource?.type === "ipfs") {
+      try {
+        return new URL(playbackSource.gatewayBase).host;
+      } catch {
+        return playbackSource.gatewayBase;
+      }
     }
-
-    try {
-      return new URL(playbackSource.gatewayBase).host;
-    } catch {
-      return playbackSource.gatewayBase;
+    if (playbackSource?.type === "both") {
+      try {
+        return new URL(playbackSource.ipfs.gatewayBase).host;
+      } catch {
+        return playbackSource.ipfs.gatewayBase;
+      }
     }
+    return null;
   }, [playbackSource]);
 
   useEffect(() => {
@@ -121,27 +162,31 @@ const VideoPlayer: React.FC = () => {
 
         setPlaybackSource(source);
 
+        // Set default source preference: local if available, otherwise IPFS
+        if (source.type === "both") {
+          setSelectedSource("local");
+        } else if (source.type === "ipfs") {
+          setSelectedSource("ipfs");
+        }
+
         if (source.type === "unavailable") {
           setError("Video missing locally and no IPFS CID is available.");
           return;
         }
 
-        if (videoData.is_encrypted && videoData.lit_encryption_metadata) {
-          console.log('[VideoPlayer] Video is encrypted, starting decryption...');
-          const loadEncryptedData =
-            source.type === "local"
-              ? async () => {
-                  const fileData = await ipcRenderer.invoke('read-video-file', source.uri);
-                  return new Uint8Array(fileData.data);
-                }
-              : async () => {
-                  const response = await fetch(source.uri);
-                  if (!response.ok) {
-                    throw new Error('Failed to fetch encrypted video from gateway');
-                  }
-                  const buffer = await response.arrayBuffer();
-                  return new Uint8Array(buffer);
-                };
+        // Only attempt decryption for IPFS-only sources (not local, not "both" with local default)
+        // Local files are assumed to be unencrypted
+        // For "both" type, we default to local, so decryption will happen when user switches to IPFS
+        if (source.type === "ipfs" && videoData.is_encrypted && videoData.lit_encryption_metadata) {
+          console.log('[VideoPlayer] IPFS video is encrypted, starting decryption...');
+          const loadEncryptedData = async () => {
+            const response = await fetch(source.uri);
+            if (!response.ok) {
+              throw new Error('Failed to fetch encrypted video from gateway');
+            }
+            const buffer = await response.arrayBuffer();
+            return new Uint8Array(buffer);
+          };
 
           await decryptVideo(videoData, loadEncryptedData);
         }
@@ -161,6 +206,37 @@ const VideoPlayer: React.FC = () => {
       clearDecryptedUrl();
     };
   }, [videoPath, decryptVideo, clearDecryptedUrl]);
+
+  // Handle decryption when switching from local to IPFS (if encrypted)
+  useEffect(() => {
+    if (!playbackSource || !video || playbackSource.type !== "both") {
+      return;
+    }
+
+    // If switching to IPFS and it's encrypted, trigger decryption
+    if (selectedSource === "ipfs" && video.is_encrypted && video.lit_encryption_metadata) {
+      // Only decrypt if we don't already have a decrypted URL
+      if (!decryptedUrl && decryptionStatus.status !== 'decrypting' && decryptionStatus.status !== 'loading') {
+        console.log('[VideoPlayer] Switching to IPFS source, starting decryption...');
+        const loadEncryptedData = async () => {
+          const response = await fetch(playbackSource.ipfs.uri);
+          if (!response.ok) {
+            throw new Error('Failed to fetch encrypted video from gateway');
+          }
+          const buffer = await response.arrayBuffer();
+          return new Uint8Array(buffer);
+        };
+        decryptVideo(video, loadEncryptedData).catch((error) => {
+          console.error('Failed to decrypt video when switching to IPFS:', error);
+        });
+      }
+    }
+
+    // If switching back to local, clear decrypted URL (local is unencrypted)
+    if (selectedSource === "local" && decryptedUrl) {
+      clearDecryptedUrl();
+    }
+  }, [selectedSource, playbackSource, video, decryptedUrl, decryptionStatus.status, decryptVideo, clearDecryptedUrl]);
 
   const handlePlayPause = () => {
     setPlaying(!playing);
@@ -259,8 +335,8 @@ const VideoPlayer: React.FC = () => {
     );
   }
 
-  // Don't render player if encrypted video hasn't been decrypted yet
-  if (isEncrypted && !decryptedUrl) {
+  // Don't render player if encrypted IPFS video hasn't been decrypted yet
+  if (shouldTreatAsEncrypted && isEncrypted && !decryptedUrl) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
         <Typography color="text.secondary">Preparing encrypted video...</Typography>
@@ -303,8 +379,42 @@ const VideoPlayer: React.FC = () => {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             {video.title}
           </Typography>
+          {playbackSource?.type === "both" && (
+            <ToggleButtonGroup
+              value={selectedSource}
+              exclusive
+              onChange={(_: React.MouseEvent<HTMLElement>, newValue: SelectedSource | null) => {
+                if (newValue !== null) {
+                  setSelectedSource(newValue);
+                  // Reset playback when switching sources
+                  setPlaying(false);
+                  setPlayed(0);
+                }
+              }}
+              size="small"
+              sx={{ height: 32 }}
+            >
+              <ToggleButton value="local">
+                <Tooltip title="Play from local file">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <StorageIcon sx={{ fontSize: 16 }} />
+                    <Typography variant="caption">Local</Typography>
+                  </Box>
+                </Tooltip>
+              </ToggleButton>
+              <ToggleButton value="ipfs">
+                <Tooltip title={`Play from IPFS via ${ipfsGatewayHost || 'gateway'}`}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <CloudIcon sx={{ fontSize: 16 }} />
+                    <Typography variant="caption">IPFS</Typography>
+                  </Box>
+                </Tooltip>
+              </ToggleButton>
+            </ToggleButtonGroup>
+          )}
           {playbackSource?.type === "local" && (
             <Chip
+              icon={<StorageIcon sx={{ fontSize: 16 }} />}
               label="Local file"
               size="small"
               sx={{
@@ -315,6 +425,7 @@ const VideoPlayer: React.FC = () => {
           )}
           {playbackSource?.type === "ipfs" && ipfsGatewayHost && (
             <Chip
+              icon={<CloudIcon sx={{ fontSize: 16 }} />}
               label={`IPFS via ${ipfsGatewayHost}`}
               size="small"
               sx={{
@@ -323,7 +434,33 @@ const VideoPlayer: React.FC = () => {
               }}
             />
           )}
-          {isEncrypted && (
+          {playbackSource?.type === "both" && (
+            <>
+              {selectedSource === "local" && (
+                <Chip
+                  icon={<StorageIcon sx={{ fontSize: 16 }} />}
+                  label="Playing from local"
+                  size="small"
+                  sx={{
+                    backgroundColor: '#E0F7FA',
+                    color: '#006064',
+                  }}
+                />
+              )}
+              {selectedSource === "ipfs" && ipfsGatewayHost && (
+                <Chip
+                  icon={<CloudIcon sx={{ fontSize: 16 }} />}
+                  label={`Playing from IPFS via ${ipfsGatewayHost}`}
+                  size="small"
+                  sx={{
+                    backgroundColor: '#E8EAF6',
+                    color: '#1A237E',
+                  }}
+                />
+              )}
+            </>
+          )}
+          {shouldTreatAsEncrypted && isEncrypted && (
             <Chip
               icon={<LockIcon sx={{ fontSize: 16 }} />}
               label="Encrypted"

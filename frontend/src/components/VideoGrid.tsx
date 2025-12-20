@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -12,13 +12,26 @@ import {
   CircularProgress,
   ListItemIcon,
   ListItemText,
+  Chip,
+  Stack,
 } from '@mui/material';
-import { MoreVert as MoreVertIcon, CloudUpload as UploadIcon } from '@mui/icons-material';
+import { 
+  MoreVert as MoreVertIcon, 
+  CloudUpload as UploadIcon,
+  Storage as StorageIcon,
+  CloudQueue as CloudIcon,
+} from '@mui/icons-material';
 import { useVideos } from '@/hooks/useVideos';
 import { Video } from '@/types/video';
+import { fileExistsViaIpc } from '@/services/playbackConfig';
 
 interface VideoGridProps {
   onUpload?: (video: Video) => void;
+}
+
+interface VideoAvailability {
+  local: boolean;
+  ipfs: boolean;
 }
 
 const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
@@ -26,6 +39,7 @@ const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
   const { videos, loading, error, deleteVideo, moveToFront } = useVideos();
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [selectedVideo, setSelectedVideo] = React.useState<Video | null>(null);
+  const [availabilityMap, setAvailabilityMap] = useState<Record<string, VideoAvailability>>({});
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, video: Video) => {
     setAnchorEl(event.currentTarget);
@@ -54,6 +68,36 @@ const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
       handleMenuClose();
     }
   };
+
+  // Check availability for videos
+  useEffect(() => {
+    const checkAvailability = async () => {
+      const availability: Record<string, VideoAvailability> = {};
+      
+      for (const video of videos) {
+        const hasIpfs = Boolean(video.filecoin_root_cid);
+        try {
+          const hasLocal = await fileExistsViaIpc(video.path);
+          availability[video.path] = {
+            local: hasLocal,
+            ipfs: hasIpfs,
+          };
+        } catch (error) {
+          console.error(`Failed to check local availability for ${video.path}:`, error);
+          availability[video.path] = {
+            local: false,
+            ipfs: hasIpfs,
+          };
+        }
+      }
+      
+      setAvailabilityMap(availability);
+    };
+
+    if (videos.length > 0) {
+      checkAvailability();
+    }
+  }, [videos]);
 
   if (loading) {
     return (
@@ -110,9 +154,45 @@ const VideoGrid: React.FC<VideoGridProps> = ({ onUpload }) => {
               <Typography gutterBottom variant="h6" component="div" noWrap>
                 {video.title}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                 Duration: {Math.floor(video.duration / 60)}:{(video.duration % 60).toString().padStart(2, '0')}
               </Typography>
+              {availabilityMap[video.path] && (
+                <Stack direction="row" spacing={0.5} sx={{ mb: 1 }}>
+                  {availabilityMap[video.path].local && (
+                    <Chip
+                      icon={<StorageIcon sx={{ fontSize: 14 }} />}
+                      label="Local"
+                      size="small"
+                      sx={{
+                        height: 20,
+                        fontSize: '0.7rem',
+                        backgroundColor: '#E0F7FA',
+                        color: '#006064',
+                        '& .MuiChip-icon': {
+                          fontSize: 14,
+                        },
+                      }}
+                    />
+                  )}
+                  {availabilityMap[video.path].ipfs && (
+                    <Chip
+                      icon={<CloudIcon sx={{ fontSize: 14 }} />}
+                      label="IPFS"
+                      size="small"
+                      sx={{
+                        height: 20,
+                        fontSize: '0.7rem',
+                        backgroundColor: '#E8EAF6',
+                        color: '#1A237E',
+                        '& .MuiChip-icon': {
+                          fontSize: 14,
+                        },
+                      }}
+                    />
+                  )}
+                </Stack>
+              )}
               <IconButton
                 sx={{ position: 'absolute', top: 8, right: 8 }}
                 onClick={(e) => {

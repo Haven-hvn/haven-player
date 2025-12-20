@@ -53,6 +53,28 @@ export const resolvePlaybackSource = async (
   } = input;
 
   const fileExists = await checkFileExists(videoPath);
+  const hasIpfsCid = Boolean(rootCid);
+
+  // If both local and IPFS are available, return both
+  if (fileExists && hasIpfsCid) {
+    const { uri, gatewayBase } = buildIpfsGatewayUrl(rootCid!, gatewayConfig);
+    return {
+      type: "both",
+      local: {
+        uri: videoPath,
+        reason: "local-exists",
+      },
+      ipfs: {
+        uri,
+        gatewayBase,
+        cid: normalizeCid(rootCid!),
+      },
+      isEncrypted,
+      litEncryptionMetadata,
+    };
+  }
+
+  // If only local is available
   if (fileExists) {
     return {
       type: "local",
@@ -63,18 +85,20 @@ export const resolvePlaybackSource = async (
     };
   }
 
-  if (rootCid) {
-    const { uri, gatewayBase } = buildIpfsGatewayUrl(rootCid, gatewayConfig);
+  // If only IPFS is available
+  if (hasIpfsCid) {
+    const { uri, gatewayBase } = buildIpfsGatewayUrl(rootCid!, gatewayConfig);
     return {
       type: "ipfs",
       uri,
       gatewayBase,
-      cid: normalizeCid(rootCid),
+      cid: normalizeCid(rootCid!),
       isEncrypted,
       litEncryptionMetadata,
     };
   }
 
+  // Neither available
   return { type: "unavailable", reason: "missing-file-and-cid" };
 };
 

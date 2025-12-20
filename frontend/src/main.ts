@@ -139,6 +139,7 @@ ipcMain.handle('get-filecoin-config', async () => {
           privateKey,
           rpcUrl: config.rpcUrl,
           dataSetId: config.dataSetId,
+          encryptionEnabled: config.encryptionEnabled ?? false,
         };
       } catch (error) {
         console.error('Failed to decrypt private key:', error);
@@ -196,7 +197,7 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: string; rpcUrl?: string; dataSetId?: number }) => {
+ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean }) => {
   try {
     const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
     
@@ -217,6 +218,7 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
       encryptedPrivateKey,
       rpcUrl: config.rpcUrl,
       dataSetId: config.dataSetId,
+      encryptionEnabled: config.encryptionEnabled ?? false,
     };
     
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
@@ -227,7 +229,7 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
   }
 }); 
 
-async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number } | null> {
+async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean } | null> {
   const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
   if (!fs.existsSync(configPath)) return null;
   const fileBuffer = fs.readFileSync(configPath);
@@ -248,6 +250,7 @@ async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcU
     privateKey,
     rpcUrl: config.rpcUrl,
     dataSetId: config.dataSetId,
+    encryptionEnabled: config.encryptionEnabled ?? false,
   };
 }
 

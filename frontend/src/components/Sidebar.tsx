@@ -66,11 +66,14 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
     [location.pathname]
   );
 
-  const personalItems = [
-    { icon: MyVideosIcon, label: "My Videos", active: false },
-    { icon: LikesIcon, label: "Likes", active: false },
-    { icon: FoldersIcon, label: "Folders", active: false },
-  ];
+  const personalItems: NavItem[] = useMemo(
+    () => [
+      { icon: MyVideosIcon, label: "My Videos", path: "/", active: location.pathname === "/" },
+      { icon: LikesIcon, label: "Likes", path: "/", active: false }, // TODO: Implement likes feature
+      { icon: FoldersIcon, label: "Folders", path: "/", active: false }, // TODO: Implement folders feature
+    ],
+    [location.pathname]
+  );
 
   return (
     <Box
@@ -231,7 +234,7 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
 
         <Collapse in={sectionsExpanded.personal}>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-            {personalItems.map((item, index) => (
+            {personalItems.map((item: NavItem, index: number) => (
               <Box
                 key={index}
                 sx={{
@@ -252,6 +255,7 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
                     borderColor: "#E8E8E8",
                   },
                 }}
+                onClick={() => navigate(item.path)}
               >
                 <item.icon
                   sx={{

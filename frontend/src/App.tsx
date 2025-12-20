@@ -6,7 +6,7 @@ import {
   Route,
   useNavigate,
 } from "react-router-dom";
-import { ThemeProvider, CssBaseline, Box } from "@mui/material";
+import { ThemeProvider, CssBaseline, Box, Snackbar, Alert } from "@mui/material";
 import { createTheme } from "@mui/material/styles";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -242,6 +242,17 @@ const MainApp: React.FC = () => {
   // Add search and view mode state
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  
+  // Notification state for duplicate detection and other errors
+  const [notification, setNotification] = useState<{
+    open: boolean;
+    message: string;
+    severity: "error" | "warning" | "info" | "success";
+  }>({
+    open: false,
+    message: "",
+    severity: "info",
+  });
 
   // Initialize upload status from backend data (filecoin_root_cid from database)
   // This reads from the backend data that's already in the videos array
@@ -413,8 +424,21 @@ const MainApp: React.FC = () => {
       } else {
         setAnalysisStatuses((prev) => ({ ...prev, [videoPath]: "pending" }));
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Failed to add video:", error);
+      
+      // Extract error message and show notification
+      let errorMessage = "Failed to add video";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      
+      // Show notification with error message
+      setNotification({
+        open: true,
+        message: errorMessage,
+        severity: "error",
+      });
     }
   }, [addVideo, hiddenVideos]);
 
@@ -746,6 +770,22 @@ const MainApp: React.FC = () => {
         onSaveFilecoin={handleFilecoinConfigSave}
         initialFilecoinConfig={filecoinConfig}
       />
+
+      {/* Notification Snackbar for duplicate detection and errors */}
+      <Snackbar
+        open={notification.open}
+        autoHideDuration={6000}
+        onClose={() => setNotification((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setNotification((prev) => ({ ...prev, open: false }))}
+          severity={notification.severity}
+          sx={{ width: "100%" }}
+        >
+          {notification.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

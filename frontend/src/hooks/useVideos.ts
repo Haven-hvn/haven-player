@@ -76,10 +76,29 @@ export const useVideos = () => {
       
       setError(null);
       return newVideo;
-    } catch (err) {
-      setError('Failed to add video');
+    } catch (err: unknown) {
+      // Extract error message from axios error response
+      let errorMessage = 'Failed to add video';
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosError = err as { response?: { data?: { detail?: string }; status?: number } };
+        if (axiosError.response?.data?.detail) {
+          errorMessage = axiosError.response.data.detail;
+        } else if (axiosError.response?.status === 409) {
+          errorMessage = 'Duplicate video detected! Video was skipped.';
+        }
+      } else if (err instanceof Error) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
       console.error('Error adding video:', err);
-      throw err;
+      
+      // Create a new error with the extracted message for the caller
+      const error = new Error(errorMessage);
+      if (err && typeof err === 'object' && 'response' in err) {
+        (error as { response?: unknown }).response = (err as { response?: unknown }).response;
+      }
+      throw error;
     }
   }, [fetchTimestampsForVideo]);
 

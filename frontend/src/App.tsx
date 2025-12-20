@@ -190,6 +190,7 @@ const MainApp: React.FC = () => {
     addVideo,
     refreshVideos,
     fetchTimestampsForVideo,
+    updateVideoSharePreference,
   } = useVideos();
   const {
     isOpen: settingsOpen,
@@ -720,6 +721,14 @@ const MainApp: React.FC = () => {
             onAnalyze={handleAnalyzeVideo}
             onRemove={handleRemoveVideo}
             onUpload={handleUploadToFilecoin}
+            onToggleShare={async (video: Video, share: boolean) => {
+              try {
+                await updateVideoSharePreference(video.path, share);
+                await refreshVideos();
+              } catch (error) {
+                console.error("Failed to update share preference:", error);
+              }
+            }}
             uploadStatuses={mergedUploadStatuses}
             hiddenVideos={hiddenVideos}
             searchQuery={searchQuery}

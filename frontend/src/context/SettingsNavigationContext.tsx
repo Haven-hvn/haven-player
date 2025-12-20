@@ -6,7 +6,8 @@ export type SettingsTab =
   | "playback"
   | "processing"
   | "filecoin"
-  | "encryption";
+  | "encryption"
+  | "arkiv";
 
 interface SettingsNavigationContextValue {
   isOpen: boolean;

@@ -351,6 +351,18 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
     db.commit()
     db.refresh(db_video)
 
+    # Log Arkiv sync attempt status
+    logger.info(
+        "📋 Arkiv sync check for video %s | "
+        "share_to_arkiv: %s | "
+        "config.enabled: %s | "
+        "has_private_key: %s",
+        db_video.path,
+        share_to_arkiv,
+        arkiv_config.enabled,
+        bool(arkiv_config.private_key)
+    )
+    
     arkiv_client = ArkivSyncClient(arkiv_config)
     try:
         arkiv_client.sync_video(db, db_video, [])
@@ -486,7 +498,21 @@ def update_filecoin_metadata(
     db.commit()
     db.refresh(video)
 
-    arkiv_client = ArkivSyncClient(build_arkiv_config())
+    arkiv_config = build_arkiv_config()
+    logger.info(
+        "📋 Arkiv sync check after Filecoin upload for video %s | "
+        "share_to_arkiv: %s | "
+        "config.enabled: %s | "
+        "has_private_key: %s | "
+        "has_filecoin_cid: %s",
+        video.path,
+        video.share_to_arkiv,
+        arkiv_config.enabled,
+        bool(arkiv_config.private_key),
+        bool(video.filecoin_root_cid)
+    )
+    
+    arkiv_client = ArkivSyncClient(arkiv_config)
     try:
         arkiv_client.sync_video(db, video, video.timestamps)
     except Exception as err:

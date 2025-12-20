@@ -366,11 +366,19 @@ class ArkivSyncClient:
         Returns entity key if created/updated, otherwise None.
         """
         if not self.config.enabled:
-            logger.debug("Arkiv sync disabled (no private key configured)")
+            logger.info(
+                "⏭️ Arkiv sync skipped for video %s: Arkiv sync is disabled (no private key configured). "
+                "Set FILECOIN_PRIVATE_KEY or ARKIV_PRIVATE_KEY environment variable to enable.",
+                video.path
+            )
             return None
 
         if not video.share_to_arkiv:
-            logger.debug("Video marked as local-only; skipping Arkiv sync")
+            logger.info(
+                "⏭️ Arkiv sync skipped for video %s: Video is marked as local-only (share_to_arkiv=False). "
+                "Enable sharing in the UI to sync to Arkiv.",
+                video.path
+            )
             return None
 
         logger.info(

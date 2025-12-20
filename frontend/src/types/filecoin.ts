@@ -17,6 +17,11 @@ export interface FilecoinConfig {
   encryptionEnabled: boolean;
 }
 
+export interface ArkivConfig {
+  rpcUrl?: string;
+  enabled?: boolean; // Computed from whether private key exists (shared with Filecoin)
+}
+
 export interface FilecoinUploadResult {
   rootCid: string;
   pieceCid: string;

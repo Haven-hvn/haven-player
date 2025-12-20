@@ -34,8 +34,11 @@ import {
   WorkspacePremium as BatchIcon,
   CloudUpload as CloudUploadIcon,
   Lock as LockIcon,
+  AccountTree as ArkivIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
 } from "@mui/icons-material";
-import type { FilecoinConfig } from "@/types/filecoin";
+import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService } from "@/services/api";
 import type { SettingsTab } from "@/context/SettingsNavigationContext";
 import type { IpfsGatewayConfig } from "@/types/playback";
@@ -68,6 +71,11 @@ interface ConfigurationModalProps {
   initialFilecoinConfig?: FilecoinConfig | null;
 }
 
+const defaultArkivConfig: ArkivConfig = {
+  rpcUrl: "http://127.0.0.1:8545",
+  enabled: false,
+};
+
 const defaultFilecoinConfig: FilecoinConfig = {
   privateKey: "",
   rpcUrl: "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
@@ -94,14 +102,17 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 }: ConfigurationModalProps): JSX.Element => {
   const [loadingAi, setLoadingAi] = useState(false);
   const [loadingFilecoin, setLoadingFilecoin] = useState(false);
+  const [loadingArkiv, setLoadingArkiv] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filecoinError, setFilecoinError] = useState<string | null>(null);
+  const [arkivError, setArkivError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreSummary, setRestoreSummary] = useState<string | null>(null);
   const [config, setConfig] = useState<EditableAppConfig>(defaultAppConfig);
   const [filecoinConfig, setFilecoinConfig] =
     useState<FilecoinConfig>(initialFilecoinConfig ?? defaultFilecoinConfig);
+  const [arkivConfig, setArkivConfig] = useState<ArkivConfig>(defaultArkivConfig);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [gatewayConfig, setGatewayConfig] = useState<IpfsGatewayConfig>({
     baseUrl: DEFAULT_IPFS_GATEWAY,
@@ -116,16 +127,19 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 
   const isFilecoinTab =
     activeTab === "filecoin" || activeTab === "encryption";
+  const isArkivTab = activeTab === "arkiv";
   const isPlaybackTab = activeTab === "playback";
-  const loading = loadingAi || loadingFilecoin || loadingGateway;
+  const loading = loadingAi || loadingFilecoin || loadingArkiv || loadingGateway;
 
   useEffect(() => {
     if (open) {
       setError(null);
       setFilecoinError(null);
+      setArkivError(null);
       loadConfig();
       loadAvailableModels();
       loadFilecoinConfig();
+      loadArkivConfig();
       loadGatewayConfig();
     }
   }, [open]);
@@ -183,6 +197,27 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setFilecoinConfig(defaultFilecoinConfig);
     } finally {
       setLoadingFilecoin(false);
+    }
+  };
+
+  const loadArkivConfig = async () => {
+    try {
+      setLoadingArkiv(true);
+      setArkivError(null);
+      const savedConfig = await ipcRenderer.invoke("get-arkiv-config");
+      if (savedConfig) {
+        setArkivConfig({
+          rpcUrl: savedConfig.rpcUrl || "http://127.0.0.1:8545",
+          enabled: savedConfig.enabled ?? false,
+        });
+      } else {
+        setArkivConfig(defaultArkivConfig);
+      }
+    } catch (err) {
+      console.error("Failed to load Arkiv config:", err);
+      setArkivConfig(defaultArkivConfig);
+    } finally {
+      setLoadingArkiv(false);
     }
   };
 
@@ -270,6 +305,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setSaving(true);
       setError(null);
       setFilecoinError(null);
+      setArkivError(null);
       setRestoreSummary(null);
 
       if (isPlaybackTab) {
@@ -305,6 +341,12 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         });
 
         await onSaveFilecoin(filecoinConfig);
+      } else if (isArkivTab) {
+        await ipcRenderer.invoke("save-arkiv-config", {
+          rpcUrl: arkivConfig.rpcUrl,
+        });
+        // Reload to get updated enabled status
+        await loadArkivConfig();
       } else {
         await onSave(config);
       }
@@ -315,6 +357,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         err instanceof Error ? err.message : "Failed to save configuration";
       if (isFilecoinTab) {
         setFilecoinError(message);
+      } else if (isArkivTab) {
+        setArkivError(message);
       } else {
         setError(message);
       }
@@ -326,14 +370,14 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const handleRestoreFromArkiv = async () => {
     try {
       setRestoring(true);
-      setFilecoinError(null);
+      setArkivError(null);
       setRestoreSummary(null);
       const result = await restoreService.restoreFromArkiv();
       setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to restore from Arkiv";
-      setFilecoinError(message);
+      setArkivError(message);
     } finally {
       setRestoring(false);
     }
@@ -681,22 +725,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         </Typography>
       </Alert>
 
-      <Box sx={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
-        <Button
-          variant="outlined"
-          disabled={restoring}
-          onClick={handleRestoreFromArkiv}
-          startIcon={restoring ? <CircularProgress size={16} /> : undefined}
-        >
-          {restoring ? "Restoring..." : "Restore Catalog from Arkiv"}
-        </Button>
-        {restoreSummary && (
-          <Typography variant="body2" sx={{ color: "#4CAF50" }}>
-            {restoreSummary}
-          </Typography>
-        )}
-      </Box>
-
       {filecoinError && (
         <Alert severity="error" sx={{ mt: 2 }}>
           {filecoinError}
@@ -787,7 +815,134 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     ? "Save Playback Settings"
     : isFilecoinTab
     ? "Save Filecoin Settings"
+    : isArkivTab
+    ? "Save Arkiv Settings"
     : "Save Configuration";
+
+  const renderArkivContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        Arkiv Configuration
+      </Typography>
+
+      {/* Status Indicator */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          p: 2,
+          borderRadius: "8px",
+          backgroundColor: arkivConfig.enabled ? "#E8F5E9" : "#FFF3E0",
+          border: `1px solid ${arkivConfig.enabled ? "#4CAF50" : "#FF9800"}`,
+        }}
+      >
+        {arkivConfig.enabled ? (
+          <CheckCircleIcon sx={{ color: "#4CAF50", fontSize: 24 }} />
+        ) : (
+          <CancelIcon sx={{ color: "#FF9800", fontSize: 24 }} />
+        )}
+        <Box sx={{ flex: 1 }}>
+          <Typography
+            sx={{
+              fontWeight: 500,
+              fontSize: "14px",
+              color: "#000000",
+              mb: 0.5,
+            }}
+          >
+            {arkivConfig.enabled
+              ? "Arkiv Sync Enabled"
+              : "Arkiv Sync Disabled"}
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: "12px",
+              color: "#6B6B6B",
+            }}
+          >
+            {arkivConfig.enabled
+              ? "Videos can be synced to Arkiv blockchain. Private key is configured in Filecoin settings."
+              : "Configure a private key in Filecoin settings to enable Arkiv sync."}
+          </Typography>
+        </Box>
+      </Box>
+
+      <TextField
+        fullWidth
+        label="Arkiv RPC URL"
+        value={arkivConfig.rpcUrl ?? ""}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setArkivConfig((prev: ArkivConfig) => ({
+            ...prev,
+            rpcUrl: e.target.value,
+          }))
+        }
+        placeholder="http://127.0.0.1:8545"
+        helperText="Ethereum RPC endpoint for Arkiv blockchain. Default: http://127.0.0.1:8545 (local node)"
+      />
+
+      <Alert
+        severity="info"
+        sx={{
+          backgroundColor: "#E3F2FD",
+          color: "#1976D2",
+          border: "1px solid #BBDEFB",
+          borderRadius: "8px",
+          "& .MuiAlert-icon": {
+            color: "#1976D2",
+          },
+        }}
+      >
+        <Typography
+          sx={{
+            fontSize: "12px",
+            fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+          }}
+        >
+          <strong>Note:</strong> Arkiv uses the same private key as Filecoin
+          (configured in Filecoin settings). The RPC URL is for the Ethereum
+          network where Arkiv entities are stored. Enable sharing for individual
+          videos via the context menu to sync them to Arkiv.
+        </Typography>
+      </Alert>
+
+      <Box sx={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2, mt: 2 }}>
+        <Button
+          variant="outlined"
+          disabled={restoring || !arkivConfig.enabled}
+          onClick={handleRestoreFromArkiv}
+          startIcon={restoring ? <CircularProgress size={16} /> : undefined}
+          sx={{
+            borderColor: arkivConfig.enabled ? "#4CAF50" : "#E0E0E0",
+            color: arkivConfig.enabled ? "#4CAF50" : "#9E9E9E",
+            "&:hover": {
+              borderColor: arkivConfig.enabled ? "#45A049" : "#E0E0E0",
+              backgroundColor: arkivConfig.enabled ? "#F1F8F4" : "#FAFAFA",
+            },
+          }}
+        >
+          {restoring ? "Restoring..." : "Restore Catalog from Arkiv"}
+        </Button>
+        {restoreSummary && (
+          <Typography variant="body2" sx={{ color: "#4CAF50" }}>
+            {restoreSummary}
+          </Typography>
+        )}
+      </Box>
+      {!arkivConfig.enabled && (
+        <Typography variant="body2" sx={{ color: "#9E9E9E", fontSize: "12px", mt: -1 }}>
+          Configure a private key in Filecoin settings to enable restore functionality.
+        </Typography>
+      )}
+
+      {arkivError && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {arkivError}
+        </Alert>
+      )}
+    </Box>
+  );
 
   const renderContent = (): JSX.Element | null => {
     switch (activeTab) {
@@ -803,6 +958,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         return renderFilecoinContent();
       case "encryption":
         return renderEncryptionContent();
+      case "arkiv":
+        return renderArkivContent();
       default:
         return null;
     }
@@ -872,7 +1029,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       </DialogTitle>
 
       <DialogContent sx={{ px: 3, py: 3 }}>
-        {(error || filecoinError) && (
+        {(error || filecoinError || arkivError) && (
           <Alert
             severity="error"
             sx={{
@@ -886,7 +1043,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
               },
             }}
           >
-            {error || filecoinError}
+            {error || filecoinError || arkivError}
           </Alert>
         )}
 
@@ -905,6 +1062,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           <Tab label="Playback" value="playback" icon={<PlaybackIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Filecoin" value="filecoin" icon={<CloudUploadIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Encryption" value="encryption" icon={<LockIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="Arkiv" value="arkiv" icon={<ArkivIcon fontSize="small" />} iconPosition="start" />
         </Tabs>
 
         {loading ? (

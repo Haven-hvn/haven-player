@@ -166,6 +166,9 @@ const ShortcutsOverlay = ({ open, onClose }: ShortcutsOverlayProps): React.React
     display: 'Display',
   };
 
+  // Don't render at all when not open to prevent blocking clicks
+  if (!open) return null;
+  
   return (
     <Fade in={open}>
       <Box
@@ -1004,9 +1007,37 @@ const VideoPlayer: React.FC = () => {
     controls.toggleFullscreen();
   }, [controls]);
 
-  const handleBack = useCallback(() => {
-    navigate('/');
-  }, [navigate]);
+  const handleBack = useCallback((event?: React.MouseEvent) => {
+    // Prevent any event bubbling issues
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    
+    console.log('[VideoPlayer] handleBack called, navigating to /');
+    
+    // Clean up before navigation
+    try {
+      controls.pause();
+    } catch (e) {
+      console.error('[VideoPlayer] Error pausing:', e);
+    }
+    
+    try {
+      clearDecryptedUrl();
+    } catch (e) {
+      console.error('[VideoPlayer] Error clearing decrypted URL:', e);
+    }
+    
+    // Navigate using React Router
+    try {
+      navigate('/');
+    } catch (e) {
+      console.error('[VideoPlayer] Navigation error:', e);
+      // Fallback: use window.location for HashRouter
+      window.location.hash = '#/';
+    }
+  }, [navigate, controls, clearDecryptedUrl]);
 
   const handleSeek = useCallback((_event: Event, value: number | number[]) => {
     if (typeof value === 'number') {
@@ -1332,6 +1363,28 @@ const VideoPlayer: React.FC = () => {
         )}
       </Box>
 
+      {/* Always-visible back button - outside Fade to ensure it works */}
+      <IconButton
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation();
+          e.preventDefault();
+          console.log('[VideoPlayer] Persistent back button clicked');
+          handleBack(e);
+        }}
+        onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+        sx={{
+          position: 'absolute',
+          top: 16,
+          left: 16,
+          zIndex: 9999,
+          color: '#fff',
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.8)' },
+        }}
+      >
+        <ArrowBackIcon />
+      </IconButton>
+
       {/* Controls Overlay */}
       <Fade in={controlsVisible}>
         <Box
@@ -1362,7 +1415,21 @@ const VideoPlayer: React.FC = () => {
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <IconButton onClick={handleBack} sx={controlButtonStyles}>
+              <IconButton 
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  console.log('[VideoPlayer] Back button clicked directly');
+                  handleBack(e);
+                }} 
+                onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+                onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+                sx={{
+                  ...controlButtonStyles,
+                  zIndex: 9999, // Ensure button is on top
+                  position: 'relative',
+                }}
+              >
                 <ArrowBackIcon />
               </IconButton>
               <Typography

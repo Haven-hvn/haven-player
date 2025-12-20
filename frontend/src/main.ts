@@ -227,6 +227,56 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
     console.error('Failed to save Filecoin config:', error);
     throw new Error(`Failed to save config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+});
+
+// Handle Arkiv configuration storage
+ipcMain.handle('get-arkiv-config', async () => {
+  try {
+    const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
+    if (fs.existsSync(configPath)) {
+      const fileBuffer = fs.readFileSync(configPath);
+      const data = fileBuffer.toString('utf-8');
+      const config = JSON.parse(data);
+      
+      // Check if Filecoin private key exists (shared key)
+      const filecoinConfig = await loadDecryptedFilecoinConfig();
+      const enabled = !!filecoinConfig?.privateKey;
+      
+      return {
+        rpcUrl: config.rpcUrl || 'http://127.0.0.1:8545',
+        enabled,
+      };
+    }
+    // Return default if no config exists
+    const filecoinConfig = await loadDecryptedFilecoinConfig();
+    const enabled = !!filecoinConfig?.privateKey;
+    return {
+      rpcUrl: 'http://127.0.0.1:8545',
+      enabled,
+    };
+  } catch (error) {
+    console.error('Failed to load Arkiv config:', error);
+    return {
+      rpcUrl: 'http://127.0.0.1:8545',
+      enabled: false,
+    };
+  }
+});
+
+ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string }) => {
+  try {
+    const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
+    
+    const dataToSave = {
+      rpcUrl: config.rpcUrl || 'http://127.0.0.1:8545',
+    };
+    
+    fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to save Arkiv config:', error);
+    throw new Error(`Failed to save Arkiv config: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }); 
 
 async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean } | null> {
@@ -264,11 +314,29 @@ ipcMain.handle('start-backend', async () => {
     throw new Error('Filecoin config with private key is not available. Please configure Filecoin settings first.');
   }
 
+  // Load Arkiv RPC URL from config
+  let arkivRpcUrl = 'http://127.0.0.1:8545';
+  try {
+    const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
+    if (fs.existsSync(arkivConfigPath)) {
+      const fileBuffer = fs.readFileSync(arkivConfigPath);
+      const data = fileBuffer.toString('utf-8');
+      const arkivConfig = JSON.parse(data);
+      if (arkivConfig.rpcUrl) {
+        arkivRpcUrl = arkivConfig.rpcUrl;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load Arkiv config for backend:', err);
+    // Use default if loading fails
+  }
+
   const backendDir = path.join(app.getAppPath(), '..', 'backend');
   const env = {
     ...process.env,
     FILECOIN_PRIVATE_KEY: cfg.privateKey,
     FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
+    ARKIV_RPC_URL: arkivRpcUrl,
   };
 
   backendProcess = spawn(

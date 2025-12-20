@@ -100,29 +100,20 @@ function spawnBackendProcess(
     // On Windows, spawn a visible cmd window so users can see backend logs
     // Use 'start' command to open a new window with a title
     // /k keeps the window open after the command finishes (so we can see errors)
-    const pythonCommand = `"${pythonExecutable}" ${uvicornArgs.join(' ')}`;
     
-    // Build the full command:
-    // start "Window Title" /D "working_dir" cmd /k "command"
-    const startArgs = [
-      '/c',
-      'start',
-      '"Haven Player Backend"',  // Window title (must be in quotes)
-      '/D',
-      `"${backendDir}"`,  // Working directory
-      'cmd',
-      '/k',  // Keep window open
-      pythonCommand
-    ];
+    // Build the entire command as a single string to avoid argument parsing issues
+    // start "" "title" opens a new window - first "" is required, second is the title
+    // We use cmd /k to keep the window open and run the Python command
+    const fullCommand = `start "HavenPlayerBackend" /D "${backendDir}" cmd /k "${pythonExecutable}" ${uvicornArgs.join(' ')}`;
     
-    console.log(`📝 Windows command: cmd.exe ${startArgs.join(' ')}`);
+    console.log(`📝 Windows command: cmd.exe /c ${fullCommand}`);
     
-    childProcess = spawn('cmd.exe', startArgs, {
+    childProcess = spawn('cmd.exe', ['/c', fullCommand], {
       cwd: backendDir,
       env,
       stdio: 'ignore',  // Detach from parent stdio
       detached: true,   // Run independently
-      windowsHide: false,
+      windowsHide: true, // Hide the initial cmd that spawns the window
     });
     
     // Unref so the parent process can exit independently

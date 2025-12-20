@@ -416,6 +416,28 @@ const MainApp: React.FC = () => {
     }
   }, [addVideo, hiddenVideos]);
 
+  const ensureAiSettings = useCallback((): boolean => {
+    if (isAiConfigDefault(aiConfig)) {
+      openSettings("ai");
+      if (typeof window !== "undefined") {
+        window.alert("Please configure AI / LLM settings before analyzing.");
+      }
+      return false;
+    }
+    return true;
+  }, [aiConfig, openSettings]);
+
+  const ensureFilecoinSettings = useCallback((): boolean => {
+    if (!isFilecoinConfigured(filecoinConfig)) {
+      openSettings("filecoin");
+      if (typeof window !== "undefined") {
+        window.alert("Please configure Filecoin settings before uploading.");
+      }
+      return false;
+    }
+    return true;
+  }, [filecoinConfig, openSettings]);
+
   const handleAnalyzeVideo = useCallback(
     async (video: Video) => {
       if (!video.has_ai_data && !ensureAiSettings()) {
@@ -610,28 +632,6 @@ const MainApp: React.FC = () => {
     console.log("✅ Filecoin configuration saved");
   }, []);
 
-  const ensureAiSettings = useCallback((): boolean => {
-    if (isAiConfigDefault(aiConfig)) {
-      openSettings("ai");
-      if (typeof window !== "undefined") {
-        window.alert("Please configure AI / LLM settings before analyzing.");
-      }
-      return false;
-    }
-    return true;
-  }, [aiConfig, openSettings]);
-
-  const ensureFilecoinSettings = useCallback((): boolean => {
-    if (!isFilecoinConfigured(filecoinConfig)) {
-      openSettings("filecoin");
-      if (typeof window !== "undefined") {
-        window.alert("Please configure Filecoin settings before uploading.");
-      }
-      return false;
-    }
-    return true;
-  }, [filecoinConfig, openSettings]);
-
   // Initialize analysis statuses for videos with AI data
   useEffect(() => {
     const newStatuses: Record<
@@ -740,6 +740,30 @@ const MainApp: React.FC = () => {
   );
 };
 
+// Wrapper component for DePinDashboard to access settings context and filecoin config
+const DePinDashboardWrapper: React.FC = () => {
+  const { openSettings } = useSettingsNavigation();
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+
+  // Load Filecoin config on mount
+  useEffect(() => {
+    const loadFilecoinConfig = async () => {
+      try {
+        const { ipcRenderer } = require("electron");
+        const config = await ipcRenderer.invoke("get-filecoin-config");
+        if (config) {
+          setFilecoinConfig(config);
+        }
+      } catch (error) {
+        console.error("Failed to load Filecoin config:", error);
+      }
+    };
+    loadFilecoinConfig();
+  }, []);
+
+  return <DePinDashboard filecoinConfig={filecoinConfig} onRequireSettings={openSettings} />;
+};
+
 const App: React.FC = () => {
   return (
     <SettingsNavigationProvider>
@@ -829,7 +853,7 @@ const App: React.FC = () => {
                           overflow: "auto",
                         }}
                       >
-                        <DePinDashboard filecoinConfig={filecoinConfig} onRequireSettings={openSettings} />
+                        <DePinDashboardWrapper />
                       </Box>
                     </Box>
                   </Box>

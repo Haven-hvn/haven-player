@@ -46,6 +46,7 @@ describe('useLitDecryption', () => {
     thumbnail_path: null,
     position: 0,
     created_at: '2024-01-01T00:00:00Z',
+    share_to_arkiv: false,
     is_encrypted: true,
     lit_encryption_metadata: JSON.stringify({
       ciphertext: 'test-ciphertext',
@@ -64,6 +65,7 @@ describe('useLitDecryption', () => {
     thumbnail_path: null,
     position: 1,
     created_at: '2024-01-01T00:00:00Z',
+    share_to_arkiv: false,
     is_encrypted: false,
     lit_encryption_metadata: null,
   };

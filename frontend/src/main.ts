@@ -132,7 +132,7 @@ ipcMain.handle('get-filecoin-config', async () => {
       }
 
       try {
-        const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
+        const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64') as Buffer;
         const privateKey = safeStorage.decryptString(encryptedBuffer);
         return {
           privateKey,
@@ -205,7 +205,7 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
 
     let encryptedPrivateKey: string | undefined;
     try {
-      const encrypted = safeStorage.encryptString(config.privateKey);
+      const encrypted = safeStorage.encryptString(config.privateKey) as Buffer;
       encryptedPrivateKey = encrypted.toString('base64');
     } catch (error) {
       console.error('Failed to encrypt private key:', error);
@@ -240,7 +240,7 @@ async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcU
     throw new Error('Secure storage is not available; cannot decrypt private key.');
   }
 
-  const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
+  const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64') as Buffer;
   const privateKey = safeStorage.decryptString(encryptedBuffer);
   return {
     privateKey,
@@ -314,7 +314,9 @@ function readIpfsGatewayConfig(): IpfsGatewayConfig {
   const configPath = getIpfsGatewayConfigPath();
   try {
     if (fs.existsSync(configPath)) {
-      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const fileBuffer = fs.readFileSync(configPath);
+      const fileContent = fileBuffer.toString('utf-8');
+      const parsed = JSON.parse(fileContent);
       const baseUrl = normalizeGatewayBase(parsed.baseUrl || DEFAULT_IPFS_GATEWAY);
       return { baseUrl };
     }

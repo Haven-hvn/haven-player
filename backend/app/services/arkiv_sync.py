@@ -122,7 +122,7 @@ def build_arkiv_config() -> ArkivSyncConfig:
 
     # Prefer the shared Filecoin/Lit key; fall back to legacy override
     private_key = shared_key or legacy_override
-    rpc_url = os.getenv("ARKIV_RPC_URL") or "http://127.0.0.1:8545"
+    rpc_url = os.getenv("ARKIV_RPC_URL") or "https://mendoza.hoodi.arkiv.network/rpc"
     enabled = bool(private_key)
     return ArkivSyncConfig(enabled=enabled, private_key=private_key, rpc_url=rpc_url)
 

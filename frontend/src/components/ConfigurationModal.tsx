@@ -73,7 +73,7 @@ interface ConfigurationModalProps {
 }
 
 const defaultArkivConfig: ArkivConfig = {
-  rpcUrl: "http://127.0.0.1:8545",
+  rpcUrl: "https://mendoza.hoodi.arkiv.network/rpc",
   enabled: false,
 };
 
@@ -210,7 +210,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       const savedConfig = await ipcRenderer.invoke("get-arkiv-config");
       if (savedConfig) {
         setArkivConfig({
-          rpcUrl: savedConfig.rpcUrl || "http://127.0.0.1:8545",
+          rpcUrl: savedConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc",
           enabled: savedConfig.enabled ?? false,
         });
       } else {
@@ -899,8 +899,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
             rpcUrl: e.target.value,
           }))
         }
-        placeholder="http://127.0.0.1:8545"
-        helperText="Ethereum RPC endpoint for Arkiv blockchain. Default: http://127.0.0.1:8545 (local node)"
+        placeholder="https://mendoza.hoodi.arkiv.network/rpc"
+        helperText="Ethereum RPC endpoint for Arkiv blockchain. Default: https://mendoza.hoodi.arkiv.network/rpc"
       />
 
       <Alert

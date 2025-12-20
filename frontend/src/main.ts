@@ -65,7 +65,7 @@ async function tryStartBackend(): Promise<void> {
     }
 
     // Load Arkiv RPC URL from config
-    let arkivRpcUrl = 'http://127.0.0.1:8545';
+    let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
     try {
       const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
       if (fs.existsSync(arkivConfigPath)) {
@@ -302,7 +302,7 @@ ipcMain.handle('get-arkiv-config', async () => {
       const enabled = !!filecoinConfig?.privateKey;
       
       return {
-        rpcUrl: config.rpcUrl || 'http://127.0.0.1:8545',
+        rpcUrl: config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc',
         enabled,
       };
     }
@@ -310,13 +310,13 @@ ipcMain.handle('get-arkiv-config', async () => {
     const filecoinConfig = await loadDecryptedFilecoinConfig();
     const enabled = !!filecoinConfig?.privateKey;
     return {
-      rpcUrl: 'http://127.0.0.1:8545',
+      rpcUrl: 'https://mendoza.hoodi.arkiv.network/rpc',
       enabled,
     };
   } catch (error) {
     console.error('Failed to load Arkiv config:', error);
     return {
-      rpcUrl: 'http://127.0.0.1:8545',
+      rpcUrl: 'https://mendoza.hoodi.arkiv.network/rpc',
       enabled: false,
     };
   }
@@ -327,7 +327,7 @@ ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string }) 
     const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     
     const dataToSave = {
-      rpcUrl: config.rpcUrl || 'http://127.0.0.1:8545',
+      rpcUrl: config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc',
     };
     
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');

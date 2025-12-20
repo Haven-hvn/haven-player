@@ -23,6 +23,22 @@ import asyncio
 
 router = APIRouter()
 
+def _is_valid_phash(phash: Optional[str]) -> bool:
+    """
+    Validate that a phash string is in the correct format for hex_to_hash.
+    Returns True if valid, False otherwise.
+    """
+    if not phash:
+        return False
+    
+    try:
+        # Try to convert to hash to validate format
+        hex_to_hash(phash)
+        return True
+    except (ValueError, TypeError):
+        # Invalid format - likely a random number string or malformed hash
+        return False
+
 class VideoCreate(BaseModel):
     path: str
     title: str
@@ -276,28 +292,40 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
         duration = 0  # Default to 0 if there's an error
 
     # Calculate phash asynchronously
+    # Note: If phash calculation fails or returns None, the video will still be added
+    # (duplicate detection will be skipped, but the video will be created with phash=None)
     try:
         phash = await asyncio.to_thread(calculate_phash, video.path)
     except Exception as e:
         print(f"Error calculating phash: {e}")
         phash = None
 
-    # Check for duplicates using pHash
-    if phash:
+    # Check for duplicates using pHash (only if we have a valid phash)
+    # If phash is None, skip duplicate detection and proceed with video creation
+    if phash and _is_valid_phash(phash):
         existing_phashes = (
             db.query(Video.id, Video.phash).filter(Video.phash.isnot(None)).all()
         )
         for vid_id, existing in existing_phashes:
-            distance = hex_to_hash(phash) - hex_to_hash(existing)
-            print(f"Comparing to video ID {vid_id} | distance: {distance}")
-            if distance <= 5:
-                print(
-                    f"⚠️ Duplicate detected (Video ID {vid_id}, distance {distance}). Skipping insert."
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail="⚠️ Duplicate video detected! . Video was skipped.",
-                )
+            # Skip invalid phash values in database
+            if not _is_valid_phash(existing):
+                continue
+            
+            try:
+                distance = hex_to_hash(phash) - hex_to_hash(existing)
+                print(f"Comparing to video ID {vid_id} | distance: {distance}")
+                if distance <= 5:
+                    print(
+                        f"⚠️ Duplicate detected (Video ID {vid_id}, distance {distance}). Skipping insert."
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="⚠️ Duplicate video detected! . Video was skipped.",
+                    )
+            except (ValueError, TypeError) as e:
+                # Skip comparison if phash conversion fails
+                print(f"Warning: Invalid phash format for video ID {vid_id}, skipping comparison: {e}")
+                continue
 
     file_size, file_extension, mime_type = _build_file_metadata(video.path)
     share_to_arkiv = _should_share_to_arkiv(video.share_to_arkiv, arkiv_config)
@@ -524,6 +552,8 @@ async def upload_livekit_recording(
             duration = 0
         
         # Calculate phash asynchronously (skip for empty/invalid files)
+        # Note: If phash calculation fails or returns None, the video will still be added
+        # (duplicate detection will be skipped, but the video will be created with phash=None)
         phash = None
         if file_size > 100:  # Only calculate phash for files that seem valid
             try:
@@ -531,23 +561,33 @@ async def upload_livekit_recording(
             except Exception as e:
                 print(f"Error calculating phash: {e}")
                 phash = None
-        
+
         # Check for duplicates using pHash (only if we have a valid phash)
-        if phash:
+        # If phash is None, skip duplicate detection and proceed with video creation
+        if phash and _is_valid_phash(phash):
             existing_phashes = db.query(Video.id, Video.phash).filter(Video.phash.isnot(None)).all()
             for vid_id, existing in existing_phashes:
-                distance = hex_to_hash(phash) - hex_to_hash(existing)
-                if distance <= 5:
-                    print(f"⚠️ Duplicate detected (Video ID {vid_id}, distance {distance}). Skipping insert.")
-                    # Clean up the uploaded file
-                    try:
-                        os.remove(filepath)
-                    except:
-                        pass
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Duplicate video detected! Recording was skipped."
-                    )
+                # Skip invalid phash values in database
+                if not _is_valid_phash(existing):
+                    continue
+                
+                try:
+                    distance = hex_to_hash(phash) - hex_to_hash(existing)
+                    if distance <= 5:
+                        print(f"⚠️ Duplicate detected (Video ID {vid_id}, distance {distance}). Skipping insert.")
+                        # Clean up the uploaded file
+                        try:
+                            os.remove(filepath)
+                        except:
+                            pass
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Duplicate video detected! Recording was skipped."
+                        )
+                except (ValueError, TypeError) as e:
+                    # Skip comparison if phash conversion fails
+                    print(f"Warning: Invalid phash format for video ID {vid_id}, skipping comparison: {e}")
+                    continue
         
         # Get max position
         max_position = db.query(Video).order_by(Video.position.desc()).first()

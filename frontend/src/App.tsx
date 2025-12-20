@@ -11,6 +11,7 @@ import { createTheme } from "@mui/material/styles";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import VideoAnalysisList from "@/components/VideoAnalysisList";
+import VideoGrid from "@/components/VideoGrid";
 import VideoPlayer from "@/components/VideoPlayer";
 import ConfigurationModal from "@/components/ConfigurationModal";
 import { useVideos } from "@/hooks/useVideos";
@@ -764,6 +765,86 @@ const DePinDashboardWrapper: React.FC = () => {
   return <DePinDashboard filecoinConfig={filecoinConfig} onRequireSettings={openSettings} />;
 };
 
+// Wrapper component for VideoGrid to handle upload functionality
+const MyVideosPage: React.FC = () => {
+  const { refreshVideos } = useVideos();
+  const { uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+  const { openSettings } = useSettingsNavigation();
+
+  // Load Filecoin config on mount
+  useEffect(() => {
+    const loadFilecoinConfig = async () => {
+      try {
+        const { ipcRenderer } = require("electron");
+        const config = await ipcRenderer.invoke("get-filecoin-config");
+        if (config) {
+          setFilecoinConfig(config);
+        }
+      } catch (error) {
+        console.error("Failed to load Filecoin config:", error);
+      }
+    };
+    loadFilecoinConfig();
+  }, []);
+
+  const handleUpload = useCallback(
+    async (video: Video) => {
+      if (!filecoinConfig) {
+        openSettings("filecoin");
+        return;
+      }
+
+      try {
+        await uploadVideoToFilecoin(video.path, filecoinConfig);
+        console.log(`✅ Uploaded ${video.title} to Filecoin`);
+        await refreshVideos();
+      } catch (error) {
+        console.error(`❌ Failed to upload ${video.title} to Filecoin:`, error);
+      }
+    },
+    [filecoinConfig, uploadVideoToFilecoin, refreshVideos, openSettings]
+  );
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        height: "100vh",
+        backgroundColor: "#FFFFFF",
+        borderRadius: "16px",
+        overflow: "hidden",
+        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
+        margin: "8px",
+        border: "1px solid #F0F0F0",
+      }}
+    >
+      <Box
+        sx={{
+          background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
+          borderRight: "1px solid #E8E8E8",
+        }}
+      >
+        <Sidebar />
+      </Box>
+
+      <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+        <Box
+          sx={{
+            flexGrow: 1,
+            backgroundColor: "#FFFFFF",
+            padding: "16px",
+            height: "100%",
+            overflow: "auto",
+          }}
+        >
+          <VideoGrid onUpload={handleUpload} />
+        </Box>
+      </Box>
+    </Box>
+  );
+};
+
 const App: React.FC = () => {
   return (
     <SettingsNavigationProvider>
@@ -779,6 +860,7 @@ const App: React.FC = () => {
           <Router>
             <Routes>
               <Route path="/" element={<MainApp />} />
+              <Route path="/my-videos" element={<MyVideosPage />} />
               <Route
                 path="/livestream-recorder"
                 element={

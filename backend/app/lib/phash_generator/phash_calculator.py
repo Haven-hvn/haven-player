@@ -9,7 +9,6 @@ from PIL import Image  # PIL turns images to frames
 import numpy as np  # Numpy is used for combining images(arrays)
 import imagehash  # Gets the image phash
 import os
-import random
 
 # Constants
 SPRITE_WIDTH = 160  # pixels
@@ -100,11 +99,22 @@ def create_sprite(frames):
     return sprite
 
 def calculate_phash(video_path):
-    return f"{random.randint(0, 1000000)}"
-    # frames = extract_frames(video_path)
-    # if not frames:
-    #     print("No frames extracted")
-    #     return None
-    # sprite = create_sprite(frames)
-    # phash = imagehash.phash(sprite)
-    # return str(phash)
+    """
+    Calculate perceptual hash for a video.
+    Returns a hex string representation of the hash, or None if calculation fails.
+    """
+    if not CV2_AVAILABLE:
+        print(f"Warning: cv2 not available, cannot calculate phash for {video_path}")
+        return None
+    
+    try:
+        frames = extract_frames(video_path)
+        if not frames:
+            print(f"No frames extracted from {video_path}")
+            return None
+        sprite = create_sprite(frames)
+        phash = imagehash.phash(sprite)
+        return str(phash)
+    except Exception as e:
+        print(f"Error calculating phash for {video_path}: {e}")
+        return None

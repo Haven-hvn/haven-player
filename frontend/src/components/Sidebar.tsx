@@ -68,7 +68,7 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
 
   const personalItems: NavItem[] = useMemo(
     () => [
-      { icon: MyVideosIcon, label: "My Videos", path: "/", active: location.pathname === "/" },
+      { icon: MyVideosIcon, label: "My Videos", path: "/my-videos", active: location.pathname === "/my-videos" },
       { icon: LikesIcon, label: "Likes", path: "/", active: false }, // TODO: Implement likes feature
       { icon: FoldersIcon, label: "Folders", path: "/", active: false }, // TODO: Implement folders feature
     ],

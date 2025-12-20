@@ -869,6 +869,15 @@ const VideoPlayer: React.FC = () => {
     }
   }, [selectedSource, playbackSource, video, decryptedUrl, decryptionStatus.status, decryptVideo, clearDecryptedUrl]);
 
+  // Clear playback errors when decryption completes successfully
+  useEffect(() => {
+    if (decryptionStatus.status === 'completed' && decryptedUrl) {
+      // Clear any previous errors since we now have a valid decrypted source
+      controls.clearError();
+      console.log('[VideoPlayer] Decryption completed, cleared any previous errors');
+    }
+  }, [decryptionStatus.status, decryptedUrl, controls]);
+
   // Auto-hide controls
   const showControls = useCallback(() => {
     setControlsVisible(true);
@@ -955,8 +964,14 @@ const VideoPlayer: React.FC = () => {
   }, [handleSuspend]);
 
   const handleVideoAbort = useCallback(() => {
+    // Don't treat abort as an error when decryption is in progress
+    // The video element may abort when switching from encrypted to decrypted source
+    if (decryptionStatus.status === 'loading' || decryptionStatus.status === 'decrypting') {
+      console.log('[VideoPlayer] Load aborted during decryption - ignoring');
+      return;
+    }
     handleAbort();
-  }, [handleAbort]);
+  }, [handleAbort, decryptionStatus.status]);
 
   // Progress bar hover handlers
   const handleProgressHover = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

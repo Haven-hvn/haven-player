@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import Mock
 
 from arkiv.types import Attributes, EntityKey
+from requests.exceptions import HTTPError
+from requests.models import Response
 
 from app.models.video import Timestamp, Video
 from app.services.arkiv_sync import (
@@ -12,6 +15,7 @@ from app.services.arkiv_sync import (
     ArkivSyncConfig,
     _build_attributes,
     _build_payload,
+    _is_413_error,
 )
 
 
@@ -114,25 +118,38 @@ def make_timestamp(tag: str) -> Timestamp:
     )
 
 
-def test_build_payload_excludes_path_and_includes_cid_hash_and_encrypted() -> None:
+def test_build_payload_excludes_path_and_optimized_structure() -> None:
     video = make_video()
     payload = _build_payload(video, [make_timestamp("car")])
     assert "path" not in payload
-    # For non-encrypted videos, CID-related fields are omitted from payload
-    assert payload["cid_hash"] is None
-    assert payload["filecoin_root_cid"] is None
-    assert payload["encrypted_cid"] is None  # encryption metadata not set
+    # Optimized payload only includes essential fields
+    assert "cid_hash" in payload  # Always included for deduplication
+    assert "is_encrypted" in payload
+    assert "timestamps" in payload
     assert payload["timestamps"][0]["tag"] == "car"
+    # For non-encrypted videos, encrypted CID fields are not included
+    assert "encrypted_cid" not in payload
+    assert "filecoin_root_cid" not in payload
+    assert "lit_encryption_metadata" not in payload
+    # Redundant fields (already in attributes or recalculatable) are excluded
+    assert "title" not in payload
+    assert "duration" not in payload
+    assert "file_size" not in payload
 
 
 def test_build_attributes_flat_and_typed() -> None:
     video = make_video()
     attributes = _build_attributes(video, [make_timestamp("car"), make_timestamp("tree")])
     assert attributes["title"] == "Sample"
-    assert attributes["duration_s"] == 120
     assert "path" not in attributes
     assert attributes["tags"] == "car,tree"
+    assert attributes["phash"] == "ffee"
     assert "cid_hash" not in attributes
+    # Recalculatable fields should NOT be in attributes
+    assert "duration_s" not in attributes
+    assert "file_size" not in attributes
+    assert "file_ext" not in attributes
+    assert "codec" not in attributes
 
 
 def test_sync_disabled_when_no_key() -> None:
@@ -167,9 +184,14 @@ def test_sync_creates_entity_and_persists_key() -> None:
     created_payload = dummy_client.arkiv.created[0]["payload"]
     payload_dict = json.loads(created_payload.decode("utf-8"))
     assert "path" not in payload_dict
-    assert payload_dict["cid_hash"] is None  # omitted when not encrypted
-    assert payload_dict["filecoin_root_cid"] is None
-    assert payload_dict["encrypted_cid"] is None
+    # Optimized payload structure
+    assert "cid_hash" in payload_dict  # Always included for deduplication
+    assert "is_encrypted" in payload_dict
+    assert "timestamps" in payload_dict
+    # Encrypted fields not included when not encrypted
+    assert "encrypted_cid" not in payload_dict
+    assert "filecoin_root_cid" not in payload_dict
+    assert "lit_encryption_metadata" not in payload_dict
 
 
 def test_sync_skips_local_only() -> None:
@@ -184,4 +206,87 @@ def test_sync_skips_local_only() -> None:
     assert result is None
     assert not dummy_client.arkiv.created
     assert not session.committed
+
+
+def test_is_413_error_detects_http_413() -> None:
+    """Test that _is_413_error correctly identifies HTTP 413 errors."""
+    response = Mock(spec=Response)
+    response.status_code = 413
+    error = HTTPError(response=response)
+    
+    assert _is_413_error(error) is True
+
+
+def test_is_413_error_detects_413_in_message() -> None:
+    """Test that _is_413_error detects 413 errors from error messages."""
+    error = Exception("413 Client Error: Request Entity Too Large for url: https://example.com/rpc")
+    
+    assert _is_413_error(error) is True
+
+
+def test_is_413_error_ignores_other_errors() -> None:
+    """Test that _is_413_error returns False for non-413 errors."""
+    response = Mock(spec=Response)
+    response.status_code = 500
+    error = HTTPError(response=response)
+    
+    assert _is_413_error(error) is False
+    
+    other_error = Exception("Some other error")
+    assert _is_413_error(other_error) is False
+
+
+def test_sync_handles_413_error_gracefully() -> None:
+    """Test that sync_video returns None gracefully when encountering a 413 error."""
+    config = ArkivSyncConfig(enabled=True, private_key="0x" + "1" * 64, rpc_url="http://localhost:8545")
+    
+    class ErrorArkivModule:
+        def update_entity(
+            self,
+            key: EntityKey,
+            payload: bytes,
+            content_type: str,
+            attributes: Attributes,
+            expires_in: int,
+        ) -> tuple[EntityKey, object]:
+            response = Mock(spec=Response)
+            response.status_code = 413
+            raise HTTPError(response=response)
+    
+    class ErrorArkivClient:
+        def __init__(self) -> None:
+            self.arkiv = ErrorArkivModule()
+    
+    client = ArkivSyncClient(config, arkiv_factory=lambda *_args, **_kwargs: ErrorArkivClient())
+    video = make_video(arkiv_entity_key="0x123")
+    session = DummySession()
+    
+    result = client.sync_video(session, video, [])
+    
+    # Should return None gracefully instead of raising
+    assert result is None
+    assert not session.committed
+
+
+def test_build_payload_removes_ciphertext_from_metadata() -> None:
+    """Test that ciphertext is removed from lit_encryption_metadata in payload."""
+    video = make_video(
+        is_encrypted=True,
+        lit_encryption_metadata=json.dumps({
+            "ciphertext": "large_encrypted_data_string",
+            "dataToEncryptHash": "hash123",
+            "accessControlConditions": [],
+            "chain": "ethereum"
+        })
+    )
+    payload = _build_payload(video, [])
+    
+    assert "lit_encryption_metadata" in payload
+    metadata = json.loads(payload["lit_encryption_metadata"])
+    # ciphertext should be removed
+    assert "ciphertext" not in metadata
+    # Other fields should remain
+    assert "dataToEncryptHash" in metadata
+    assert "accessControlConditions" in metadata
+    assert "chain" in metadata
 

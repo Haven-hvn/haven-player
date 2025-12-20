@@ -525,13 +525,19 @@ export async function decryptFileFromStorage(
 
   onProgress?.('Decrypting file...');
   
-  // Ensure ciphertext is a string (Lit Protocol expects string, not Uint8Array)
+  // Use encryptedData from Filecoin if available (preferred - avoids duplication)
+  // Fallback to metadata.ciphertext for backward compatibility
+  // Lit Protocol expects ciphertext as a string
   let ciphertext: string;
-  if (typeof metadata.ciphertext === 'string') {
+  if (encryptedData && encryptedData.length > 0) {
+    // Convert Uint8Array from Filecoin to string
+    // The encryptedData is the same as metadata.ciphertext, just in Uint8Array format
+    ciphertext = new TextDecoder().decode(encryptedData);
+  } else if (typeof metadata.ciphertext === 'string') {
+    // Fallback: use metadata.ciphertext if encryptedData is not available (backward compatibility)
     ciphertext = metadata.ciphertext;
   } else {
-    // If ciphertext is not a string, try to convert it
-    // This shouldn't happen, but handle it gracefully
+    // Last resort: try to convert metadata.ciphertext if it's not a string
     console.warn('[Lit] Ciphertext is not a string, attempting conversion');
     ciphertext = new TextDecoder().decode(metadata.ciphertext as unknown as Uint8Array);
   }

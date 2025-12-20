@@ -612,7 +612,6 @@ const VideoPlayer: React.FC = () => {
   
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
-  const videoElementRef = useRef<HTMLVideoElement>(null);
 
   // Lit Protocol decryption
   const {
@@ -659,6 +658,7 @@ const VideoPlayer: React.FC = () => {
   const {
     state,
     controls,
+    playerRef,
     containerRef,
     handleReady: handleControlsReady,
     handleError: handleControlsError,
@@ -900,14 +900,14 @@ const VideoPlayer: React.FC = () => {
 
   // Video element event handlers
   const handleVideoTimeUpdate = useCallback(() => {
-    const video = videoElementRef.current;
+    const video = playerRef.current;
     if (video && state.duration > 0) {
       setPlayed(video.currentTime / state.duration);
     }
   }, [state.duration, setPlayed]);
 
   const handleVideoLoadedMetadata = useCallback(() => {
-    const video = videoElementRef.current;
+    const video = playerRef.current;
     if (video) {
       setDuration(video.duration);
       handleControlsReady();
@@ -916,7 +916,7 @@ const VideoPlayer: React.FC = () => {
   }, [setDuration, handleControlsReady]);
 
   const handleVideoError = useCallback(() => {
-    const video = videoElementRef.current;
+    const video = playerRef.current;
     const mediaError = video?.error ?? null;
     handleControlsError(mediaError);
   }, [handleControlsError]);
@@ -989,7 +989,7 @@ const VideoPlayer: React.FC = () => {
   const handleSeek = useCallback((_event: Event, value: number | number[]) => {
     if (typeof value === 'number') {
       controls.seek(value);
-      const video = videoElementRef.current;
+      const video = playerRef.current;
       if (video) {
         video.currentTime = value * state.duration;
       }
@@ -1004,7 +1004,7 @@ const VideoPlayer: React.FC = () => {
 
   const handleTimestampClick = useCallback((fraction: number) => {
     controls.seek(fraction);
-    const video = videoElementRef.current;
+    const video = playerRef.current;
     if (video) {
       video.currentTime = fraction * state.duration;
     }
@@ -1012,7 +1012,7 @@ const VideoPlayer: React.FC = () => {
 
   // Sync video element with state
   useEffect(() => {
-    const video = videoElementRef.current;
+    const video = playerRef.current;
     if (video) {
       video.volume = state.volume;
       video.muted = state.muted;
@@ -1023,7 +1023,7 @@ const VideoPlayer: React.FC = () => {
 
   // Play/pause sync
   useEffect(() => {
-    const video = videoElementRef.current;
+    const video = playerRef.current;
     if (video && playerReady) {
       if (state.playing) {
         video.play().catch(() => {});
@@ -1209,7 +1209,7 @@ const VideoPlayer: React.FC = () => {
         {videoUrl ? (
           <>
             <video
-              ref={videoElementRef}
+              ref={playerRef}
               src={videoUrl}
               onClick={handleVideoClick}
               onDoubleClick={handleVideoDoubleClick}

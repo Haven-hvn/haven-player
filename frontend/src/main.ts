@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, exec, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { platform } from 'os';
@@ -98,35 +98,29 @@ function spawnBackendProcess(
   
   if (isWindows) {
     // On Windows, spawn a visible cmd window so users can see backend logs
-    // Use 'start' command to open a new window with a title
+    // Use exec with 'start' command to open a new window
     // /k keeps the window open after the command finishes (so we can see errors)
     
-    // Build the entire command as a single string to avoid argument parsing issues
-    // start "" "title" opens a new window - first "" is required, second is the title
-    // We use cmd /k to keep the window open and run the Python command
-    const fullCommand = `start "HavenPlayerBackend" /D "${backendDir}" cmd /k "${pythonExecutable}" ${uvicornArgs.join(' ')}`;
+    const fullCommand = `start "HavenPlayerBackend" cmd /k ""${pythonExecutable}" ${uvicornArgs.join(' ')}"`;
     
-    console.log(`📝 Windows command: cmd.exe /c ${fullCommand}`);
+    console.log(`📝 Windows command: ${fullCommand}`);
+    console.log(`📁 Working directory: ${backendDir}`);
     
-    childProcess = spawn('cmd.exe', ['/c', fullCommand], {
+    // Use exec for shell commands on Windows - it handles the parsing correctly
+    const execProcess = exec(fullCommand, {
       cwd: backendDir,
       env,
-      stdio: 'ignore',  // Detach from parent stdio
-      detached: true,   // Run independently
-      windowsHide: true, // Hide the initial cmd that spawns the window
-    });
-    
-    // Unref so the parent process can exit independently
-    childProcess.unref();
-    
-    childProcess.on('error', (error) => {
-      console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
-      console.error(`   Python executable: ${pythonExecutable}`);
-      console.error(`   Backend directory: ${backendDir}`);
-      if (venvPath) {
-        console.error(`   Virtual environment: ${venvPath}`);
+      windowsHide: false,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
+        console.error(`   stdout: ${stdout}`);
+        console.error(`   stderr: ${stderr}`);
       }
     });
+    
+    // Return a ChildProcess-like object
+    childProcess = execProcess as ChildProcess;
   } else {
     // On Unix-like systems, use standard spawn with inherited stdio
     console.log(`📝 Command: ${pythonExecutable} ${uvicornArgs.join(' ')}`);
@@ -200,8 +194,9 @@ async function tryStartBackend(): Promise<void> {
       return;
     }
 
-    // Load Arkiv RPC URL from config
+    // Load Arkiv config
     let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
+    let arkivSyncEnabled = false;
     try {
       const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
       if (fs.existsSync(arkivConfigPath)) {
@@ -211,6 +206,7 @@ async function tryStartBackend(): Promise<void> {
         if (arkivConfig.rpcUrl) {
           arkivRpcUrl = arkivConfig.rpcUrl;
         }
+        arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
       }
     } catch (err) {
       console.error('Failed to load Arkiv config for auto-start:', err);
@@ -222,6 +218,7 @@ async function tryStartBackend(): Promise<void> {
       FILECOIN_PRIVATE_KEY: cfg.privateKey,
       FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
       ARKIV_RPC_URL: arkivRpcUrl,
+      ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
     };
 
     console.log('🚀 Auto-starting backend with configured environment variables...');
@@ -421,42 +418,43 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
 ipcMain.handle('get-arkiv-config', async () => {
   try {
     const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
+    let syncEnabled = false;
+    let rpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
+    
     if (fs.existsSync(configPath)) {
       const fileBuffer = fs.readFileSync(configPath);
       const data = fileBuffer.toString('utf-8');
       const config = JSON.parse(data);
-      
-      // Check if Filecoin private key exists (shared key)
-      const filecoinConfig = await loadDecryptedFilecoinConfig();
-      const enabled = !!filecoinConfig?.privateKey;
-      
-      return {
-        rpcUrl: config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc',
-        enabled,
-      };
+      rpcUrl = config.rpcUrl || rpcUrl;
+      syncEnabled = config.syncEnabled ?? false;
     }
-    // Return default if no config exists
+    
+    // Check if Filecoin private key exists (shared key)
     const filecoinConfig = await loadDecryptedFilecoinConfig();
     const enabled = !!filecoinConfig?.privateKey;
+    
     return {
-      rpcUrl: 'https://mendoza.hoodi.arkiv.network/rpc',
+      rpcUrl,
       enabled,
+      syncEnabled,
     };
   } catch (error) {
     console.error('Failed to load Arkiv config:', error);
     return {
       rpcUrl: 'https://mendoza.hoodi.arkiv.network/rpc',
       enabled: false,
+      syncEnabled: false,
     };
   }
 });
 
-ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string }) => {
+ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string; syncEnabled?: boolean }) => {
   try {
     const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     
     const dataToSave = {
       rpcUrl: config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc',
+      syncEnabled: config.syncEnabled ?? false,
     };
     
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
@@ -502,8 +500,9 @@ ipcMain.handle('start-backend', async () => {
     throw new Error('Filecoin config with private key is not available. Please configure Filecoin settings first.');
   }
 
-  // Load Arkiv RPC URL from config
+  // Load Arkiv config
   let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
+  let arkivSyncEnabled = false;
   try {
     const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     if (fs.existsSync(arkivConfigPath)) {
@@ -513,6 +512,7 @@ ipcMain.handle('start-backend', async () => {
       if (arkivConfig.rpcUrl) {
         arkivRpcUrl = arkivConfig.rpcUrl;
       }
+      arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
     }
   } catch (err) {
     console.error('Failed to load Arkiv config for backend:', err);
@@ -525,6 +525,7 @@ ipcMain.handle('start-backend', async () => {
     FILECOIN_PRIVATE_KEY: cfg.privateKey,
     FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
     ARKIV_RPC_URL: arkivRpcUrl,
+    ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
   };
 
   const { pythonPath, venvPath } = findPythonExecutable(backendDir);
@@ -591,8 +592,9 @@ ipcMain.handle('restart-backend', async () => {
     throw new Error('Filecoin config with private key is not available. Please configure Filecoin settings first.');
   }
 
-  // Load Arkiv RPC URL from config
+  // Load Arkiv config
   let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
+  let arkivSyncEnabled = false;
   try {
     const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     if (fs.existsSync(arkivConfigPath)) {
@@ -602,6 +604,7 @@ ipcMain.handle('restart-backend', async () => {
       if (arkivConfig.rpcUrl) {
         arkivRpcUrl = arkivConfig.rpcUrl;
       }
+      arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
     }
   } catch (err) {
     console.error('Failed to load Arkiv config for backend restart:', err);
@@ -613,6 +616,7 @@ ipcMain.handle('restart-backend', async () => {
     FILECOIN_PRIVATE_KEY: cfg.privateKey,
     FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
     ARKIV_RPC_URL: arkivRpcUrl,
+    ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
   };
 
   const { pythonPath, venvPath } = findPythonExecutable(backendDir);

@@ -20,6 +20,7 @@ export interface FilecoinConfig {
 export interface ArkivConfig {
   rpcUrl?: string;
   enabled?: boolean; // Computed from whether private key exists (shared with Filecoin)
+  syncEnabled: boolean; // User toggle to enable/disable Arkiv sync
 }
 
 export interface FilecoinUploadResult {

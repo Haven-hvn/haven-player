@@ -116,6 +116,9 @@ def build_arkiv_config() -> ArkivSyncConfig:
     Build Arkiv sync config reusing the same key as Filecoin/Lit to avoid
     double configuration. Single source of truth is FILECOIN_PRIVATE_KEY;
     ARKIV_PRIVATE_KEY is kept only as a legacy fallback.
+    
+    The ARKIV_SYNC_ENABLED environment variable controls whether sync is enabled
+    (user toggle in UI). If not set, defaults to False for safety.
     """
     shared_key = os.getenv("FILECOIN_PRIVATE_KEY")
     legacy_override = os.getenv("ARKIV_PRIVATE_KEY")
@@ -123,7 +126,19 @@ def build_arkiv_config() -> ArkivSyncConfig:
     # Prefer the shared Filecoin/Lit key; fall back to legacy override
     private_key = shared_key or legacy_override
     rpc_url = os.getenv("ARKIV_RPC_URL") or "https://mendoza.hoodi.arkiv.network/rpc"
-    enabled = bool(private_key)
+    
+    # Check if sync is enabled via user toggle (ARKIV_SYNC_ENABLED env var)
+    sync_enabled_str = os.getenv("ARKIV_SYNC_ENABLED", "false").lower()
+    sync_enabled = sync_enabled_str in ("true", "1", "yes")
+    
+    # Arkiv is enabled only if both: user toggle is on AND private key exists
+    enabled = bool(private_key) and sync_enabled
+    
+    if private_key and not sync_enabled:
+        logger.info("🔒 Arkiv sync is disabled by user setting (ARKIV_SYNC_ENABLED=false)")
+    elif not private_key:
+        logger.info("🔑 Arkiv sync is disabled: no private key configured")
+    
     return ArkivSyncConfig(enabled=enabled, private_key=private_key, rpc_url=rpc_url)
 
 

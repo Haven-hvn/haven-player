@@ -75,6 +75,7 @@ interface ConfigurationModalProps {
 const defaultArkivConfig: ArkivConfig = {
   rpcUrl: "https://mendoza.hoodi.arkiv.network/rpc",
   enabled: false,
+  syncEnabled: false,
 };
 
 const defaultFilecoinConfig: FilecoinConfig = {
@@ -212,6 +213,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         setArkivConfig({
           rpcUrl: savedConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc",
           enabled: savedConfig.enabled ?? false,
+          syncEnabled: savedConfig.syncEnabled ?? false,
         });
       } else {
         setArkivConfig(defaultArkivConfig);
@@ -347,6 +349,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       } else if (isArkivTab) {
         await ipcRenderer.invoke("save-arkiv-config", {
           rpcUrl: arkivConfig.rpcUrl,
+          syncEnabled: arkivConfig.syncEnabled,
         });
         // Reload to get updated enabled status
         await loadArkivConfig();
@@ -846,48 +849,84 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         Arkiv Configuration
       </Typography>
 
-      {/* Status Indicator */}
+      {/* Enable/Disable Toggle */}
       <Box
         sx={{
           display: "flex",
           alignItems: "center",
-          gap: 2,
+          justifyContent: "space-between",
           p: 2,
           borderRadius: "8px",
-          backgroundColor: arkivConfig.enabled ? "#E8F5E9" : "#FFF3E0",
-          border: `1px solid ${arkivConfig.enabled ? "#4CAF50" : "#FF9800"}`,
+          backgroundColor: arkivConfig.syncEnabled ? "#E8F5E9" : "#F5F5F5",
+          border: `1px solid ${arkivConfig.syncEnabled ? "#4CAF50" : "#E0E0E0"}`,
         }}
       >
-        {arkivConfig.enabled ? (
-          <CheckCircleIcon sx={{ color: "#4CAF50", fontSize: 24 }} />
-        ) : (
-          <CancelIcon sx={{ color: "#FF9800", fontSize: 24 }} />
-        )}
-        <Box sx={{ flex: 1 }}>
-          <Typography
-            sx={{
-              fontWeight: 500,
-              fontSize: "14px",
-              color: "#000000",
-              mb: 0.5,
-            }}
-          >
-            {arkivConfig.enabled
-              ? "Arkiv Sync Enabled"
-              : "Arkiv Sync Disabled"}
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: "12px",
-              color: "#6B6B6B",
-            }}
-          >
-            {arkivConfig.enabled
-              ? "Videos can be synced to Arkiv blockchain. Private key is configured in Filecoin settings."
-              : "Configure a private key in Filecoin settings to enable Arkiv sync."}
-          </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          {arkivConfig.syncEnabled ? (
+            <CheckCircleIcon sx={{ color: "#4CAF50", fontSize: 24 }} />
+          ) : (
+            <CancelIcon sx={{ color: "#9E9E9E", fontSize: 24 }} />
+          )}
+          <Box>
+            <Typography
+              sx={{
+                fontWeight: 500,
+                fontSize: "14px",
+                color: "#000000",
+                mb: 0.5,
+              }}
+            >
+              Sync videos to Arkiv blockchain
+            </Typography>
+            <Typography
+              sx={{
+                fontSize: "12px",
+                color: "#6B6B6B",
+              }}
+            >
+              {arkivConfig.syncEnabled
+                ? "Videos with sharing enabled will be synced to Arkiv"
+                : "Arkiv sync is disabled"}
+            </Typography>
+          </Box>
         </Box>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={arkivConfig.syncEnabled}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setArkivConfig((prev: ArkivConfig) => ({
+                  ...prev,
+                  syncEnabled: e.target.checked,
+                }))
+              }
+              disabled={!arkivConfig.enabled}
+              color="success"
+            />
+          }
+          label=""
+        />
       </Box>
+
+      {/* Private Key Status */}
+      {!arkivConfig.enabled && (
+        <Alert
+          severity="warning"
+          sx={{
+            backgroundColor: "#FFF3E0",
+            color: "#E65100",
+            border: "1px solid #FFCC80",
+            borderRadius: "8px",
+            "& .MuiAlert-icon": {
+              color: "#E65100",
+            },
+          }}
+        >
+          <Typography sx={{ fontSize: "12px" }}>
+            <strong>Private key required:</strong> Configure a private key in the Filecoin settings tab to enable Arkiv sync.
+          </Typography>
+        </Alert>
+      )}
 
       <TextField
         fullWidth
@@ -901,6 +940,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         }
         placeholder="https://mendoza.hoodi.arkiv.network/rpc"
         helperText="Ethereum RPC endpoint for Arkiv blockchain. Default: https://mendoza.hoodi.arkiv.network/rpc"
+        disabled={!arkivConfig.syncEnabled}
       />
 
       <Alert
@@ -964,7 +1004,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           Backend Configuration
         </Typography>
         <Typography variant="body2" sx={{ color: "#6B6B6B", fontSize: "12px" }}>
-          After changing the Arkiv RPC URL or Filecoin private key, you must restart the backend for changes to take effect.
+          After changing Arkiv settings (sync toggle, RPC URL) or Filecoin private key, you must restart the backend for changes to take effect.
         </Typography>
         <Box sx={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
           <Button

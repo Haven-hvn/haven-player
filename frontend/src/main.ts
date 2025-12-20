@@ -82,6 +82,7 @@ function spawnBackendProcess(
   baseEnv: NodeJS.ProcessEnv
 ): ChildProcess {
   const isWindows = platform() === 'win32';
+  const args = ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'];
   
   // Activate venv environment (sets PATH, VIRTUAL_ENV, etc.)
   const env = activateVenvEnvironment(venvPath, backendDir, baseEnv);
@@ -92,53 +93,30 @@ function spawnBackendProcess(
   if (venvPath) {
     console.log(`🔧 Virtual environment: ${venvPath}`);
   }
+  console.log(`📝 Command: ${pythonExecutable} ${args.join(' ')}`);
   
-  let childProcess: ChildProcess;
+  // Use spawn directly with the Python executable
+  // On Windows, we spawn python.exe directly (no shell needed when using full path)
+  // The detached option on Windows creates a new process group
+  const childProcess = spawn(pythonExecutable, args, {
+    cwd: backendDir,
+    env,
+    stdio: 'inherit',
+    // On Windows, don't use shell - spawn the exe directly
+    // This avoids quoting issues with cmd.exe
+    detached: false,
+    windowsHide: false,
+  });
   
-  if (isWindows) {
-    // On Windows, explicitly use cmd.exe /c with the full command string
-    // Quote the Python path to handle spaces in paths
-    const quotedPython = `"${pythonExecutable}"`;
-    const uvicornArgs = '-m uvicorn app.main:app --host 0.0.0.0 --port 8000';
-    const fullCommand = `${quotedPython} ${uvicornArgs}`;
-    
-    console.log(`📝 Windows command: cmd.exe /c ${fullCommand}`);
-    
-    childProcess = spawn('cmd.exe', ['/c', fullCommand], {
-      cwd: backendDir,
-      env,
-      stdio: 'inherit',
-      windowsHide: false, // Show the window so we can see output
-    });
-    
-    childProcess.on('error', (error) => {
-      console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
-      console.error(`   Command: ${fullCommand}`);
-      console.error(`   Python executable: ${pythonExecutable}`);
-      console.error(`   Backend directory: ${backendDir}`);
-      if (venvPath) {
-        console.error(`   Virtual environment: ${venvPath}`);
-      }
-    });
-  } else {
-    // On Unix-like systems, use standard spawn
-    const args = ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'];
-    
-    childProcess = spawn(pythonExecutable, args, {
-      cwd: backendDir,
-      env,
-      stdio: 'inherit',
-    });
-    
-    childProcess.on('error', (error) => {
-      console.error(`❌ Failed to start backend process: ${error.message}`);
-      console.error(`   Python executable: ${pythonExecutable}`);
-      console.error(`   Backend directory: ${backendDir}`);
-      if (venvPath) {
-        console.error(`   Virtual environment: ${venvPath}`);
-      }
-    });
-  }
+  childProcess.on('error', (error) => {
+    console.error(`❌ Failed to start backend process: ${error.message}`);
+    console.error(`   Python executable: ${pythonExecutable}`);
+    console.error(`   Arguments: ${args.join(' ')}`);
+    console.error(`   Backend directory: ${backendDir}`);
+    if (venvPath) {
+      console.error(`   Virtual environment: ${venvPath}`);
+    }
+  });
   
   return childProcess;
 }

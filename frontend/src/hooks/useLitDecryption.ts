@@ -130,8 +130,28 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
 
         return blobUrl;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Decryption failed';
-        console.error('[Lit Decryption] Error:', errorMessage);
+        let errorMessage = 'Decryption failed';
+        
+        if (error instanceof Error) {
+          errorMessage = error.message;
+          
+          // Handle DOMException errors (like attenuation parsing errors)
+          if (error.name === 'DOMException') {
+            console.error('[Lit Decryption] DOMException:', error.message, error);
+            errorMessage = `Decryption error: ${error.message}. Please check your wallet configuration and try again.`;
+          } else if (error.message.includes('session key') || error.message.includes('signing shares')) {
+            // Handle Lit Protocol session signature errors
+            console.error('[Lit Decryption] Session signature error:', error.message, error);
+            errorMessage = `Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`;
+          } else {
+            console.error('[Lit Decryption] Error:', errorMessage, error);
+          }
+        } else if (error && typeof error === 'object' && 'message' in error) {
+          errorMessage = String(error.message);
+          console.error('[Lit Decryption] Error:', errorMessage, error);
+        } else {
+          console.error('[Lit Decryption] Unknown error:', error);
+        }
         
         setDecryptionStatus({
           status: 'error',

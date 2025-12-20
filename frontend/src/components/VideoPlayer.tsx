@@ -44,6 +44,8 @@ const VideoPlayer: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [playbackSource, setPlaybackSource] = useState<PlaybackResolution | null>(null);
   const [selectedSource, setSelectedSource] = useState<SelectedSource>("local");
+  const [playerReady, setPlayerReady] = useState(false);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const playerRef = React.useRef<any>(null);
 
@@ -86,19 +88,50 @@ const VideoPlayer: React.FC = () => {
       return null;
     }
     if (playbackSource.type === "local") {
-      return `file://${encodeURI(playbackSource.uri)}`;
+      // Normalize file path for Electron - ensure proper encoding
+      // On Windows, paths start with drive letter (C:\), so we need to handle that
+      let normalizedPath = playbackSource.uri.replace(/\\/g, '/');
+      // Ensure we have a leading slash for absolute paths
+      if (!normalizedPath.startsWith('/') && normalizedPath.includes(':')) {
+        // Windows path like C:/path/to/file
+        normalizedPath = '/' + normalizedPath;
+      }
+      // Encode the path but keep the file:// protocol
+      const encodedPath = encodeURI(normalizedPath).replace(/#/g, '%23');
+      return `file://${encodedPath}`;
     }
     if (playbackSource.type === "ipfs") {
       return playbackSource.uri;
     }
     if (playbackSource.type === "both") {
       if (selectedSource === "local") {
-        return `file://${encodeURI(playbackSource.local.uri)}`;
+        // Normalize file path for Electron - ensure proper encoding
+        // On Windows, paths start with drive letter (C:\), so we need to handle that
+        let normalizedPath = playbackSource.local.uri.replace(/\\/g, '/');
+        // Ensure we have a leading slash for absolute paths
+        if (!normalizedPath.startsWith('/') && normalizedPath.includes(':')) {
+          // Windows path like C:/path/to/file
+          normalizedPath = '/' + normalizedPath;
+        }
+        // Encode the path but keep the file:// protocol
+        const encodedPath = encodeURI(normalizedPath).replace(/#/g, '%23');
+        return `file://${encodedPath}`;
       }
       return playbackSource.ipfs.uri;
     }
     return null;
   }, [decryptedUrl, isEncrypted, playbackSource, selectedSource, shouldTreatAsEncrypted]);
+
+  // Reset player state when URL changes
+  useEffect(() => {
+    if (videoUrl) {
+      console.log('[VideoPlayer] Video URL changed:', videoUrl.substring(0, 100));
+      setPlayerReady(false);
+      setPlaybackError(null);
+      setPlaying(false);
+      setPlayed(0);
+    }
+  }, [videoUrl]);
 
   // Check if we're still preparing the video (loading or decrypting)
   const isPreparing =
@@ -257,6 +290,19 @@ const VideoPlayer: React.FC = () => {
     }
   };
 
+  const handleReady = () => {
+    console.log('[VideoPlayer] Player ready, URL:', videoUrl?.substring(0, 100));
+    setPlayerReady(true);
+    setPlaybackError(null);
+  };
+
+  const handleError = (error: Error | string) => {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[VideoPlayer] Playback error:', errorMessage, 'URL:', videoUrl?.substring(0, 100));
+    setPlaybackError(errorMessage);
+    setPlaying(false);
+  };
+
   const handleBack = () => {
     navigate('/');
   };
@@ -344,20 +390,129 @@ const VideoPlayer: React.FC = () => {
     );
   }
 
+  // Determine player config based on URL type
+  const playerConfig = useMemo(() => {
+    if (!videoUrl) return undefined;
+    
+    console.log('[VideoPlayer] Configuring player for URL:', videoUrl.substring(0, 100));
+    
+    // For file:// URLs, use fileConfig with proper attributes
+    if (videoUrl.startsWith('file://')) {
+      return {
+        file: {
+          attributes: {
+            controls: false,
+            preload: 'auto',
+            crossOrigin: 'anonymous',
+          },
+          forceVideo: true,
+        },
+      };
+    }
+    
+    // For blob URLs (decrypted videos), use fileConfig
+    if (videoUrl.startsWith('blob:')) {
+      return {
+        file: {
+          attributes: {
+            controls: false,
+            preload: 'auto',
+            crossOrigin: 'anonymous',
+          },
+          forceVideo: true,
+        },
+      };
+    }
+    
+    // For HTTP/HTTPS URLs (IPFS), use fileConfig with video attributes
+    return {
+      file: {
+        attributes: {
+          controls: false,
+          preload: 'auto',
+          crossOrigin: 'anonymous',
+        },
+        forceVideo: true,
+      },
+    };
+  }, [videoUrl]);
+
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
-      <Box sx={{ position: 'relative', flexGrow: 1 }}>
-        <ReactPlayer
-          ref={playerRef}
-          url={videoUrl ?? undefined}
-          width="100%"
-          height="100%"
-          playing={playing}
-          // @ts-expect-error - react-player types mismatch
-          onProgress={handleProgress}
-          onDuration={handleDuration}
-          progressInterval={100}
-        />
+      <Box sx={{ position: 'relative', flexGrow: 1, backgroundColor: '#000' }}>
+        {videoUrl ? (
+          <>
+            <ReactPlayer
+              ref={playerRef}
+              url={videoUrl}
+              width="100%"
+              height="100%"
+              playing={playing && playerReady}
+              controls={false}
+              light={false}
+              pip={false}
+              config={playerConfig}
+              onReady={handleReady}
+              onError={handleError}
+              onProgress={handleProgress}
+              onDuration={handleDuration}
+              progressInterval={100}
+            />
+            {playbackError && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                  zIndex: 10,
+                }}
+              >
+                <Alert severity="error" sx={{ maxWidth: 500 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                    Playback Error
+                  </Typography>
+                  <Typography variant="body2">{playbackError}</Typography>
+                </Alert>
+              </Box>
+            )}
+            {!playerReady && !playbackError && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#000',
+                }}
+              >
+                <CircularProgress />
+              </Box>
+            )}
+          </>
+        ) : (
+          <Box
+            sx={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#000',
+            }}
+          >
+            <Typography color="text.secondary">No video URL available</Typography>
+          </Box>
+        )}
       </Box>
 
       <Paper
@@ -373,7 +528,11 @@ const VideoPlayer: React.FC = () => {
           <IconButton onClick={handleBack} size="large">
             <ArrowBackIcon />
           </IconButton>
-          <IconButton onClick={handlePlayPause} size="large">
+          <IconButton 
+            onClick={handlePlayPause} 
+            size="large"
+            disabled={!playerReady || !!playbackError || !videoUrl}
+          >
             {playing ? <PauseIcon /> : <PlayIcon />}
           </IconButton>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
@@ -486,6 +645,7 @@ const VideoPlayer: React.FC = () => {
             min={0}
             max={1}
             step={0.001}
+            disabled={!playerReady || !!playbackError || !videoUrl}
             sx={{ flexGrow: 1 }}
           />
           <Typography variant="body2">

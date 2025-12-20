@@ -150,35 +150,58 @@ Issued At: ${new Date().toISOString()}`;
 
 /**
  * Get session signatures for Lit Protocol operations
+ * @param client - Lit Node Client instance
+ * @param privateKey - Private key for authentication
+ * @param accessControlConditions - Access control conditions to create resource from
+ * @param chain - Chain name (default: 'ethereum')
  */
 async function getSessionSigs(
   client: LitNodeClient,
-  privateKey: string
+  privateKey: string,
+  accessControlConditions: EvmBasicAccessControlCondition[],
+  chain: string = 'ethereum'
 ): Promise<SessionSigsMap> {
   const authSig = await createAuthSigFromPrivateKey(privateKey);
   
-  // Create the resource for access control condition decryption
+  // Create the resource from access control conditions
+  // For access control condition decryption, we can use '*' as a wildcard
+  // which matches all access control conditions, or create a specific resource
+  // The Lit SDK will match the resource to the access control conditions during decryption
   const litResource = new LitAccessControlConditionResource('*');
   
   // Use LIT_ABILITY from constants - cast to avoid type conflicts between versions
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const decryptionAbility = (LIT_ABILITY as any).AccessControlConditionDecryption;
   
-  const sessionSigs = await client.getSessionSigs({
-    chain: 'ethereum',
-    resourceAbilityRequests: [
-      {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        resource: litResource as any,
-        ability: decryptionAbility,
+  try {
+    const sessionSigs = await client.getSessionSigs({
+      chain,
+      resourceAbilityRequests: [
+        {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          resource: litResource as any,
+          ability: decryptionAbility,
+        },
+      ],
+      authNeededCallback: async () => {
+        return authSig;
       },
-    ],
-    authNeededCallback: async () => {
-      return authSig;
-    },
-  });
+      expiration: new Date(Date.now() + 1000 * 60 * 60).toISOString(), // 1 hour expiration
+    });
 
-  return sessionSigs;
+    return sessionSigs;
+  } catch (error) {
+    // Better error handling for DOMException and other errors
+    if (error instanceof DOMException) {
+      console.error('[Lit] DOMException parsing attenuation:', error.message);
+      throw new Error(`Failed to create session signatures: ${error.message}`);
+    }
+    if (error instanceof Error) {
+      console.error('[Lit] Error creating session signatures:', error.message);
+      throw error;
+    }
+    throw new Error('Unknown error creating session signatures');
+  }
 }
 
 /**
@@ -258,25 +281,55 @@ export async function decryptVideo(
   
   onProgress?.('Authenticating wallet...');
   
-  // Get session signatures for decryption
-  const sessionSigs = await getSessionSigs(client, privateKey);
+  // Get session signatures for decryption with matching access control conditions
+  const sessionSigs = await getSessionSigs(
+    client,
+    privateKey,
+    metadata.accessControlConditions,
+    metadata.chain
+  );
 
   onProgress?.('Decrypting video...');
   
   // Get ciphertext - either from metadata or the encrypted data itself
-  const ciphertext = typeof encryptedData === 'string' 
-    ? encryptedData 
-    : metadata.ciphertext;
+  // Ensure it's a string (Lit Protocol expects string, not Uint8Array)
+  let ciphertext: string;
+  if (typeof encryptedData === 'string') {
+    ciphertext = encryptedData;
+  } else {
+    // Use metadata ciphertext (should be a string)
+    ciphertext = typeof metadata.ciphertext === 'string' 
+      ? metadata.ciphertext 
+      : new TextDecoder().decode(metadata.ciphertext as unknown as Uint8Array);
+  }
 
   // Decrypt the file - cast accessControlConditions to avoid version type conflicts
-  const decryptResponse = await client.decrypt({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accessControlConditions: metadata.accessControlConditions as any,
-    chain: metadata.chain,
-    ciphertext,
-    dataToEncryptHash: metadata.dataToEncryptHash,
-    sessionSigs,
-  });
+  let decryptResponse;
+  try {
+    decryptResponse = await client.decrypt({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      accessControlConditions: metadata.accessControlConditions as any,
+      chain: metadata.chain,
+      ciphertext,
+      dataToEncryptHash: metadata.dataToEncryptHash,
+      sessionSigs,
+    });
+  } catch (error) {
+    // Better error handling for decrypt errors
+    if (error instanceof DOMException) {
+      console.error('[Lit] DOMException during decryption:', error.message, error);
+      throw new Error(`Decryption failed: ${error.message}. Please verify your access control conditions and wallet configuration.`);
+    }
+    if (error instanceof Error) {
+      // Check for specific Lit Protocol errors
+      if (error.message.includes('session key') || error.message.includes('signing shares')) {
+        console.error('[Lit] Session signature error:', error.message, error);
+        throw new Error(`Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`);
+      }
+      throw error;
+    }
+    throw new Error('Unknown error during decryption');
+  }
 
   onProgress?.('Decryption complete');
   
@@ -402,20 +455,54 @@ export async function decryptFileFromStorage(
   
   onProgress?.('Authenticating wallet...');
   
-  // Get session signatures for decryption
-  const sessionSigs = await getSessionSigs(client, privateKey);
+  // Get session signatures for decryption with matching access control conditions
+  const sessionSigs = await getSessionSigs(
+    client,
+    privateKey,
+    metadata.accessControlConditions,
+    metadata.chain
+  );
 
   onProgress?.('Decrypting file...');
   
-  // Decrypt the file using metadata's ciphertext - cast to avoid version type conflicts
-  const decryptResponse = await client.decrypt({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accessControlConditions: metadata.accessControlConditions as any,
-    chain: metadata.chain,
-    ciphertext: metadata.ciphertext,
-    dataToEncryptHash: metadata.dataToEncryptHash,
-    sessionSigs,
-  });
+  // Ensure ciphertext is a string (Lit Protocol expects string, not Uint8Array)
+  let ciphertext: string;
+  if (typeof metadata.ciphertext === 'string') {
+    ciphertext = metadata.ciphertext;
+  } else {
+    // If ciphertext is not a string, try to convert it
+    // This shouldn't happen, but handle it gracefully
+    console.warn('[Lit] Ciphertext is not a string, attempting conversion');
+    ciphertext = new TextDecoder().decode(metadata.ciphertext as unknown as Uint8Array);
+  }
+  
+  // Decrypt the file - cast accessControlConditions to avoid version type conflicts
+  let decryptResponse;
+  try {
+    decryptResponse = await client.decrypt({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      accessControlConditions: metadata.accessControlConditions as any,
+      chain: metadata.chain,
+      ciphertext,
+      dataToEncryptHash: metadata.dataToEncryptHash,
+      sessionSigs,
+    });
+  } catch (error) {
+    // Better error handling for decrypt errors
+    if (error instanceof DOMException) {
+      console.error('[Lit] DOMException during decryption:', error.message, error);
+      throw new Error(`Decryption failed: ${error.message}. Please verify your access control conditions and wallet configuration.`);
+    }
+    if (error instanceof Error) {
+      // Check for specific Lit Protocol errors
+      if (error.message.includes('session key') || error.message.includes('signing shares')) {
+        console.error('[Lit] Session signature error:', error.message, error);
+        throw new Error(`Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`);
+      }
+      throw error;
+    }
+    throw new Error('Unknown error during decryption');
+  }
 
   onProgress?.('Decryption complete');
   

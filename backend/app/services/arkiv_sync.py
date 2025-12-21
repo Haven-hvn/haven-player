@@ -23,6 +23,7 @@ from arkiv.types import (
     CONTENT_TYPE,
     OWNER,
     CREATED_AT,
+    QueryOptions,
 )
 from requests.exceptions import HTTPError
 from sqlalchemy.orm import Session
@@ -477,36 +478,42 @@ class ArkivSyncClient:
             pass
         
         try:
-            # Use the fluent query API correctly:
-            # - select() expects field bitmasks (integers), not query strings
-            # - where() is used to specify the query condition (must be in parentheses)
-            # - fetch() executes the query and returns an iterator
+            # Optimal approach based on SDK analysis:
+            # 1. Use query_entities() directly (simpler than fluent API, matches test patterns)
+            # 2. Use owner query without parentheses (tests show this works: '$owner = "..."')
+            # 3. Use explicit QueryOptions with specific fields (excludes LAST_MODIFIED_AT)
             # 
-            # IMPORTANT: Exclude LAST_MODIFIED_AT from fields since it's not always
-            # available in RPC responses and causes errors. We only need:
-            # - KEY: Entity identifier
-            # - ATTRIBUTES: Custom attributes (phash, title, encrypted_cid, etc.)
-            # - PAYLOAD: JSON payload with metadata
-            # - CONTENT_TYPE: To verify it's JSON
-            # - OWNER: To verify ownership
-            # - CREATED_AT: Creation timestamp (optional but available)
+            # Field selection rationale:
+            # - KEY: Required for entity identification
+            # - ATTRIBUTES: Contains phash, title, encrypted_cid, etc. (essential for restore)
+            # - PAYLOAD: Contains JSON metadata (timestamps, encryption metadata, etc.)
+            # - CONTENT_TYPE: Verify payload format
+            # - OWNER: Verify ownership (entities are scoped to account, but explicit is safer)
+            # - CREATED_AT: Available and useful for ordering
+            # - EXCLUDED: LAST_MODIFIED_AT (not reliably available in RPC responses, causes errors)
             
-            # Select only the fields we need (excluding LAST_MODIFIED_AT)
+            # Build query options with only the fields we need
             required_fields = KEY | ATTRIBUTES | PAYLOAD | CONTENT_TYPE | OWNER | CREATED_AT
+            query_options = QueryOptions(
+                attributes=required_fields,
+                max_results_per_page=50,  # Reasonable page size for restore operations
+            )
             
-            # Query by owner - entities are scoped to the authenticated account,
-            # but we query explicitly to ensure we get all entities
+            # Query by owner - this is the most reliable way to get all entities for an account
+            # Note: Owner queries don't require parentheses (unlike "1 = 1" which does)
             from app.services.evm_utils import get_wallet_address_from_private_key
             if self.config.private_key:
                 wallet_address = get_wallet_address_from_private_key(self.config.private_key)
-                # Query must be in parentheses per Arkiv query parser requirements
-                owner_query = f'($owner = "{wallet_address}")'
+                # Use $owner syntax (system field) - no parentheses needed per test patterns
+                query = f'$owner = "{wallet_address}"'
             else:
-                # Fallback: use (1 = 1) to match all entities (still scoped to account)
-                owner_query = "(1 = 1)"
+                # Fallback: This shouldn't happen if config is valid, but handle gracefully
+                logger.warning("No private key available, cannot query entities")
+                return []
             
-            # Execute query with specific fields
-            entities = list(client.arkiv.select(required_fields).where(owner_query).fetch())
+            # Use query_entities() directly - it returns an iterator that auto-paginates
+            # This is simpler and more direct than the fluent API, and matches SDK test patterns
+            entities = list(client.arkiv.query_entities(query=query, options=query_options))
             logger.info("Fetched %d entities from Arkiv", len(entities))
             return entities
         except Exception as exc:

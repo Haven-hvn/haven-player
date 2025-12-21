@@ -591,16 +591,18 @@ export async function decryptFileFromStorage(
   } else if (encryptedData && encryptedData.length > 0) {
     // Fallback: decode encryptedData from Filecoin/IPFS
     // The encryptedData was stored using TextEncoder, so we decode it back
+    // Note: Lit Protocol's ciphertext is a base64-encoded string, not JSON
     // Add error handling for incomplete or corrupted data
     try {
       console.log('[Lit Decryption] Decoding encrypted data from IPFS, length:', encryptedData.length);
       ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
       console.log('[Lit Decryption] Decoded ciphertext length:', ciphertext.length);
       
-      // Validate the decoded ciphertext looks reasonable (should be a JSON-like string)
-      if (ciphertext.length < 100 || !ciphertext.trim().startsWith('{')) {
-        console.warn('[Lit Decryption] Decoded ciphertext seems invalid, trying fallback');
-        throw new Error('Decoded ciphertext appears invalid');
+      // Validate the decoded ciphertext looks reasonable (should be non-empty)
+      // Lit Protocol ciphertext is base64-encoded, not JSON, so we don't check for '{'
+      if (ciphertext.length < 10) {
+        console.warn('[Lit Decryption] Decoded ciphertext seems too short');
+        throw new Error('Decoded ciphertext appears invalid (too short)');
       }
     } catch (decodeError) {
       console.error('[Lit Decryption] Error decoding encrypted data:', decodeError);

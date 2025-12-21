@@ -232,8 +232,9 @@ class ArkivClientProtocol(Protocol):
 
 def _build_attributes(video: Video, timestamps: Iterable[Timestamp]) -> dict[str, str | int]:
     """
-    Public attributes sent to Arkiv. Do NOT include any CID or cid_hash to avoid
-    leaking retrieval hints. CID-related data lives only in the encrypted payload.
+    Public attributes sent to Arkiv.
+    For encrypted videos, encrypted_cid is stored in attributes (public) for privacy.
+    The actual filecoin_root_cid is stored in the encrypted payload.
     """
     tag_names = sorted({ts.tag_name for ts in timestamps})
     attributes: dict[str, str | int] = {}
@@ -248,6 +249,9 @@ def _build_attributes(video: Video, timestamps: Iterable[Timestamp]) -> dict[str
         attributes["tags"] = ",".join(tag_names)
     if video.is_encrypted:
         attributes["is_encrypted"] = 1
+        # Store encrypted CID in public attributes (privacy - actual CID is hidden)
+        if video.encrypted_filecoin_cid:
+            attributes["encrypted_cid"] = video.encrypted_filecoin_cid
     if video.phash:
         attributes["phash"] = video.phash
     if video.analysis_model:
@@ -287,13 +291,12 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
     # Build minimal payload with only essential encrypted/sensitive data
     payload: dict[str, Any] = {}
     
-    # Encrypted CIDs (only when encrypted) - sensitive, not in attributes
+    # For encrypted videos: encrypted_cid is in attributes (public), actual CID is decrypted during restore
+    # Store CID encryption metadata in payload so we can decrypt encrypted_cid during restore
     if video.is_encrypted:
-        if video.encrypted_filecoin_cid:
-            payload["encrypted_cid"] = video.encrypted_filecoin_cid
-        if video.filecoin_root_cid:
-            payload["filecoin_root_cid"] = video.filecoin_root_cid
-        # Encryption metadata (REQUIRED for decryption - contains accessControlConditions, dataToEncryptHash, chain)
+        if video.cid_encryption_metadata:
+            payload["cid_encryption_metadata"] = video.cid_encryption_metadata
+        # Video file encryption metadata (REQUIRED for decryption - contains accessControlConditions, dataToEncryptHash, chain)
         # NOTE: ciphertext is NOT included here - it's already on Filecoin and would be a duplicate
         # The decryption function will use the Filecoin data instead of metadata.ciphertext
         if video.lit_encryption_metadata:
@@ -312,6 +315,10 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
                 "This video cannot be decrypted without this metadata.",
                 video.path
             )
+    else:
+        # For non-encrypted videos, store filecoin_root_cid in payload (not in attributes for consistency)
+        if video.filecoin_root_cid:
+            payload["filecoin_root_cid"] = video.filecoin_root_cid
     
     # cid_hash is needed for deduplication during restore (both encrypted and non-encrypted)
     if video.cid_hash:
@@ -433,14 +440,40 @@ class ArkivSyncClient:
 
     def fetch_entities(self) -> list:
         """
-        Fetch all Arkiv entities for the current account.
+        Fetch all Arkiv entities for the current authenticated account.
+        
+        Entities are automatically scoped to the account used to authenticate
+        the Arkiv client. The account is derived from the private key configured
+        in the ArkivSyncConfig.
+        
+        The Arkiv query parser requires expressions to be in parentheses.
+        Using "(1 = 1)" as a true condition to fetch all entities owned by
+        the authenticated account.
+        
+        Returns:
+            List of entities belonging to the authenticated account
         """
         if not self.config.enabled:
             return []
         client = self._get_client()
-        # Select all fields; SDK defaults to all fields when no projection specified
+        
+        # Log which account we're querying for (for debugging)
         try:
-            return list(client.arkiv.select().fetch())
+            from app.services.evm_utils import get_wallet_address_from_private_key
+            if self.config.private_key:
+                wallet_address = get_wallet_address_from_private_key(self.config.private_key)
+                logger.info("Fetching Arkiv entities for account: %s", wallet_address)
+        except Exception:
+            # If we can't get the wallet address, continue anyway
+            pass
+        
+        try:
+            # The Arkiv query parser expects expressions in parentheses
+            # Passing "(1 = 1)" as a query string to fetch all entities
+            # Note: Entities are automatically scoped to the authenticated account
+            entities = list(client.arkiv.select("(1 = 1)").fetch())
+            logger.info("Fetched %d entities from Arkiv", len(entities))
+            return entities
         except Exception as exc:
             logger.error("Failed to fetch Arkiv entities: %s", exc)
             return []
@@ -448,6 +481,10 @@ class ArkivSyncClient:
     def restore_catalog(self, db_session: Session) -> dict:
         """
         Restore catalog metadata from Arkiv into local DB (catalog-only).
+        
+        Processes entities one by one, continuing on errors to ensure maximum
+        restoration. Each entity is processed in isolation so failures don't
+        stop the entire restore process.
         """
         if not self.config.enabled:
             raise ValueError("Arkiv sync disabled (no private key configured)")
@@ -455,188 +492,267 @@ class ArkivSyncClient:
         entities = self.fetch_entities()
         restored = 0
         skipped = 0
+        failed = 0
 
         for entity in entities:
-            payload_bytes = entity.payload if hasattr(entity, "payload") else None
-            if not payload_bytes:
-                skipped += 1
-                continue
-            try:
-                payload = json.loads(payload_bytes.decode("utf-8"))
-            except Exception as exc:
-                logger.warning("Skipping entity due to payload decode error: %s", exc)
-                skipped += 1
-                continue
-
-            # Get attributes as fallback for fields not in optimized payload
-            attributes = {}
-            if hasattr(entity, "attributes") and entity.attributes:
-                # Convert attributes to dict if it's not already
-                if isinstance(entity.attributes, dict):
-                    attributes = entity.attributes
-                elif hasattr(entity.attributes, "__dict__"):
-                    attributes = entity.attributes.__dict__
-                elif hasattr(entity.attributes, "get"):
-                    # Try to use as dict-like
-                    attributes = {k: getattr(entity.attributes, k, None) for k in dir(entity.attributes) if not k.startswith("_")}
-
-            # Helper to get value from payload or attributes with fallback
-            def get_field(payload_key: str, attr_key: str | None = None, default: Any = None) -> Any:
-                """Get field from payload, fallback to attributes, then default."""
-                if payload_key in payload and payload[payload_key] is not None:
-                    return payload[payload_key]
-                if attr_key and attr_key in attributes and attributes[attr_key] is not None:
-                    return attributes[attr_key]
-                return default
-
-            # Dedupe by phash (prioritized), arkiv_entity_key, or cid_hash
-            existing = None
-            phash = get_field("phash", "phash")
-            if phash:
-                existing = db_session.query(Video).filter(Video.phash == phash).first()
-            if not existing and entity.key:
-                existing = db_session.query(Video).filter(Video.arkiv_entity_key == str(entity.key)).first()
-            cid_hash = get_field("cid_hash")
-            if not existing and cid_hash:
-                existing = db_session.query(Video).filter(Video.cid_hash == cid_hash).first()
-
-            if existing:
-                skipped += 1
-                continue
-
-            # path is required (nullable=False) and must be unique
-            # Prioritize phash for path generation (content-based, better for deduplication)
-            filecoin_cid = get_field("filecoin_root_cid")
-            if phash:
-                video_path = f"arkiv:phash:{phash}"
-            elif filecoin_cid:
-                video_path = filecoin_cid
-            elif entity.key:
-                # Use entity key as part of path to ensure uniqueness
-                video_path = f"arkiv:{str(entity.key)}"
+            # Get entity identifier for error reporting
+            entity_id = None
+            if hasattr(entity, "key") and entity.key:
+                entity_id = f"entity_key={str(entity.key)}"
+            elif hasattr(entity, "payload") and entity.payload:
+                try:
+                    # Try to extract cid_hash or other identifier from payload
+                    payload_preview = entity.payload[:200] if len(entity.payload) > 200 else entity.payload
+                    entity_id = f"payload_preview={payload_preview.decode('utf-8', errors='ignore')[:50]}"
+                except Exception:
+                    entity_id = f"payload_size={len(entity.payload)}"
             else:
-                # Fallback: use timestamp-based placeholder (shouldn't happen, but safe)
-                video_path = f"arkiv:restored:{datetime.now().timestamp()}"
+                entity_id = f"entity_index={entities.index(entity)}"
             
-            # title is required (nullable=False)
-            video_title = get_field("title", "title", "Restored Video")
-            if not video_title or video_title.strip() == "":
-                video_title = "Restored Video"
-            
-            # Determine if video is encrypted
-            is_encrypted = bool(get_field("is_encrypted", "is_encrypted", False))
-            
+            # Wrap entire entity processing in try-except to continue on errors
+            try:
+                payload_bytes = entity.payload if hasattr(entity, "payload") else None
+                if not payload_bytes:
+                    skipped += 1
+                    continue
+                try:
+                    payload = json.loads(payload_bytes.decode("utf-8"))
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping entity %s due to payload decode error: %s",
+                        entity_id,
+                        exc
+                    )
+                    skipped += 1
+                    continue
+
+                # Get attributes as fallback for fields not in optimized payload
+                attributes = {}
+                if hasattr(entity, "attributes") and entity.attributes:
+                    # Convert attributes to dict if it's not already
+                    if isinstance(entity.attributes, dict):
+                        attributes = entity.attributes
+                    elif hasattr(entity.attributes, "__dict__"):
+                        attributes = entity.attributes.__dict__
+                    elif hasattr(entity.attributes, "get"):
+                        # Try to use as dict-like
+                        attributes = {k: getattr(entity.attributes, k, None) for k in dir(entity.attributes) if not k.startswith("_")}
+
+                # Helper to get value from payload or attributes with fallback
+                def get_field(payload_key: str, attr_key: str | None = None, default: Any = None) -> Any:
+                    """Get field from payload, fallback to attributes, then default."""
+                    if payload_key in payload and payload[payload_key] is not None:
+                        return payload[payload_key]
+                    if attr_key and attr_key in attributes and attributes[attr_key] is not None:
+                        return attributes[attr_key]
+                    return default
+
+                # Dedupe by phash (prioritized), arkiv_entity_key, or cid_hash
+                existing = None
+                phash = get_field("phash", "phash")
+                if phash:
+                    existing = db_session.query(Video).filter(Video.phash == phash).first()
+                if not existing and entity.key:
+                    existing = db_session.query(Video).filter(Video.arkiv_entity_key == str(entity.key)).first()
+                cid_hash = get_field("cid_hash")
+                if not existing and cid_hash:
+                    existing = db_session.query(Video).filter(Video.cid_hash == cid_hash).first()
+
+                if existing:
+                    skipped += 1
+                    continue
+
+                # path is required (nullable=False) and must be unique
+                # Prioritize phash for path generation (content-based, better for deduplication)
+                # Determine if video is encrypted
+                is_encrypted = bool(get_field("is_encrypted", "is_encrypted", False))
+                
+                # For encrypted videos, decrypt encrypted_cid from attributes to get actual filecoin_root_cid
+                # For non-encrypted videos, use filecoin_root_cid from payload
+                filecoin_cid = None
+                if is_encrypted:
+                    # Get encrypted_cid from attributes (public) and decrypt it
+                    encrypted_cid = get_field("encrypted_cid", "encrypted_cid")
+                    cid_encryption_metadata_json = get_field("cid_encryption_metadata")
+                    
+                    if encrypted_cid and cid_encryption_metadata_json:
+                        try:
+                            # Decrypt the CID using Lit Protocol (via IPC/HTTP call to frontend)
+                            # For now, we'll store encrypted_cid and decrypt it lazily
+                            # TODO: Implement decryption via HTTP endpoint or IPC bridge
+                            logger.info("Encrypted CID found in attributes, will be decrypted on first access")
+                            # Store encrypted_cid temporarily - will be decrypted by frontend
+                            filecoin_cid = None  # Will be set after decryption
+                        except Exception as e:
+                            logger.warning("Failed to decrypt encrypted_cid: %s", e)
+                            filecoin_cid = None
+                    elif encrypted_cid:
+                        logger.warning("Encrypted CID found but missing encryption metadata, cannot decrypt")
+                else:
+                    # Non-encrypted: use filecoin_root_cid from payload
+                    filecoin_cid = get_field("filecoin_root_cid")
+                
+                if phash:
+                    video_path = f"arkiv:phash:{phash}"
+                elif filecoin_cid:
+                    video_path = filecoin_cid
+                elif entity.key:
+                    # Use entity key as part of path to ensure uniqueness
+                    video_path = f"arkiv:{str(entity.key)}"
+                else:
+                    # Fallback: use timestamp-based placeholder (shouldn't happen, but safe)
+                    video_path = f"arkiv:restored:{datetime.now().timestamp()}"
+                
+                # title is required (nullable=False)
+                video_title = get_field("title", "title", "Restored Video")
+                if not video_title or video_title.strip() == "":
+                    video_title = "Restored Video"
+                
             # Recalculate fields from Filecoin/IPFS if CID is available
             recalculated_metadata: dict[str, Any] = {}
             temp_file_path: str | None = None
             
-            # Determine which CID to use for download
-            download_cid = get_field("encrypted_cid") if is_encrypted else filecoin_cid
-            
-            if download_cid:
-                try:
-                    logger.info("Downloading video from IPFS for recalculation: %s", download_cid)
-                    # Download from IPFS
-                    file_content = _download_from_ipfs(download_cid)
-                    
-                    # Save to temporary file for recalculation
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
-                        temp_file.write(file_content)
-                        temp_file_path = temp_file.name
-                    
-                    # Recalculate metadata from downloaded file
-                    recalculated_metadata = _recalculate_video_metadata(temp_file_path, is_encrypted)
-                    logger.info("Recalculated metadata: phash=%s, duration=%s, file_size=%s", 
-                              recalculated_metadata.get("phash"), 
-                              recalculated_metadata.get("duration"),
-                              recalculated_metadata.get("file_size"))
-                except Exception as e:
-                    logger.warning("Failed to download/recalculate from IPFS for CID %s: %s", download_cid, e)
-                    # Continue with fallback values from payload/attributes
-            
-            # Use recalculated values if available, otherwise fallback to payload/attributes
-            final_phash = recalculated_metadata.get("phash") or phash
-            final_duration = recalculated_metadata.get("duration") or 0
-            final_file_size = recalculated_metadata.get("file_size") or get_field("file_size", "file_size")
-            final_file_extension = recalculated_metadata.get("file_extension") or get_field("file_extension", "file_ext")
-            final_mime_type = recalculated_metadata.get("mime_type")
-            final_codec = recalculated_metadata.get("codec") or get_field("codec", "codec")
-            
-            # Update path if phash was recalculated
-            if final_phash and not phash:
-                video_path = f"arkiv:phash:{final_phash}"
-            
-            # Prepare timestamps (video_path will be set after Video is created)
-            ts_payloads = payload.get("timestamps") or []
-            timestamps: list[Timestamp] = []
-            for ts in ts_payloads:
-                try:
-                    timestamps.append(
-                        Timestamp(
-                            video_path="",  # Will be set to video_path after Video creation
-                            tag_name=ts.get("tag", "tag"),
-                            start_time=float(ts.get("start_time", 0.0)),
-                            end_time=ts.get("end_time"),
-                            confidence=float(ts.get("confidence", 0.0)),
+            # Use filecoin_root_cid for downloading (decrypted from encrypted_cid if needed)
+            download_cid = filecoin_cid
+                
+                if download_cid:
+                    try:
+                        logger.info("Downloading video from IPFS for recalculation: %s", download_cid)
+                        # Download from IPFS
+                        file_content = _download_from_ipfs(download_cid)
+                        
+                        # Save to temporary file for recalculation
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
+                            temp_file.write(file_content)
+                            temp_file_path = temp_file.name
+                        
+                        # Recalculate metadata from downloaded file
+                        recalculated_metadata = _recalculate_video_metadata(temp_file_path, is_encrypted)
+                        logger.info("Recalculated metadata: phash=%s, duration=%s, file_size=%s", 
+                                  recalculated_metadata.get("phash"), 
+                                  recalculated_metadata.get("duration"),
+                                  recalculated_metadata.get("file_size"))
+                    except Exception as e:
+                        logger.warning("Failed to download/recalculate from IPFS for CID %s: %s", download_cid, e)
+                        # Continue with fallback values from payload/attributes
+                
+                # Use recalculated values if available, otherwise fallback to payload/attributes
+                final_phash = recalculated_metadata.get("phash") or phash
+                final_duration = recalculated_metadata.get("duration") or 0
+                final_file_size = recalculated_metadata.get("file_size") or get_field("file_size", "file_size")
+                final_file_extension = recalculated_metadata.get("file_extension") or get_field("file_extension", "file_ext")
+                final_mime_type = recalculated_metadata.get("mime_type")
+                final_codec = recalculated_metadata.get("codec") or get_field("codec", "codec")
+                
+                # Update path if phash was recalculated
+                if final_phash and not phash:
+                    video_path = f"arkiv:phash:{final_phash}"
+                
+                # Prepare timestamps (video_path will be set after Video is created)
+                ts_payloads = payload.get("timestamps") or []
+                timestamps: list[Timestamp] = []
+                for ts in ts_payloads:
+                    try:
+                        timestamps.append(
+                            Timestamp(
+                                video_path="",  # Will be set to video_path after Video creation
+                                tag_name=ts.get("tag", "tag"),
+                                start_time=float(ts.get("start_time", 0.0)),
+                                end_time=ts.get("end_time"),
+                                confidence=float(ts.get("confidence", 0.0)),
+                            )
                         )
-                    )
-                except Exception:
-                    continue
+                    except Exception:
+                        continue
 
-            db_video = Video(
-                path=video_path,  # Required, non-nullable, unique
-                title=video_title,  # Required, non-nullable
-                duration=int(final_duration),  # Required (Mapped[int]) - from recalculation or default
-                has_ai_data=bool(ts_payloads),
-                thumbnail_path=None,  # Optional
-                position=0,  # Has default, but explicit is fine
-                phash=final_phash,  # Optional - from recalculation or attributes
-                created_at=datetime.now(),  # Has default, but explicit is fine
-                updated_at=datetime.now(),  # Has default, but explicit is fine
-                file_size=final_file_size,  # Optional - from recalculation or fallback
-                file_extension=final_file_extension,  # Optional - from recalculation or fallback
-                mime_type=final_mime_type,  # Optional - from recalculation
-                codec=final_codec,  # Optional - from recalculation or fallback
-                creator_handle=get_field("creator_handle", "creator_handle"),  # Optional
-                source_uri=get_field("source_uri", "source_uri"),  # Optional
-                analysis_model=get_field("analysis_model", "analysis_model"),  # Optional
-                share_to_arkiv=True,  # Has default, but explicit is fine
-                arkiv_entity_key=str(entity.key) if entity.key else None,  # Optional
-                mint_id=get_field("mint_id", "mint_id"),  # Optional
-                filecoin_root_cid=filecoin_cid,  # Optional
+                db_video = Video(
+                    path=video_path,  # Required, non-nullable, unique
+                    title=video_title,  # Required, non-nullable
+                    duration=int(final_duration),  # Required (Mapped[int]) - from recalculation or default
+                    has_ai_data=bool(ts_payloads),
+                    thumbnail_path=None,  # Optional
+                    position=0,  # Has default, but explicit is fine
+                    phash=final_phash,  # Optional - from recalculation or attributes
+                    created_at=datetime.now(),  # Has default, but explicit is fine
+                    updated_at=datetime.now(),  # Has default, but explicit is fine
+                    file_size=final_file_size,  # Optional - from recalculation or fallback
+                    file_extension=final_file_extension,  # Optional - from recalculation or fallback
+                    mime_type=final_mime_type,  # Optional - from recalculation
+                    codec=final_codec,  # Optional - from recalculation or fallback
+                    creator_handle=get_field("creator_handle", "creator_handle"),  # Optional
+                    source_uri=get_field("source_uri", "source_uri"),  # Optional
+                    analysis_model=get_field("analysis_model", "analysis_model"),  # Optional
+                    share_to_arkiv=True,  # Has default, but explicit is fine
+                    arkiv_entity_key=str(entity.key) if entity.key else None,  # Optional
+                    mint_id=get_field("mint_id", "mint_id"),  # Optional
+                filecoin_root_cid=filecoin_cid,  # Optional - will be None for encrypted videos until decrypted
                 cid_hash=cid_hash,  # Optional
-                encrypted_filecoin_cid=get_field("encrypted_cid"),  # Optional
+                encrypted_filecoin_cid=get_field("encrypted_cid", "encrypted_cid"),  # Store encrypted CID from attributes
+                cid_encryption_metadata=get_field("cid_encryption_metadata"),  # Store metadata to decrypt CID
                 is_encrypted=is_encrypted,  # Has default, but explicit is fine
                 lit_encryption_metadata=get_field("lit_encryption_metadata"),  # Optional
-            )
-            
-            # Clean up temporary file if created
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.unlink(temp_file_path)
-                except Exception as e:
-                    logger.warning("Failed to clean up temporary file %s: %s", temp_file_path, e)
-            
-            # Validate that encrypted videos have required metadata for decryption
-            if db_video.is_encrypted and not db_video.lit_encryption_metadata:
-                logger.warning(
-                    "⚠️ Restored encrypted video %s is missing lit_encryption_metadata. "
-                    "This video cannot be decrypted. Entity key: %s",
-                    db_video.path or "unknown",
-                    str(entity.key) if entity.key else "unknown"
                 )
-            db_session.add(db_video)
-            db_session.commit()
-            db_session.refresh(db_video)
+                
+                # Clean up temporary file if created
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.unlink(temp_file_path)
+                    except Exception as e:
+                        logger.warning("Failed to clean up temporary file %s: %s", temp_file_path, e)
+                
+                # Validate that encrypted videos have required metadata for decryption
+                if db_video.is_encrypted and not db_video.lit_encryption_metadata:
+                    logger.warning(
+                        "⚠️ Restored encrypted video %s is missing lit_encryption_metadata. "
+                        "This video cannot be decrypted. Entity key: %s",
+                        db_video.path or "unknown",
+                        str(entity.key) if entity.key else "unknown"
+                    )
+                db_session.add(db_video)
+                db_session.commit()
+                db_session.refresh(db_video)
 
-            # Update timestamps with video path reference (required: video_path is non-nullable)
-            for ts in timestamps:
-                ts.video_path = db_video.path  # Set the actual video path (required field)
-                db_session.add(ts)
-            db_session.commit()
-            restored += 1
+                # Update timestamps with video path reference (required: video_path is non-nullable)
+                for ts in timestamps:
+                    ts.video_path = db_video.path  # Set the actual video path (required field)
+                    db_session.add(ts)
+                db_session.commit()
+                restored += 1
+                
+            except Exception as exc:
+                # Log detailed error information for this specific entity
+                import traceback
+                error_details = traceback.format_exc()
+                logger.error(
+                    "❌ Failed to restore entity | "
+                    "Entity ID: %s | "
+                    "Error: %s | "
+                    "Traceback: %s",
+                    entity_id,
+                    str(exc),
+                    error_details
+                )
+                failed += 1
+                # Rollback any partial database changes for this entity
+                try:
+                    db_session.rollback()
+                except Exception as rollback_exc:
+                    logger.warning("Failed to rollback transaction for entity %s: %s", entity_id, rollback_exc)
+                # Continue to next entity
+                continue
 
-        return {"restored": restored, "skipped": skipped}
+        logger.info(
+            "✅ Restore catalog completed | "
+            "Restored: %d | "
+            "Skipped: %d | "
+            "Failed: %d | "
+            "Total entities: %d",
+            restored,
+            skipped,
+            failed,
+            len(entities)
+        )
+        return {"restored": restored, "skipped": skipped, "failed": failed}
 
     def sync_video(self, db_session: Session, video: Video, timestamps: Iterable[Timestamp]) -> EntityKey | None:
         """

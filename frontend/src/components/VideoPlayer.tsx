@@ -832,10 +832,21 @@ const VideoPlayer: React.FC = () => {
         // Decrypt if needed for IPFS-only source
         if (source.type === 'ipfs' && videoData.is_encrypted && videoData.lit_encryption_metadata) {
           const loadEncryptedData = async () => {
-            const response = await fetch(source.uri);
-            if (!response.ok) throw new Error('Failed to fetch encrypted video from gateway');
-            const buffer = await response.arrayBuffer();
-            return new Uint8Array(buffer);
+            try {
+              const response = await fetch(source.uri);
+              if (!response.ok) {
+                throw new Error(`Failed to fetch encrypted video from gateway: ${response.status} ${response.statusText}`);
+              }
+              // Ensure we get the full response body
+              const buffer = await response.arrayBuffer();
+              if (buffer.byteLength === 0) {
+                throw new Error('Received empty response from IPFS gateway');
+              }
+              return new Uint8Array(buffer);
+            } catch (error) {
+              console.error('[VideoPlayer] Error fetching encrypted data from IPFS:', error);
+              throw error;
+            }
           };
           await decryptVideo(videoData, loadEncryptedData);
         }
@@ -865,10 +876,21 @@ const VideoPlayer: React.FC = () => {
     if (selectedSource === 'ipfs' && video.is_encrypted && video.lit_encryption_metadata) {
       if (!decryptedUrl && decryptionStatus.status !== 'decrypting' && decryptionStatus.status !== 'loading') {
         const loadEncryptedData = async () => {
-          const response = await fetch(playbackSource.ipfs.uri);
-          if (!response.ok) throw new Error('Failed to fetch encrypted video from gateway');
-          const buffer = await response.arrayBuffer();
-          return new Uint8Array(buffer);
+          try {
+            const response = await fetch(playbackSource.ipfs.uri);
+            if (!response.ok) {
+              throw new Error(`Failed to fetch encrypted video from gateway: ${response.status} ${response.statusText}`);
+            }
+            // Ensure we get the full response body
+            const buffer = await response.arrayBuffer();
+            if (buffer.byteLength === 0) {
+              throw new Error('Received empty response from IPFS gateway');
+            }
+            return new Uint8Array(buffer);
+          } catch (error) {
+            console.error('[VideoPlayer] Error fetching encrypted data from IPFS:', error);
+            throw error;
+          }
         };
         decryptVideo(video, loadEncryptedData).catch(() => {});
       }

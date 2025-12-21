@@ -451,6 +451,7 @@ class FilecoinMetadataUpdate(BaseModel):
     is_encrypted: bool = False
     lit_encryption_metadata: Optional[str] = None
     encrypted_root_cid: Optional[str] = None
+    cid_encryption_metadata: Optional[str] = None  # Metadata to decrypt encrypted_root_cid
 
 class SharePreferenceUpdate(BaseModel):
     share_to_arkiv: bool
@@ -493,6 +494,59 @@ def update_share_preference(
 
     return video
 
+@router.get("/needing-cid-decryption", response_model=List[dict])
+def get_videos_needing_cid_decryption(db: Session = Depends(get_db)) -> List[dict]:
+    """
+    Get all videos that have encrypted_filecoin_cid but no filecoin_root_cid.
+    These need to be decrypted after restore from Arkiv.
+    """
+    videos = db.query(Video).filter(
+        Video.encrypted_filecoin_cid.isnot(None),
+        Video.filecoin_root_cid.is_(None)
+    ).all()
+    
+    return [
+        {
+            "path": video.path,
+            "encrypted_filecoin_cid": video.encrypted_filecoin_cid,
+            "cid_encryption_metadata": video.cid_encryption_metadata,
+        }
+        for video in videos
+        if video.cid_encryption_metadata  # Only return if we have metadata to decrypt
+    ]
+
+class CidDecryptionUpdate(BaseModel):
+    decrypted_cid: str
+
+@router.patch("/{video_path:path}/decrypt-cid", response_model=VideoResponse)
+def decrypt_video_cid(
+    video_path: str,
+    update: CidDecryptionUpdate,
+    db: Session = Depends(get_db)
+) -> Video:
+    """
+    Update video with decrypted filecoin_root_cid after decrypting encrypted_filecoin_cid.
+    Used after restoring from Arkiv.
+    """
+    video = db.query(Video).filter(Video.path == video_path).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    if not video.encrypted_filecoin_cid:
+        raise HTTPException(status_code=400, detail="Video does not have an encrypted CID to decrypt")
+    
+    # Update with decrypted CID
+    video.filecoin_root_cid = update.decrypted_cid
+    # Compute CID hash for deduplication
+    if update.decrypted_cid:
+        video.cid_hash = hashlib.sha256(update.decrypted_cid.encode("utf-8")).hexdigest()
+    
+    db.commit()
+    db.refresh(video)
+    
+    logger.info("✅ Decrypted and updated CID for video %s", video.path)
+    return video
+
 @router.put("/{video_path:path}/filecoin-metadata", response_model=VideoResponse)
 def update_filecoin_metadata(
     video_path: str,
@@ -522,6 +576,9 @@ def update_filecoin_metadata(
     # Store encrypted CID for Arkiv sync (used only when encrypted)
     if metadata.encrypted_root_cid:
         video.encrypted_filecoin_cid = metadata.encrypted_root_cid
+    # Store CID encryption metadata (needed to decrypt encrypted CID during restore)
+    if metadata.cid_encryption_metadata:
+        video.cid_encryption_metadata = metadata.cid_encryption_metadata
     
     # Update Lit Protocol encryption metadata if provided
     video.is_encrypted = metadata.is_encrypted

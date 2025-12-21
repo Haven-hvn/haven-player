@@ -8,6 +8,8 @@ import { uploadVideoToFilecoin } from './services/filecoinService';
 import type { FilecoinConfig } from './types/filecoin';
 import type { IpfsGatewayConfig } from './types/playback';
 import { DEFAULT_IPFS_GATEWAY, normalizeGatewayBase } from './services/playbackResolver';
+import { decryptTextWithLit, deserializeEncryptionMetadata } from './services/litService';
+import type { LitEncryptionMetadata } from './services/litService';
 
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
@@ -813,6 +815,26 @@ ipcMain.handle('playback:get-gateway-config', async () => {
 
 ipcMain.handle('playback:set-gateway-config', async (_event, config: IpfsGatewayConfig) => {
   return writeIpfsGatewayConfig(config);
+});
+
+// IPC handler to decrypt text (e.g., encrypted CID) using Lit Protocol
+ipcMain.handle('decrypt-text-with-lit', async (
+  _event, 
+  { ciphertext, metadataJson }: { ciphertext: string; metadataJson: string }
+): Promise<string> => {
+  try {
+    const config = await loadDecryptedFilecoinConfig();
+    if (!config?.privateKey) {
+      throw new Error('Private key not configured. Please configure Filecoin settings first.');
+    }
+    
+    const metadata: LitEncryptionMetadata = deserializeEncryptionMetadata(metadataJson);
+    const decryptedText = await decryptTextWithLit(ciphertext, metadata, config.privateKey);
+    return decryptedText;
+  } catch (error) {
+    console.error('Failed to decrypt text with Lit:', error);
+    throw new Error(`Failed to decrypt text: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 });
 
 function getIpfsGatewayConfigPath(): string {

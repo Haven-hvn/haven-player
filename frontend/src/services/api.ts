@@ -129,6 +129,15 @@ export const restoreService = {
     const response = await api.post<{ success: boolean; restored: number; skipped: number }>('/restore/arkiv');
     return response.data;
   },
+  decryptVideoCid: async (videoPath: string, decryptedCid: string): Promise<void> => {
+    await api.patch(`/videos/${encodeURIComponent(videoPath)}/decrypt-cid`, {
+      decrypted_cid: decryptedCid,
+    });
+  },
+  getVideosNeedingDecryption: async (): Promise<Array<{ path: string; encrypted_filecoin_cid: string; cid_encryption_metadata: string }>> => {
+    const response = await api.get<Array<{ path: string; encrypted_filecoin_cid: string; cid_encryption_metadata: string }>>('/videos/needing-cid-decryption');
+    return response.data;
+  },
 };
 
 // Stream-related API functions

@@ -45,6 +45,7 @@ class Video(Base):
     filecoin_uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     cid_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # SHA256 hash of filecoin_root_cid for Arkiv dedupe
     encrypted_filecoin_cid: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Lit-encrypted CID for Arkiv sync when encrypted
+    cid_encryption_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Metadata to decrypt encrypted_filecoin_cid
     
     # Lit Protocol encryption metadata
     is_encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

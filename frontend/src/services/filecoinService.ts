@@ -691,6 +691,7 @@ export async function uploadVideoToFilecoin(
 
     // Encrypt the root CID itself when the video is encrypted to avoid leaking retrieval hints
     let encryptedRootCid: string | undefined;
+    let cidEncryptionMetadata: string | undefined;
     if (isEncrypted) {
       const encryptedCid = await encryptTextWithLit(rootCid.toString(), config.privateKey, (message: string) => {
         onProgress?.({
@@ -700,6 +701,8 @@ export async function uploadVideoToFilecoin(
         });
       });
       encryptedRootCid = encryptedCid.ciphertext;
+      // Store CID encryption metadata so we can decrypt it during restore
+      cidEncryptionMetadata = serializeEncryptionMetadata(encryptedCid.metadata);
     }
 
     // Clear progress interval if still running
@@ -719,6 +722,7 @@ export async function uploadVideoToFilecoin(
         ? serializeEncryptionMetadata(encryptionMetadata) 
         : undefined,
       encryptedRootCid,
+      cidEncryptionMetadata, // Metadata needed to decrypt encryptedRootCid
     };
   } catch (error) {
     // Clear progress interval on error

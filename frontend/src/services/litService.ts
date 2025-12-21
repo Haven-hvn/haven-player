@@ -21,8 +21,10 @@ interface EvmBasicAccessControlCondition {
 }
 
 // Lit encryption metadata stored alongside the encrypted file
+// Note: ciphertext is optional - when syncing to Arkiv, ciphertext is removed to reduce payload size
+// The encrypted data itself is stored on Filecoin/IPFS and should be used for decryption
 export interface LitEncryptionMetadata {
-  ciphertext: string;
+  ciphertext?: string; // Optional - removed from Arkiv payload, available from Filecoin/IPFS
   dataToEncryptHash: string;
   accessControlConditions: EvmBasicAccessControlCondition[];
   chain: string;
@@ -454,6 +456,57 @@ export async function encryptFileForStorage(
 }
 
 /**
+ * Decrypt text that was encrypted with encryptTextWithLit.
+ * Returns the decrypted text string.
+ */
+export async function decryptTextWithLit(
+  ciphertext: string,
+  metadata: LitEncryptionMetadata,
+  privateKey: string,
+  onProgress?: (message: string) => void
+): Promise<string> {
+  onProgress?.('Initializing Lit Protocol...');
+  
+  const client = await initLitClient();
+  
+  onProgress?.('Authenticating wallet...');
+  
+  // Get session signatures for decryption with matching access control conditions
+  const sessionSigs = await getSessionSigs(
+    client,
+    privateKey,
+    metadata.accessControlConditions,
+    metadata.chain
+  );
+
+  onProgress?.('Decrypting text...');
+  
+  // Decrypt the text
+  let decryptResponse;
+  try {
+    decryptResponse = await client.decrypt({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      accessControlConditions: metadata.accessControlConditions as any,
+      chain: metadata.chain,
+      ciphertext,
+      dataToEncryptHash: metadata.dataToEncryptHash,
+      sessionSigs,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to decrypt text: ${error.message}`);
+    }
+    throw new Error('Unknown error during text decryption');
+  }
+
+  onProgress?.('Decryption complete');
+  
+  // Convert decrypted data to string
+  const decoder = new TextDecoder();
+  return decoder.decode(decryptResponse.decryptedData);
+}
+
+/**
  * Encrypt arbitrary text (e.g., CID) with Lit using owner-only access control.
  * Returns ciphertext and metadata for later decryption.
  */
@@ -525,22 +578,54 @@ export async function decryptFileFromStorage(
 
   onProgress?.('Decrypting file...');
   
-  // Use encryptedData from Filecoin if available (preferred - avoids duplication)
-  // Fallback to metadata.ciphertext for backward compatibility
   // Lit Protocol expects ciphertext as a string
+  // Priority order:
+  // 1. metadata.ciphertext (if available - backward compatibility and local videos)
+  // 2. encryptedData from Filecoin/IPFS (for videos restored from Arkiv without ciphertext)
   let ciphertext: string;
-  if (encryptedData && encryptedData.length > 0) {
-    // Convert Uint8Array from Filecoin to string
-    // The encryptedData is the same as metadata.ciphertext, just in Uint8Array format
-    ciphertext = new TextDecoder().decode(encryptedData);
-  } else if (typeof metadata.ciphertext === 'string') {
-    // Fallback: use metadata.ciphertext if encryptedData is not available (backward compatibility)
+  
+  // First, try to use metadata.ciphertext if available (preferred for backward compatibility)
+  if (typeof metadata.ciphertext === 'string' && metadata.ciphertext.length > 0) {
+    console.log('[Lit Decryption] Using metadata.ciphertext, length:', metadata.ciphertext.length);
     ciphertext = metadata.ciphertext;
+  } else if (encryptedData && encryptedData.length > 0) {
+    // Fallback: decode encryptedData from Filecoin/IPFS
+    // The encryptedData was stored using TextEncoder, so we decode it back
+    // Add error handling for incomplete or corrupted data
+    try {
+      console.log('[Lit Decryption] Decoding encrypted data from IPFS, length:', encryptedData.length);
+      ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
+      console.log('[Lit Decryption] Decoded ciphertext length:', ciphertext.length);
+      
+      // Validate the decoded ciphertext looks reasonable (should be a JSON-like string)
+      if (ciphertext.length < 100 || !ciphertext.trim().startsWith('{')) {
+        console.warn('[Lit Decryption] Decoded ciphertext seems invalid, trying fallback');
+        throw new Error('Decoded ciphertext appears invalid');
+      }
+    } catch (decodeError) {
+      console.error('[Lit Decryption] Error decoding encrypted data:', decodeError);
+      throw new Error(`Failed to decode encrypted data from IPFS: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete. Please ensure the video was properly uploaded to Filecoin.`);
+    }
   } else {
     // Last resort: try to convert metadata.ciphertext if it's not a string
-    console.warn('[Lit] Ciphertext is not a string, attempting conversion');
-    ciphertext = new TextDecoder().decode(metadata.ciphertext as unknown as Uint8Array);
+    if (metadata.ciphertext) {
+      console.warn('[Lit] Ciphertext is not a string, attempting conversion');
+      try {
+        ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(metadata.ciphertext as unknown as Uint8Array);
+      } catch (decodeError) {
+        throw new Error(`Failed to decode ciphertext from metadata: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encryption metadata may be corrupted.`);
+      }
+    } else {
+      throw new Error('No ciphertext available. Cannot decrypt video. The video may be missing encryption metadata or the encrypted file on Filecoin/IPFS.');
+    }
   }
+  
+  // Validate that we have a valid ciphertext
+  if (!ciphertext || ciphertext.length === 0) {
+    throw new Error('Ciphertext is empty or invalid. Cannot decrypt video.');
+  }
+  
+  console.log('[Lit Decryption] Using ciphertext for decryption, length:', ciphertext.length);
   
   // Decrypt the file - cast accessControlConditions to avoid version type conflicts
   let decryptResponse;

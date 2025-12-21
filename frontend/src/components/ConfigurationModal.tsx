@@ -112,6 +112,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [arkivError, setArkivError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreSummary, setRestoreSummary] = useState<string | null>(null);
+  const [restoreProgress, setRestoreProgress] = useState<string | null>(null);
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [backendRestartMessage, setBackendRestartMessage] = useState<string | null>(null);
   const [config, setConfig] = useState<EditableAppConfig>(defaultAppConfig);
@@ -454,9 +455,69 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setRestoring(true);
       setArkivError(null);
       setRestoreSummary(null);
+      setRestoreProgress("Fetching entities from Arkiv...");
+      
+      // Step 1: Restore from Arkiv
+      setRestoreProgress("Restoring catalog from Arkiv...");
       const result = await restoreService.restoreFromArkiv();
-      setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
+      
+      // Step 2: Decrypt encrypted CIDs for videos that need it
+      try {
+        setRestoreProgress("Checking for encrypted CIDs to decrypt...");
+        const videosNeedingDecryption = await restoreService.getVideosNeedingDecryption();
+        if (videosNeedingDecryption.length > 0) {
+          const { ipcRenderer } = require('electron');
+          const config: FilecoinConfig | null = await ipcRenderer.invoke('get-filecoin-config');
+          
+          if (config?.privateKey) {
+            let decryptedCount = 0;
+            const total = videosNeedingDecryption.length;
+            
+            for (let i = 0; i < videosNeedingDecryption.length; i++) {
+              const video = videosNeedingDecryption[i];
+              try {
+                setRestoreProgress(`Decrypting CID ${i + 1} of ${total}...`);
+                // Decrypt the CID using Lit Protocol
+                const decryptedCid = await ipcRenderer.invoke('decrypt-text-with-lit', {
+                  ciphertext: video.encrypted_filecoin_cid,
+                  metadataJson: video.cid_encryption_metadata,
+                });
+                
+                // Update the database with decrypted CID
+                await restoreService.decryptVideoCid(video.path, decryptedCid);
+                decryptedCount++;
+              } catch (err) {
+                console.error(`Failed to decrypt CID for ${video.path}:`, err);
+              }
+            }
+            
+            setRestoreProgress(null);
+            if (decryptedCount > 0) {
+              setRestoreSummary(
+                `Restored ${result.restored}, skipped ${result.skipped}. Decrypted ${decryptedCount} CID(s).`
+              );
+            } else {
+              setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
+            }
+          } else {
+            setRestoreProgress(null);
+            setRestoreSummary(
+              `Restored ${result.restored}, skipped ${result.skipped}. ${videosNeedingDecryption.length} CID(s) need decryption (private key required).`
+            );
+          }
+        } else {
+          setRestoreProgress(null);
+          setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
+        }
+      } catch (decryptErr) {
+        console.error('Failed to decrypt CIDs:', decryptErr);
+        setRestoreProgress(null);
+        setRestoreSummary(
+          `Restored ${result.restored}, skipped ${result.skipped}. Warning: CID decryption failed.`
+        );
+      }
     } catch (err) {
+      setRestoreProgress(null);
       const message =
         err instanceof Error ? err.message : "Failed to restore from Arkiv";
       setArkivError(message);
@@ -1287,8 +1348,13 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
             },
           }}
         >
-          {restoring ? "Restoring..." : "Restore Catalog from Arkiv"}
+          {restoring ? (restoreProgress || "Restoring...") : "Restore Catalog from Arkiv"}
         </Button>
+        {restoreProgress && restoring && (
+          <Typography variant="body2" sx={{ mt: 1, color: "text.secondary", fontStyle: "italic" }}>
+            {restoreProgress}
+          </Typography>
+        )}
         {restoreSummary && (
           <Typography variant="body2" sx={{ color: "#4CAF50" }}>
             {restoreSummary}

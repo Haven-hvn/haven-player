@@ -444,6 +444,8 @@ export async function encryptFileForStorage(
   if (encryptResponse.ciphertext) {
     console.log('[Lit Encryption] encryptResponse.ciphertext first 100 chars:', encryptResponse.ciphertext.substring(0, 100));
     console.log('[Lit Encryption] encryptResponse.ciphertext last 100 chars:', encryptResponse.ciphertext.substring(Math.max(0, encryptResponse.ciphertext.length - 100)));
+    console.log('[Lit Encryption] encryptResponse.ciphertext starts with {:', encryptResponse.ciphertext.trim().startsWith('{'));
+    console.log('[Lit Encryption] encryptResponse.ciphertext ends with }:', encryptResponse.ciphertext.trim().endsWith('}'));
   }
   
   // Convert ciphertext string to Uint8Array for storage
@@ -451,6 +453,13 @@ export async function encryptFileForStorage(
   // TextEncoder.encode() converts the string to UTF-8 bytes, which is what we need
   const encoder = new TextEncoder();
   const encryptedData = encoder.encode(encryptResponse.ciphertext);
+  
+  // Log what we're storing to IPFS
+  console.log('[Lit Encryption] Storing to IPFS:', {
+    originalCiphertextLength: encryptResponse.ciphertext.length,
+    encodedBytesLength: encryptedData.byteLength,
+    first50BytesHex: Array.from(encryptedData.slice(0, 50)).map(b => b.toString(16).padStart(2, '0')).join(' '),
+  });
   
   // Verify the encoding is reversible (for debugging)
   const decoder = new TextDecoder('utf-8');
@@ -619,25 +628,41 @@ export async function decryptFileFromStorage(
 
   onProgress?.('Decrypting file...');
   
+  // Log metadata availability for debugging
+  console.log('[Lit Decryption] Metadata available:', {
+    hasCiphertext: !!metadata.ciphertext,
+    ciphertextType: typeof metadata.ciphertext,
+    ciphertextLength: typeof metadata.ciphertext === 'string' ? metadata.ciphertext.length : 'N/A',
+    hasDataToEncryptHash: !!metadata.dataToEncryptHash,
+    hasAccessControlConditions: !!metadata.accessControlConditions,
+    chain: metadata.chain,
+    encryptedDataLength: encryptedData?.length || 0,
+    encryptedDataType: encryptedData ? 'Uint8Array' : 'undefined',
+  });
+  
   // Lit Protocol expects ciphertext as a string
   // Priority order:
   // 1. metadata.ciphertext (if available - backward compatibility and local videos)
   // 2. encryptedData from Filecoin/IPFS (for videos restored from Arkiv without ciphertext)
   let ciphertext: string;
+  let ciphertextSource: 'metadata' | 'ipfs' | 'unknown' = 'unknown';
   
   // First, try to use metadata.ciphertext if available (preferred for backward compatibility)
   if (typeof metadata.ciphertext === 'string' && metadata.ciphertext.length > 0) {
     console.log('[Lit Decryption] Using metadata.ciphertext, length:', metadata.ciphertext.length);
     ciphertext = metadata.ciphertext;
+    ciphertextSource = 'metadata';
   } else if (encryptedData && encryptedData.length > 0) {
     // Fallback: decode encryptedData from Filecoin/IPFS
     // The encryptedData was stored using TextEncoder, so we decode it back
-    // Note: Lit Protocol's ciphertext is a base64-encoded string, not JSON
+    // Note: Lit Protocol's ciphertext is a JSON string containing encrypted data
     // Add error handling for incomplete or corrupted data
     try {
       console.log('[Lit Decryption] Decoding encrypted data from IPFS, length:', encryptedData.length);
+      console.log('[Lit Decryption] First 50 bytes (hex):', Array.from(encryptedData.slice(0, 50)).map(b => b.toString(16).padStart(2, '0')).join(' '));
       ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
       console.log('[Lit Decryption] Decoded ciphertext length:', ciphertext.length);
+      ciphertextSource = 'ipfs';
       
       // Validate the decoded ciphertext looks reasonable
       // Lit Protocol ciphertext is a JSON string, so it should start with '{' and end with '}'
@@ -716,6 +741,27 @@ export async function decryptFileFromStorage(
   if (!ciphertext || ciphertext.length === 0) {
     throw new Error('Ciphertext is empty or invalid. Cannot decrypt video.');
   }
+  
+  // Log final ciphertext info before passing to Lit Protocol
+  console.log('[Lit Decryption] Final ciphertext info:', {
+    source: ciphertextSource,
+    length: ciphertext.length,
+    firstChar: ciphertext[0],
+    lastChar: ciphertext[ciphertext.length - 1],
+    startsWithBrace: ciphertext.trim().startsWith('{'),
+    endsWithBrace: ciphertext.trim().endsWith('}'),
+    first50Chars: ciphertext.substring(0, 50),
+    last50Chars: ciphertext.substring(Math.max(0, ciphertext.length - 50)),
+  });
+  
+  // Log what we're passing to Lit Protocol
+  console.log('[Lit Decryption] Calling Lit Protocol decrypt with:', {
+    ciphertextLength: ciphertext.length,
+    dataToEncryptHash: metadata.dataToEncryptHash,
+    accessControlConditionsCount: metadata.accessControlConditions?.length || 0,
+    chain: metadata.chain,
+    hasSessionSigs: !!sessionSigs,
+  });
   
   console.log('[Lit Decryption] Using ciphertext for decryption, length:', ciphertext.length);
   

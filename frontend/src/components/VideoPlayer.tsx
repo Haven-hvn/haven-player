@@ -886,25 +886,47 @@ const VideoPlayer: React.FC = () => {
       if (!decryptedUrl && decryptionStatus.status !== 'decrypting' && decryptionStatus.status !== 'loading') {
         const loadEncryptedData = async () => {
           try {
-          const response = await fetch(playbackSource.ipfs.uri);
+            console.log('[VideoPlayer] Fetching encrypted data from IPFS:', {
+              uri: playbackSource.ipfs.uri,
+              cid: playbackSource.ipfs.cid,
+              gatewayBase: playbackSource.ipfs.gatewayBase,
+              isEncrypted: video.is_encrypted,
+              hasLitMetadata: !!video.lit_encryption_metadata,
+            });
+            
+            const response = await fetch(playbackSource.ipfs.uri);
             if (!response.ok) {
               throw new Error(`Failed to fetch encrypted video from gateway: ${response.status} ${response.statusText}`);
             }
+            
             // Check Content-Length header if available to verify we get the full file
             const contentLength = response.headers.get('content-length');
+            const contentType = response.headers.get('content-type');
+            console.log('[VideoPlayer] Response headers:', {
+              contentLength,
+              contentType,
+              status: response.status,
+              statusText: response.statusText,
+            });
+            
             if (contentLength) {
               console.log('[VideoPlayer] Expected file size from Content-Length:', contentLength);
             }
+            
             // Ensure we get the full response body
-          const buffer = await response.arrayBuffer();
+            const buffer = await response.arrayBuffer();
             if (buffer.byteLength === 0) {
               throw new Error('Received empty response from IPFS gateway');
             }
+            
             console.log('[VideoPlayer] Downloaded file size:', buffer.byteLength, 'bytes');
+            console.log('[VideoPlayer] First 50 bytes (hex):', Array.from(new Uint8Array(buffer.slice(0, 50))).map(b => b.toString(16).padStart(2, '0')).join(' '));
+            
             if (contentLength && parseInt(contentLength, 10) !== buffer.byteLength) {
               console.warn('[VideoPlayer] File size mismatch! Expected:', contentLength, 'Got:', buffer.byteLength);
             }
-          return new Uint8Array(buffer);
+            
+            return new Uint8Array(buffer);
           } catch (error) {
             console.error('[VideoPlayer] Error fetching encrypted data from IPFS:', error);
             throw error;

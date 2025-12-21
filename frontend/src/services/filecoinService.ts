@@ -401,9 +401,19 @@ export async function uploadVideoToFilecoin(
         encryptionMetadata = encryptResult.metadata;
         
         // Create a new File from the encrypted data
+        // IMPORTANT: encryptResult.encryptedData is the ciphertext string encoded as UTF-8 bytes
+        // We need to preserve these bytes exactly as they are
         // Create a fresh ArrayBuffer to avoid SharedArrayBuffer compatibility issues
         const encryptedBuffer = new ArrayBuffer(encryptResult.encryptedData.byteLength);
         new Uint8Array(encryptedBuffer).set(encryptResult.encryptedData);
+        
+        // Log for debugging
+        logger.info('Creating File from encrypted data', {
+          encryptedDataSize: encryptResult.encryptedData.byteLength,
+          ciphertextStringLength: encryptResult.metadata.ciphertext?.length || 0,
+          bufferSize: encryptedBuffer.byteLength,
+        });
+        
         const encryptedBlob = new Blob([encryptedBuffer], {
           type: 'application/octet-stream',
         });
@@ -411,9 +421,18 @@ export async function uploadVideoToFilecoin(
           type: 'application/octet-stream',
         });
         
+        // Verify the File size matches what we expect
+        logger.info('File created', {
+          fileSize: fileToUpload.size,
+          expectedSize: encryptResult.encryptedData.byteLength,
+          match: fileToUpload.size === encryptResult.encryptedData.byteLength,
+        });
+        
         logger.info('Video encrypted successfully', {
           originalSize: file.size,
           encryptedSize: fileToUpload.size,
+          encryptedDataSize: encryptResult.encryptedData.byteLength,
+          ciphertextLength: encryptResult.metadata.ciphertext?.length || 0,
         });
         
         onProgress?.({

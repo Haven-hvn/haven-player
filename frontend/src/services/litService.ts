@@ -438,9 +438,50 @@ export async function encryptFileForStorage(
 
   onProgress?.('Encryption complete');
   
+  // Log what Lit Protocol returns to understand the format
+  console.log('[Lit Encryption] encryptResponse type:', typeof encryptResponse.ciphertext);
+  console.log('[Lit Encryption] encryptResponse.ciphertext length:', encryptResponse.ciphertext?.length);
+  if (encryptResponse.ciphertext) {
+    console.log('[Lit Encryption] encryptResponse.ciphertext first 100 chars:', encryptResponse.ciphertext.substring(0, 100));
+    console.log('[Lit Encryption] encryptResponse.ciphertext last 100 chars:', encryptResponse.ciphertext.substring(Math.max(0, encryptResponse.ciphertext.length - 100)));
+  }
+  
   // Convert ciphertext string to Uint8Array for storage
+  // IMPORTANT: Lit Protocol's ciphertext is a JSON string
+  // TextEncoder.encode() converts the string to UTF-8 bytes, which is what we need
   const encoder = new TextEncoder();
   const encryptedData = encoder.encode(encryptResponse.ciphertext);
+  
+  // Verify the encoding is reversible (for debugging)
+  const decoder = new TextDecoder('utf-8');
+  const decodedBack = decoder.decode(encryptedData);
+  if (decodedBack !== encryptResponse.ciphertext) {
+    console.error('[Lit Encryption] WARNING: Encoding/decoding mismatch!');
+    console.error('[Lit Encryption] Original length:', encryptResponse.ciphertext.length);
+    console.error('[Lit Encryption] Decoded length:', decodedBack.length);
+    console.error('[Lit Encryption] Bytes length:', encryptedData.byteLength);
+    // Check if it's just a length difference or actual content difference
+    const minLength = Math.min(decodedBack.length, encryptResponse.ciphertext.length);
+    const firstMismatch = decodedBack.substring(0, minLength) !== encryptResponse.ciphertext.substring(0, minLength);
+    console.error('[Lit Encryption] Content differs:', firstMismatch);
+    if (firstMismatch) {
+      // Find where they differ
+      for (let i = 0; i < minLength; i++) {
+        if (decodedBack[i] !== encryptResponse.ciphertext[i]) {
+          console.error('[Lit Encryption] First difference at index:', i);
+          console.error('[Lit Encryption] Original char:', encryptResponse.ciphertext[i], 'Code:', encryptResponse.ciphertext.charCodeAt(i));
+          console.error('[Lit Encryption] Decoded char:', decodedBack[i], 'Code:', decodedBack.charCodeAt(i));
+          break;
+        }
+      }
+    }
+    throw new Error('Failed to properly encode ciphertext for storage - encoding/decoding mismatch');
+  } else {
+    console.log('[Lit Encryption] Encoding/decoding verified: OK', {
+      originalLength: encryptResponse.ciphertext.length,
+      bytesLength: encryptedData.byteLength,
+    });
+  }
 
   const metadata: LitEncryptionMetadata = {
     ciphertext: encryptResponse.ciphertext,

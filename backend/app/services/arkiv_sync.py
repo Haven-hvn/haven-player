@@ -334,11 +334,17 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
         # NOTE: ciphertext is NOT included here - it's already on Filecoin and would be a duplicate
         # The decryption function will use the Filecoin data instead of metadata.ciphertext
         if video.lit_encryption_metadata:
-            # Parse metadata and remove ciphertext to reduce payload size
+            # Parse metadata and remove ciphertext if present
+            # Ciphertext should never be in database, but remove it if found
             import json
             metadata_dict = json.loads(video.lit_encryption_metadata)
             # Remove ciphertext - it's already on Filecoin, no need to duplicate
             if "ciphertext" in metadata_dict:
+                logger.warning(
+                    "⚠️ Found ciphertext in lit_encryption_metadata for video %s - "
+                    "removing it. Ciphertext should only be stored on IPFS, not in database.",
+                    video.path
+                )
                 metadata_dict.pop("ciphertext")
             # Store metadata without ciphertext
             payload["lit_encryption_metadata"] = json.dumps(metadata_dict)

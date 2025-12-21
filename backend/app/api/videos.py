@@ -583,7 +583,29 @@ def update_filecoin_metadata(
     # Update Lit Protocol encryption metadata if provided
     video.is_encrypted = metadata.is_encrypted
     if metadata.lit_encryption_metadata:
-        video.lit_encryption_metadata = metadata.lit_encryption_metadata
+        # Validate and remove ciphertext from metadata if present
+        # Ciphertext should only be stored on IPFS, not in database
+        import json
+        try:
+            metadata_dict = json.loads(metadata.lit_encryption_metadata)
+            if "ciphertext" in metadata_dict:
+                logger.warning(
+                    "⚠️ Removing ciphertext from lit_encryption_metadata for video %s - "
+                    "ciphertext should only be stored on IPFS, not in database",
+                    video.path
+                )
+                metadata_dict.pop("ciphertext")
+                # Re-serialize without ciphertext
+                video.lit_encryption_metadata = json.dumps(metadata_dict)
+            else:
+                video.lit_encryption_metadata = metadata.lit_encryption_metadata
+        except json.JSONDecodeError:
+            # If it's not valid JSON, store as-is (shouldn't happen, but be safe)
+            logger.warning(
+                "⚠️ Invalid JSON in lit_encryption_metadata for video %s",
+                video.path
+            )
+            video.lit_encryption_metadata = metadata.lit_encryption_metadata
     
     db.commit()
     db.refresh(video)

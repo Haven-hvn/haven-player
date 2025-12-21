@@ -41,10 +41,10 @@ export interface FilecoinUploadResult {
 }
 
 // Lit Protocol encryption metadata stored with encrypted videos
-// Note: ciphertext is optional - when syncing to Arkiv, ciphertext is removed to reduce payload size
-// The encrypted data itself is stored on Filecoin/IPFS and should be used for decryption
+// NOTE: ciphertext is NEVER stored in metadata - it's only stored on IPFS/Filecoin
+// The encrypted data itself must be downloaded from IPFS/Filecoin for decryption
 export interface LitEncryptionMetadata {
-  ciphertext?: string // Optional - removed from Arkiv payload, available from Filecoin/IPFS;
+  // ciphertext is NOT included - it's stored on IPFS/Filecoin only
   dataToEncryptHash: string;
   accessControlConditions: AccessControlCondition[];
   chain: string;

@@ -21,19 +21,13 @@ interface EvmBasicAccessControlCondition {
 }
 
 // Lit encryption metadata stored alongside the encrypted file
-// Note: ciphertext is optional - when syncing to Arkiv, ciphertext is removed to reduce payload size
-// The encrypted data itself is stored on Filecoin/IPFS and should be used for decryption
+// NOTE: ciphertext is NEVER stored in metadata - it's only stored on IPFS/Filecoin
+// The encrypted data itself must be downloaded from IPFS/Filecoin for decryption
 export interface LitEncryptionMetadata {
-  ciphertext?: string; // Optional - removed from Arkiv payload, available from Filecoin/IPFS
+  // ciphertext is NOT included - it's stored on IPFS/Filecoin only
   dataToEncryptHash: string;
   accessControlConditions: EvmBasicAccessControlCondition[];
   chain: string;
-}
-
-// Result of encrypting a video file
-export interface EncryptVideoResult {
-  encryptedBlob: Blob;
-  metadata: LitEncryptionMetadata;
 }
 
 // Lit client singleton
@@ -277,62 +271,12 @@ function toArrayBuffer(data: Uint8Array): ArrayBuffer {
 }
 
 /**
- * Encrypt a video file using Lit Protocol
- * Only the owner wallet can decrypt
- */
-export async function encryptVideo(
-  file: File,
-  privateKey: string,
-  onProgress?: (message: string) => void
-): Promise<EncryptVideoResult> {
-  onProgress?.('Initializing Lit Protocol...');
-  
-  const client = await initLitClient();
-  const walletAddress = getWalletAddressFromPrivateKey(privateKey);
-  
-  onProgress?.('Creating access control conditions...');
-  
-  const accessControlConditions = createOwnerOnlyAccessControlConditions(walletAddress);
-  
-  onProgress?.('Encrypting video file...');
-  
-  // Read file as ArrayBuffer
-  const fileBuffer = await file.arrayBuffer();
-  const fileUint8Array = new Uint8Array(fileBuffer);
-  
-  // Encrypt the file - cast accessControlConditions to avoid version type conflicts
-  const encryptResponse = await client.encrypt({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accessControlConditions: accessControlConditions as any,
-    dataToEncrypt: fileUint8Array,
-  });
-
-  onProgress?.('Encryption complete');
-  
-  // Create blob from ciphertext for storage
-  const encryptedBlob = new Blob([encryptResponse.ciphertext], {
-    type: 'application/octet-stream',
-  });
-
-  const metadata: LitEncryptionMetadata = {
-    ciphertext: encryptResponse.ciphertext,
-    dataToEncryptHash: encryptResponse.dataToEncryptHash,
-    accessControlConditions,
-    chain: 'ethereum',
-  };
-
-  return {
-    encryptedBlob,
-    metadata,
-  };
-}
-
-/**
  * Decrypt a video file using Lit Protocol
  * Requires the private key of the wallet that encrypted
+ * NOTE: encryptedData must be provided - ciphertext is never stored in metadata
  */
 export async function decryptVideo(
-  encryptedData: Uint8Array | string,
+  encryptedData: Uint8Array,
   metadata: LitEncryptionMetadata,
   privateKey: string,
   onProgress?: (message: string) => void
@@ -353,16 +297,18 @@ export async function decryptVideo(
 
   onProgress?.('Decrypting video...');
   
-  // Get ciphertext - either from metadata or the encrypted data itself
-  // Ensure it's a string (Lit Protocol expects string, not Uint8Array)
+  // Decode encryptedData from IPFS (UTF-8 bytes) back to base64 string
+  // Lit Protocol returns base64 string, which we encode as UTF-8 bytes for IPFS storage
   let ciphertext: string;
-  if (typeof encryptedData === 'string') {
-    ciphertext = encryptedData;
-  } else {
-    // Use metadata ciphertext (should be a string)
-    ciphertext = typeof metadata.ciphertext === 'string' 
-      ? metadata.ciphertext 
-      : new TextDecoder().decode(metadata.ciphertext as unknown as Uint8Array);
+  if (!encryptedData || encryptedData.length === 0) {
+    throw new Error('No encrypted data provided. Cannot decrypt video. The video may be missing the encrypted file on Filecoin/IPFS.');
+  }
+  
+  try {
+    // Decode UTF-8 bytes back to base64 string
+    ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
+  } catch (decodeError) {
+    throw new Error(`Failed to decode encrypted data: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete.`);
   }
 
   // Decrypt the file - cast accessControlConditions to avoid version type conflicts
@@ -438,62 +384,22 @@ export async function encryptFileForStorage(
 
   onProgress?.('Encryption complete');
   
-  // Log what Lit Protocol returns to understand the format
-  console.log('[Lit Encryption] encryptResponse type:', typeof encryptResponse.ciphertext);
-  console.log('[Lit Encryption] encryptResponse.ciphertext length:', encryptResponse.ciphertext?.length);
-  if (encryptResponse.ciphertext) {
-    console.log('[Lit Encryption] encryptResponse.ciphertext first 100 chars:', encryptResponse.ciphertext.substring(0, 100));
-    console.log('[Lit Encryption] encryptResponse.ciphertext last 100 chars:', encryptResponse.ciphertext.substring(Math.max(0, encryptResponse.ciphertext.length - 100)));
-    console.log('[Lit Encryption] encryptResponse.ciphertext starts with {:', encryptResponse.ciphertext.trim().startsWith('{'));
-    console.log('[Lit Encryption] encryptResponse.ciphertext ends with }:', encryptResponse.ciphertext.trim().endsWith('}'));
-  }
-  
-  // Convert ciphertext string to Uint8Array for storage
-  // IMPORTANT: Lit Protocol's ciphertext is a JSON string
-  // TextEncoder.encode() converts the string to UTF-8 bytes, which is what we need
+  // Lit Protocol returns ciphertext as a base64 string
+  // Encode it as UTF-8 bytes for IPFS storage
   const encoder = new TextEncoder();
   const encryptedData = encoder.encode(encryptResponse.ciphertext);
   
-  // Log what we're storing to IPFS
-  console.log('[Lit Encryption] Storing to IPFS:', {
-    originalCiphertextLength: encryptResponse.ciphertext.length,
-    encodedBytesLength: encryptedData.byteLength,
-    first50BytesHex: Array.from(encryptedData.slice(0, 50)).map(b => b.toString(16).padStart(2, '0')).join(' '),
-  });
-  
-  // Verify the encoding is reversible (for debugging)
+  // Verify the encoding is reversible (sanity check)
   const decoder = new TextDecoder('utf-8');
   const decodedBack = decoder.decode(encryptedData);
   if (decodedBack !== encryptResponse.ciphertext) {
-    console.error('[Lit Encryption] WARNING: Encoding/decoding mismatch!');
-    console.error('[Lit Encryption] Original length:', encryptResponse.ciphertext.length);
-    console.error('[Lit Encryption] Decoded length:', decodedBack.length);
-    console.error('[Lit Encryption] Bytes length:', encryptedData.byteLength);
-    // Check if it's just a length difference or actual content difference
-    const minLength = Math.min(decodedBack.length, encryptResponse.ciphertext.length);
-    const firstMismatch = decodedBack.substring(0, minLength) !== encryptResponse.ciphertext.substring(0, minLength);
-    console.error('[Lit Encryption] Content differs:', firstMismatch);
-    if (firstMismatch) {
-      // Find where they differ
-      for (let i = 0; i < minLength; i++) {
-        if (decodedBack[i] !== encryptResponse.ciphertext[i]) {
-          console.error('[Lit Encryption] First difference at index:', i);
-          console.error('[Lit Encryption] Original char:', encryptResponse.ciphertext[i], 'Code:', encryptResponse.ciphertext.charCodeAt(i));
-          console.error('[Lit Encryption] Decoded char:', decodedBack[i], 'Code:', decodedBack.charCodeAt(i));
-          break;
-        }
-      }
-    }
     throw new Error('Failed to properly encode ciphertext for storage - encoding/decoding mismatch');
-  } else {
-    console.log('[Lit Encryption] Encoding/decoding verified: OK', {
-      originalLength: encryptResponse.ciphertext.length,
-      bytesLength: encryptedData.byteLength,
-    });
   }
 
+  // Don't store ciphertext in metadata - it's only stored on IPFS
+  // This ensures consistent behavior: always decode from IPFS, not from metadata
   const metadata: LitEncryptionMetadata = {
-    ciphertext: encryptResponse.ciphertext,
+    // ciphertext is intentionally omitted - it's stored on IPFS only
     dataToEncryptHash: encryptResponse.dataToEncryptHash,
     accessControlConditions,
     chain: 'ethereum',
@@ -589,8 +495,9 @@ export async function encryptTextWithLit(
 
   onProgress?.('Encryption complete');
 
+  // Don't store ciphertext in metadata - it's returned separately
   const metadata: LitEncryptionMetadata = {
-    ciphertext: encryptResponse.ciphertext,
+    // ciphertext is intentionally omitted - it's returned separately
     dataToEncryptHash: encryptResponse.dataToEncryptHash,
     accessControlConditions,
     chain: 'ethereum',
@@ -628,142 +535,25 @@ export async function decryptFileFromStorage(
 
   onProgress?.('Decrypting file...');
   
-  // Log metadata availability for debugging
-  console.log('[Lit Decryption] Metadata available:', {
-    hasCiphertext: !!metadata.ciphertext,
-    ciphertextType: typeof metadata.ciphertext,
-    ciphertextLength: typeof metadata.ciphertext === 'string' ? metadata.ciphertext.length : 'N/A',
-    hasDataToEncryptHash: !!metadata.dataToEncryptHash,
-    hasAccessControlConditions: !!metadata.accessControlConditions,
-    chain: metadata.chain,
-    encryptedDataLength: encryptedData?.length || 0,
-    encryptedDataType: encryptedData ? 'Uint8Array' : 'undefined',
-  });
+  // Lit Protocol expects ciphertext as a base64 string
+  // Decode encryptedData from IPFS (UTF-8 bytes) back to base64 string
+  // The encryptedData was stored using TextEncoder, so we decode it back
+  if (!encryptedData || encryptedData.length === 0) {
+    throw new Error('No encrypted data provided. Cannot decrypt video. The video may be missing the encrypted file on Filecoin/IPFS.');
+  }
   
-  // Lit Protocol expects ciphertext as a string
-  // Priority order:
-  // 1. metadata.ciphertext (if available - backward compatibility and local videos)
-  // 2. encryptedData from Filecoin/IPFS (for videos restored from Arkiv without ciphertext)
   let ciphertext: string;
-  let ciphertextSource: 'metadata' | 'ipfs' | 'unknown' = 'unknown';
-  
-  // First, try to use metadata.ciphertext if available (preferred for backward compatibility)
-  if (typeof metadata.ciphertext === 'string' && metadata.ciphertext.length > 0) {
-    console.log('[Lit Decryption] Using metadata.ciphertext, length:', metadata.ciphertext.length);
-    ciphertext = metadata.ciphertext;
-    ciphertextSource = 'metadata';
-  } else if (encryptedData && encryptedData.length > 0) {
-    // Fallback: decode encryptedData from Filecoin/IPFS
-    // The encryptedData was stored using TextEncoder, so we decode it back
-    // Note: Lit Protocol's ciphertext is a JSON string containing encrypted data
-    // Add error handling for incomplete or corrupted data
-    try {
-      console.log('[Lit Decryption] Decoding encrypted data from IPFS, length:', encryptedData.length);
-      console.log('[Lit Decryption] First 50 bytes (hex):', Array.from(encryptedData.slice(0, 50)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-      ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
-      console.log('[Lit Decryption] Decoded ciphertext length:', ciphertext.length);
-      ciphertextSource = 'ipfs';
-      
-      // Validate the decoded ciphertext looks reasonable
-      // Lit Protocol ciphertext is a JSON string, so it should start with '{' and end with '}'
-      // Check for valid JSON structure to catch truncation issues
-      if (ciphertext.length < 10) {
-        console.warn('[Lit Decryption] Decoded ciphertext seems too short');
-        throw new Error('Decoded ciphertext appears invalid (too short)');
-      }
-      
-      // Check if ciphertext appears to be valid JSON (Lit Protocol ciphertext is JSON)
-      const trimmed = ciphertext.trim();
-      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
-        console.warn('[Lit Decryption] Ciphertext does not appear to be valid JSON');
-        console.warn('[Lit Decryption] First 100 chars:', trimmed.substring(0, 100));
-        console.warn('[Lit Decryption] Last 100 chars:', trimmed.substring(Math.max(0, trimmed.length - 100)));
-        throw new Error('Decoded ciphertext does not appear to be valid JSON. The encrypted file may be corrupted or incomplete.');
-      }
-      
-      // Try to parse as JSON to catch truncation issues early
-      // Lit Protocol's ciphertext is a JSON object with encrypted data
-      try {
-        const parsed = JSON.parse(ciphertext);
-        console.log('[Lit Decryption] Ciphertext is valid JSON, keys:', Object.keys(parsed));
-        console.log('[Lit Decryption] Ciphertext structure:', {
-          hasSymmetricKey: 'symmetricKey' in parsed,
-          hasCiphertext: 'ciphertext' in parsed,
-          hasDataToEncryptHash: 'dataToEncryptHash' in parsed,
-          keyCount: Object.keys(parsed).length
-        });
-        // Check if required Lit Protocol fields are present
-        if (!parsed.symmetricKey && !parsed.ciphertext) {
-          console.warn('[Lit Decryption] Ciphertext JSON missing expected Lit Protocol fields (symmetricKey or ciphertext)');
-        }
-        // Check for nested JSON strings that might be truncated
-        if (parsed.ciphertext && typeof parsed.ciphertext === 'string') {
-          try {
-            JSON.parse(parsed.ciphertext);
-            console.log('[Lit Decryption] Nested ciphertext is also valid JSON');
-          } catch (nestedError) {
-            console.warn('[Lit Decryption] Nested ciphertext is not JSON (this is normal for base64 data)');
-          }
-        }
-      } catch (parseError) {
-        console.error('[Lit Decryption] Failed to parse ciphertext as JSON:', parseError);
-        // Log more details about the ciphertext to help diagnose
-        const sampleStart = ciphertext.substring(0, 200);
-        const sampleEnd = ciphertext.substring(Math.max(0, ciphertext.length - 200));
-        console.error('[Lit Decryption] Ciphertext start (200 chars):', sampleStart);
-        console.error('[Lit Decryption] Ciphertext end (200 chars):', sampleEnd);
-        console.error('[Lit Decryption] Ciphertext length:', ciphertext.length);
-        // Count braces to see if JSON is balanced
-        const openBraces = (ciphertext.match(/{/g) || []).length;
-        const closeBraces = (ciphertext.match(/}/g) || []).length;
-        console.error('[Lit Decryption] Open braces:', openBraces, 'Close braces:', closeBraces);
-        throw new Error(`Ciphertext is not valid JSON: ${parseError instanceof Error ? parseError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete.`);
-      }
-    } catch (decodeError) {
-      console.error('[Lit Decryption] Error decoding encrypted data:', decodeError);
-      throw new Error(`Failed to decode encrypted data from IPFS: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete. Please ensure the video was properly uploaded to Filecoin.`);
+  try {
+    // Decode UTF-8 bytes back to base64 string
+    ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
+    
+    // Validate the decoded ciphertext looks reasonable
+    if (ciphertext.length < 10) {
+      throw new Error('Decoded ciphertext appears invalid (too short)');
     }
-  } else {
-    // Last resort: try to convert metadata.ciphertext if it's not a string
-    if (metadata.ciphertext) {
-    console.warn('[Lit] Ciphertext is not a string, attempting conversion');
-      try {
-        ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(metadata.ciphertext as unknown as Uint8Array);
-      } catch (decodeError) {
-        throw new Error(`Failed to decode ciphertext from metadata: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encryption metadata may be corrupted.`);
-      }
-    } else {
-      throw new Error('No ciphertext available. Cannot decrypt video. The video may be missing encryption metadata or the encrypted file on Filecoin/IPFS.');
-    }
+  } catch (decodeError) {
+    throw new Error(`Failed to decode encrypted data from IPFS: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete. Please ensure the video was properly uploaded to Filecoin.`);
   }
-  
-  // Validate that we have a valid ciphertext
-  if (!ciphertext || ciphertext.length === 0) {
-    throw new Error('Ciphertext is empty or invalid. Cannot decrypt video.');
-  }
-  
-  // Log final ciphertext info before passing to Lit Protocol
-  console.log('[Lit Decryption] Final ciphertext info:', {
-    source: ciphertextSource,
-    length: ciphertext.length,
-    firstChar: ciphertext[0],
-    lastChar: ciphertext[ciphertext.length - 1],
-    startsWithBrace: ciphertext.trim().startsWith('{'),
-    endsWithBrace: ciphertext.trim().endsWith('}'),
-    first50Chars: ciphertext.substring(0, 50),
-    last50Chars: ciphertext.substring(Math.max(0, ciphertext.length - 50)),
-  });
-  
-  // Log what we're passing to Lit Protocol
-  console.log('[Lit Decryption] Calling Lit Protocol decrypt with:', {
-    ciphertextLength: ciphertext.length,
-    dataToEncryptHash: metadata.dataToEncryptHash,
-    accessControlConditionsCount: metadata.accessControlConditions?.length || 0,
-    chain: metadata.chain,
-    hasSessionSigs: !!sessionSigs,
-  });
-  
-  console.log('[Lit Decryption] Using ciphertext for decryption, length:', ciphertext.length);
   
   // Decrypt the file - cast accessControlConditions to avoid version type conflicts
   let decryptResponse;
@@ -813,8 +603,13 @@ export function isLitClientConnected(): boolean {
 
 /**
  * Serialize encryption metadata to JSON string for storage
+ * Validates that ciphertext is not present (it should only be on IPFS)
  */
 export function serializeEncryptionMetadata(metadata: LitEncryptionMetadata): string {
+  // Ensure ciphertext is never included in metadata
+  if ('ciphertext' in metadata && metadata.ciphertext !== undefined) {
+    throw new Error('Cannot serialize metadata with ciphertext - ciphertext must only be stored on IPFS, not in metadata');
+  }
   return JSON.stringify(metadata);
 }
 

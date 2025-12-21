@@ -76,6 +76,7 @@ export const videoService = {
       is_encrypted?: boolean;
       lit_encryption_metadata?: string;
       encrypted_root_cid?: string;
+      cid_encryption_metadata?: string;
     }
   ): Promise<Video> => {
     const response = await api.put<Video>(

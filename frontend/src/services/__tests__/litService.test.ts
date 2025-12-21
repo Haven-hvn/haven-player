@@ -164,7 +164,7 @@ describe('litService', () => {
       expect(deserialized.dataToEncryptHash).toBe('test-hash');
       expect(deserialized.chain).toBe('ethereum');
       // ciphertext should NOT be in metadata (it's stored on IPFS only)
-      expect(deserialized.ciphertext).toBeUndefined();
+      expect('ciphertext' in deserialized).toBe(false);
     });
 
     it('should throw on invalid JSON', () => {
@@ -210,7 +210,7 @@ describe('litService', () => {
         originalMetadata.accessControlConditions[0].returnValueTest.value
       );
       // ciphertext should NOT be in metadata (it's stored on IPFS only)
-      expect(deserialized.ciphertext).toBeUndefined();
+      expect('ciphertext' in deserialized).toBe(false);
     });
   });
 });

@@ -54,8 +54,6 @@ export const resolvePlaybackSource = async (
     checkFileExists,
     isEncrypted = false,
     litEncryptionMetadata = null,
-    title,
-    fileExtension,
   } = input;
 
   const fileExists = await checkFileExists(videoPath);

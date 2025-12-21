@@ -85,7 +85,6 @@ describe('litService', () => {
   describe('serializeEncryptionMetadata', () => {
     it('should serialize encryption metadata to JSON string', () => {
       const metadata: LitEncryptionMetadata = {
-        ciphertext: 'test-ciphertext',
         dataToEncryptHash: 'test-hash',
         accessControlConditions: [
           {
@@ -107,16 +106,41 @@ describe('litService', () => {
       
       expect(typeof serialized).toBe('string');
       const parsed = JSON.parse(serialized);
-      expect(parsed.ciphertext).toBe('test-ciphertext');
       expect(parsed.dataToEncryptHash).toBe('test-hash');
       expect(parsed.chain).toBe('ethereum');
+      // ciphertext should NOT be in metadata (it's stored on IPFS only)
+      expect(parsed.ciphertext).toBeUndefined();
+    });
+
+    it('should throw error if ciphertext is present in metadata', () => {
+      const metadataWithCiphertext = {
+        ciphertext: 'test-ciphertext',
+        dataToEncryptHash: 'test-hash',
+        accessControlConditions: [
+          {
+            contractAddress: '',
+            standardContractType: '',
+            chain: 'ethereum',
+            method: '',
+            parameters: [':userAddress'],
+            returnValueTest: {
+              comparator: '=',
+              value: '0x1234567890123456789012345678901234567890',
+            },
+          },
+        ],
+        chain: 'ethereum',
+      } as any; // Use 'as any' to bypass TypeScript check for testing
+      
+      expect(() => {
+        serializeEncryptionMetadata(metadataWithCiphertext);
+      }).toThrow('Cannot serialize metadata with ciphertext');
     });
   });
 
   describe('deserializeEncryptionMetadata', () => {
     it('should deserialize JSON string to encryption metadata', () => {
       const metadata: LitEncryptionMetadata = {
-        ciphertext: 'test-ciphertext',
         dataToEncryptHash: 'test-hash',
         accessControlConditions: [
           {
@@ -137,9 +161,10 @@ describe('litService', () => {
       const serialized = JSON.stringify(metadata);
       const deserialized = deserializeEncryptionMetadata(serialized);
       
-      expect(deserialized.ciphertext).toBe('test-ciphertext');
       expect(deserialized.dataToEncryptHash).toBe('test-hash');
       expect(deserialized.chain).toBe('ethereum');
+      // ciphertext should NOT be in metadata (it's stored on IPFS only)
+      expect(deserialized.ciphertext).toBeUndefined();
     });
 
     it('should throw on invalid JSON', () => {
@@ -158,7 +183,6 @@ describe('litService', () => {
   describe('metadata roundtrip', () => {
     it('should preserve all metadata fields through serialize/deserialize cycle', () => {
       const originalMetadata: LitEncryptionMetadata = {
-        ciphertext: 'encrypted-content-base64-encoded',
         dataToEncryptHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
         accessControlConditions: [
           {
@@ -179,13 +203,14 @@ describe('litService', () => {
       const serialized = serializeEncryptionMetadata(originalMetadata);
       const deserialized = deserializeEncryptionMetadata(serialized);
       
-      expect(deserialized.ciphertext).toBe(originalMetadata.ciphertext);
       expect(deserialized.dataToEncryptHash).toBe(originalMetadata.dataToEncryptHash);
       expect(deserialized.chain).toBe(originalMetadata.chain);
       expect(deserialized.accessControlConditions).toHaveLength(1);
       expect(deserialized.accessControlConditions[0].returnValueTest.value).toBe(
         originalMetadata.accessControlConditions[0].returnValueTest.value
       );
+      // ciphertext should NOT be in metadata (it's stored on IPFS only)
+      expect(deserialized.ciphertext).toBeUndefined();
     });
   });
 });

@@ -77,6 +77,7 @@ const defaultArkivConfig: ArkivConfig = {
   rpcUrl: "https://mendoza.hoodi.arkiv.network/rpc",
   enabled: false,
   syncEnabled: false,
+  expirationWeeks: 4, // Default: 4 weeks
 };
 
 const defaultFilecoinConfig: FilecoinConfig = {
@@ -223,6 +224,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           rpcUrl: savedConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc",
           enabled: savedConfig.enabled ?? false,
           syncEnabled: savedConfig.syncEnabled ?? false,
+          expirationWeeks: savedConfig.expirationWeeks ?? 4,
         });
       } else {
         setArkivConfig(defaultArkivConfig);
@@ -424,6 +426,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         await ipcRenderer.invoke("save-arkiv-config", {
           rpcUrl: arkivConfig.rpcUrl,
           syncEnabled: arkivConfig.syncEnabled,
+          expirationWeeks: arkivConfig.expirationWeeks,
         });
         // Reload to get updated enabled status
         await loadArkivConfig();
@@ -1217,6 +1220,23 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         }}
         placeholder="https://mendoza.hoodi.arkiv.network/rpc"
         helperText="Ethereum RPC endpoint for Arkiv blockchain. Default: https://mendoza.hoodi.arkiv.network/rpc"
+        disabled={!arkivConfig.syncEnabled}
+      />
+
+      <TextField
+        fullWidth
+        label="Video Expiration (weeks)"
+        type="number"
+        value={arkivConfig.expirationWeeks ?? 4}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+          const weeks = parseInt(e.target.value, 10);
+          setArkivConfig((prev: ArkivConfig) => ({
+            ...prev,
+            expirationWeeks: isNaN(weeks) || weeks < 1 ? 1 : weeks,
+          }));
+        }}
+        inputProps={{ min: 1, max: 520 }} // 1 week to 10 years (520 weeks)
+        helperText="How long (in weeks) videos will be able to be restored from Arkiv. After expiration, data is automatically pruned from the blockchain. Default: 4 weeks"
         disabled={!arkivConfig.syncEnabled}
       />
 

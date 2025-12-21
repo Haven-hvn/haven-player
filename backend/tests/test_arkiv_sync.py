@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from arkiv.types import Attributes, EntityKey
 from requests.exceptions import HTTPError
@@ -16,6 +17,7 @@ from app.services.arkiv_sync import (
     _build_attributes,
     _build_payload,
     _is_413_error,
+    build_arkiv_config,
 )
 
 
@@ -289,4 +291,102 @@ def test_build_payload_removes_ciphertext_from_metadata() -> None:
     assert "dataToEncryptHash" in metadata
     assert "accessControlConditions" in metadata
     assert "chain" in metadata
+
+
+def test_build_arkiv_config_defaults_to_4_weeks() -> None:
+    """Test that build_arkiv_config defaults to 4 weeks expiration when ARKIV_EXPIRATION_WEEKS is not set."""
+    with patch.dict(os.environ, {}, clear=False):
+        # Remove ARKIV_EXPIRATION_WEEKS if it exists
+        os.environ.pop("ARKIV_EXPIRATION_WEEKS", None)
+        config = build_arkiv_config()
+        # 4 weeks = 4 * 7 * 24 * 60 * 60 = 2,419,200 seconds
+        expected_seconds = 4 * 7 * 24 * 60 * 60
+        assert config.expires_in == expected_seconds
+
+
+def test_build_arkiv_config_reads_expiration_weeks_from_env() -> None:
+    """Test that build_arkiv_config reads ARKIV_EXPIRATION_WEEKS from environment."""
+    with patch.dict(os.environ, {"ARKIV_EXPIRATION_WEEKS": "8"}, clear=False):
+        config = build_arkiv_config()
+        # 8 weeks = 8 * 7 * 24 * 60 * 60 = 4,838,400 seconds
+        expected_seconds = 8 * 7 * 24 * 60 * 60
+        assert config.expires_in == expected_seconds
+
+
+def test_build_arkiv_config_handles_invalid_expiration_weeks() -> None:
+    """Test that build_arkiv_config handles invalid ARKIV_EXPIRATION_WEEKS values gracefully."""
+    with patch.dict(os.environ, {"ARKIV_EXPIRATION_WEEKS": "invalid"}, clear=False):
+        config = build_arkiv_config()
+        # Should default to 4 weeks when invalid
+        expected_seconds = 4 * 7 * 24 * 60 * 60
+        assert config.expires_in == expected_seconds
+
+
+def test_build_arkiv_config_handles_zero_expiration_weeks() -> None:
+    """Test that build_arkiv_config handles zero or negative expiration weeks."""
+    with patch.dict(os.environ, {"ARKIV_EXPIRATION_WEEKS": "0"}, clear=False):
+        config = build_arkiv_config()
+        # Should default to 4 weeks when value is less than 1
+        expected_seconds = 4 * 7 * 24 * 60 * 60
+        assert config.expires_in == expected_seconds
+    
+    with patch.dict(os.environ, {"ARKIV_EXPIRATION_WEEKS": "-1"}, clear=False):
+        config = build_arkiv_config()
+        # Should default to 4 weeks when value is negative
+        expected_seconds = 4 * 7 * 24 * 60 * 60
+        assert config.expires_in == expected_seconds
+
+
+def test_sync_video_uses_expires_in_from_config() -> None:
+    """Test that sync_video uses the expires_in value from config when creating entities."""
+    # Test with custom expiration (2 weeks)
+    custom_expires_in = 2 * 7 * 24 * 60 * 60  # 2 weeks in seconds
+    config = ArkivSyncConfig(
+        enabled=True,
+        private_key="0x" + "1" * 64,
+        rpc_url="http://localhost:8545",
+        expires_in=custom_expires_in
+    )
+    dummy_client = DummyArkivClient()
+    
+    def factory(_url: str, _key: str) -> DummyArkivClient:
+        return dummy_client
+    
+    client = ArkivSyncClient(config, arkiv_factory=factory)
+    video = make_video(arkiv_entity_key=None)
+    session = DummySession()
+    
+    result = client.sync_video(session, video, [make_timestamp("car")])
+    
+    assert result == EntityKey("0xabc")
+    assert dummy_client.arkiv.created, "create_entity should be called"
+    # Verify that the custom expires_in was used
+    assert dummy_client.arkiv.created[0]["expires_in"] == custom_expires_in
+
+
+def test_sync_video_uses_expires_in_when_updating() -> None:
+    """Test that sync_video uses the expires_in value from config when updating entities."""
+    # Test with custom expiration (12 weeks)
+    custom_expires_in = 12 * 7 * 24 * 60 * 60  # 12 weeks in seconds
+    config = ArkivSyncConfig(
+        enabled=True,
+        private_key="0x" + "1" * 64,
+        rpc_url="http://localhost:8545",
+        expires_in=custom_expires_in
+    )
+    dummy_client = DummyArkivClient()
+    
+    def factory(_url: str, _key: str) -> DummyArkivClient:
+        return dummy_client
+    
+    client = ArkivSyncClient(config, arkiv_factory=factory)
+    video = make_video(arkiv_entity_key="0x123")
+    session = DummySession()
+    
+    result = client.sync_video(session, video, [make_timestamp("car")])
+    
+    assert result == EntityKey("0x123")
+    assert dummy_client.arkiv.updated, "update_entity should be called"
+    # Verify that the custom expires_in was used
+    assert dummy_client.arkiv.updated[0]["expires_in"] == custom_expires_in
 

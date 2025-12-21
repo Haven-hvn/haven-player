@@ -163,7 +163,7 @@ class ArkivSyncConfig:
     enabled: bool
     private_key: str | None
     rpc_url: str
-    expires_in: int = 24 * 60 * 60
+    expires_in: int = 4 * 7 * 24 * 60 * 60  # Default: 4 weeks in seconds
 
 
 def build_arkiv_config() -> ArkivSyncConfig:
@@ -187,6 +187,20 @@ def build_arkiv_config() -> ArkivSyncConfig:
     # Check if sync is enabled via user toggle (ARKIV_SYNC_ENABLED env var)
     sync_enabled_str = os.getenv("ARKIV_SYNC_ENABLED", "false").lower()
     sync_enabled = sync_enabled_str in ("true", "1", "yes")
+    
+    # Read expiration weeks from environment variable (default: 4 weeks)
+    expiration_weeks_str = os.getenv("ARKIV_EXPIRATION_WEEKS", "4")
+    try:
+        expiration_weeks = int(expiration_weeks_str)
+        if expiration_weeks < 1:
+            logger.warning("ARKIV_EXPIRATION_WEEKS must be at least 1, using default of 4 weeks")
+            expiration_weeks = 4
+    except ValueError:
+        logger.warning("Invalid ARKIV_EXPIRATION_WEEKS value '%s', using default of 4 weeks", expiration_weeks_str)
+        expiration_weeks = 4
+    
+    # Convert weeks to seconds (weeks * 7 days * 24 hours * 60 minutes * 60 seconds)
+    expires_in = expiration_weeks * 7 * 24 * 60 * 60
     
     # Arkiv is enabled only if both: user toggle is on AND private key exists
     enabled = bool(private_key) and sync_enabled
@@ -212,7 +226,17 @@ def build_arkiv_config() -> ArkivSyncConfig:
     elif not private_key:
         logger.info("🔑 Arkiv sync is disabled: no private key configured")
     
-    return ArkivSyncConfig(enabled=enabled, private_key=private_key, rpc_url=rpc_url)
+    if enabled:
+        logger.info(
+            "⏰ Arkiv expiration configured | "
+            "Expiration: %d weeks (%d seconds) | "
+            "Videos will be restorable for %d weeks before automatic pruning",
+            expiration_weeks,
+            expires_in,
+            expiration_weeks
+        )
+    
+    return ArkivSyncConfig(enabled=enabled, private_key=private_key, rpc_url=rpc_url, expires_in=expires_in)
 
 
 class ArkivEntityClient(Protocol):

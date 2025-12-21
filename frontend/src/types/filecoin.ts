@@ -21,6 +21,7 @@ export interface ArkivConfig {
   rpcUrl?: string;
   enabled?: boolean; // Computed from whether private key exists (shared with Filecoin)
   syncEnabled: boolean; // User toggle to enable/disable Arkiv sync
+  expirationWeeks?: number; // How long (in weeks) videos will be able to be restored
 }
 
 export interface FilecoinUploadResult {

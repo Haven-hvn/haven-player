@@ -199,6 +199,7 @@ async function tryStartBackend(): Promise<void> {
     // Load Arkiv config
     let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
     let arkivSyncEnabled = false;
+    let arkivExpirationWeeks = 4;
     try {
       const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
       if (fs.existsSync(arkivConfigPath)) {
@@ -209,6 +210,7 @@ async function tryStartBackend(): Promise<void> {
           arkivRpcUrl = arkivConfig.rpcUrl;
         }
         arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
+        arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
       }
     } catch (err) {
       console.error('Failed to load Arkiv config for auto-start:', err);
@@ -221,6 +223,7 @@ async function tryStartBackend(): Promise<void> {
       FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
       ARKIV_RPC_URL: arkivRpcUrl,
       ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
+      ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
     };
 
     console.log('🚀 Auto-starting backend with configured environment variables...');
@@ -422,6 +425,7 @@ ipcMain.handle('get-arkiv-config', async () => {
     const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     let syncEnabled = false;
     let rpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
+    let expirationWeeks = 4;
     
     if (fs.existsSync(configPath)) {
       const fileBuffer = fs.readFileSync(configPath);
@@ -429,6 +433,7 @@ ipcMain.handle('get-arkiv-config', async () => {
       const config = JSON.parse(data);
       rpcUrl = config.rpcUrl || rpcUrl;
       syncEnabled = config.syncEnabled ?? false;
+      expirationWeeks = config.expirationWeeks ?? 4;
     }
     
     // Check if Filecoin private key exists (shared key)
@@ -439,6 +444,7 @@ ipcMain.handle('get-arkiv-config', async () => {
       rpcUrl,
       enabled,
       syncEnabled,
+      expirationWeeks,
     };
   } catch (error) {
     console.error('Failed to load Arkiv config:', error);
@@ -446,17 +452,19 @@ ipcMain.handle('get-arkiv-config', async () => {
       rpcUrl: 'https://mendoza.hoodi.arkiv.network/rpc',
       enabled: false,
       syncEnabled: false,
+      expirationWeeks: 4,
     };
   }
 });
 
-ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string; syncEnabled?: boolean }) => {
+ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string; syncEnabled?: boolean; expirationWeeks?: number }) => {
   try {
     const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     
     const dataToSave = {
       rpcUrl: config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc',
       syncEnabled: config.syncEnabled ?? false,
+      expirationWeeks: config.expirationWeeks ?? 4,
     };
     
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
@@ -668,6 +676,7 @@ ipcMain.handle('start-backend', async () => {
   // Load Arkiv config
   let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
   let arkivSyncEnabled = false;
+  let arkivExpirationWeeks = 4;
   try {
     const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     if (fs.existsSync(arkivConfigPath)) {
@@ -678,6 +687,7 @@ ipcMain.handle('start-backend', async () => {
         arkivRpcUrl = arkivConfig.rpcUrl;
       }
       arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
+      arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
     }
   } catch (err) {
     console.error('Failed to load Arkiv config for backend:', err);
@@ -691,6 +701,7 @@ ipcMain.handle('start-backend', async () => {
     FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
     ARKIV_RPC_URL: arkivRpcUrl,
     ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
+    ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
   };
 
   const { pythonPath, venvPath } = findPythonExecutable(backendDir);
@@ -760,6 +771,7 @@ ipcMain.handle('restart-backend', async () => {
   // Load Arkiv config
   let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
   let arkivSyncEnabled = false;
+  let arkivExpirationWeeks = 4;
   try {
     const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     if (fs.existsSync(arkivConfigPath)) {
@@ -770,6 +782,7 @@ ipcMain.handle('restart-backend', async () => {
         arkivRpcUrl = arkivConfig.rpcUrl;
       }
       arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
+      arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
     }
   } catch (err) {
     console.error('Failed to load Arkiv config for backend restart:', err);
@@ -782,6 +795,7 @@ ipcMain.handle('restart-backend', async () => {
     FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
     ARKIV_RPC_URL: arkivRpcUrl,
     ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
+    ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
   };
 
   const { pythonPath, venvPath } = findPythonExecutable(backendDir);

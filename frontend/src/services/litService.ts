@@ -616,11 +616,41 @@ export async function decryptFileFromStorage(
       }
       
       // Try to parse as JSON to catch truncation issues early
+      // Lit Protocol's ciphertext is a JSON object with encrypted data
       try {
-        JSON.parse(ciphertext);
-        console.log('[Lit Decryption] Ciphertext is valid JSON');
+        const parsed = JSON.parse(ciphertext);
+        console.log('[Lit Decryption] Ciphertext is valid JSON, keys:', Object.keys(parsed));
+        console.log('[Lit Decryption] Ciphertext structure:', {
+          hasSymmetricKey: 'symmetricKey' in parsed,
+          hasCiphertext: 'ciphertext' in parsed,
+          hasDataToEncryptHash: 'dataToEncryptHash' in parsed,
+          keyCount: Object.keys(parsed).length
+        });
+        // Check if required Lit Protocol fields are present
+        if (!parsed.symmetricKey && !parsed.ciphertext) {
+          console.warn('[Lit Decryption] Ciphertext JSON missing expected Lit Protocol fields (symmetricKey or ciphertext)');
+        }
+        // Check for nested JSON strings that might be truncated
+        if (parsed.ciphertext && typeof parsed.ciphertext === 'string') {
+          try {
+            JSON.parse(parsed.ciphertext);
+            console.log('[Lit Decryption] Nested ciphertext is also valid JSON');
+          } catch (nestedError) {
+            console.warn('[Lit Decryption] Nested ciphertext is not JSON (this is normal for base64 data)');
+          }
+        }
       } catch (parseError) {
         console.error('[Lit Decryption] Failed to parse ciphertext as JSON:', parseError);
+        // Log more details about the ciphertext to help diagnose
+        const sampleStart = ciphertext.substring(0, 200);
+        const sampleEnd = ciphertext.substring(Math.max(0, ciphertext.length - 200));
+        console.error('[Lit Decryption] Ciphertext start (200 chars):', sampleStart);
+        console.error('[Lit Decryption] Ciphertext end (200 chars):', sampleEnd);
+        console.error('[Lit Decryption] Ciphertext length:', ciphertext.length);
+        // Count braces to see if JSON is balanced
+        const openBraces = (ciphertext.match(/{/g) || []).length;
+        const closeBraces = (ciphertext.match(/}/g) || []).length;
+        console.error('[Lit Decryption] Open braces:', openBraces, 'Close braces:', closeBraces);
         throw new Error(`Ciphertext is not valid JSON: ${parseError instanceof Error ? parseError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete.`);
       }
     } catch (decodeError) {

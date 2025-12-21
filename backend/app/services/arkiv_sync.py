@@ -468,72 +468,42 @@ class ArkivSyncClient:
             pass
         
         try:
-            # The Arkiv SDK query parser has a bug (arkiv-sdk==1.0.0b1) that causes
-            # "unsupported operand type(s) for |=: 'int' and 'str'" when parsing queries.
-            # This appears to be an internal SDK issue with the query parser.
+            # Use the fluent query API correctly:
+            # - select() expects field bitmasks (integers), not query strings
+            # - where() is used to specify the query condition
+            # - fetch() executes the query and returns an iterator
             # 
-            # Workaround: Try to use the select() method with minimal queries,
-            # and if all fail, return empty list (entities will be synced on next push)
+            # The default query is "1 = 1" which matches all entities.
+            # Since entities are automatically scoped to the authenticated account,
+            # this will return all entities owned by the current account.
             
-            # Try different query formats - some may work depending on SDK version
-            query_formats = [
-                "",           # Empty query (might work in some versions)
-                "()",         # Empty parentheses
-                "(true)",     # Boolean in parentheses
-                "true",       # Boolean literal
-            ]
-            
-            entities = []
-            last_error = None
-            for query_format in query_formats:
+            # Try using the fluent API with default query (matches all entities for current account)
+            try:
+                entities = list(client.arkiv.select().fetch())
+                logger.info("Fetched %d entities from Arkiv", len(entities))
+                return entities
+            except Exception as exc:
+                # If default query fails, try explicitly specifying "1 = 1"
+                logger.debug("Default query failed, trying explicit '1 = 1' query: %s", exc)
                 try:
-                    logger.debug("Trying query format: '%s'", query_format)
-                    # Try to fetch entities with this query format
-                    select_result = client.arkiv.select(query_format)
-                    entities = list(select_result.fetch())
-                    logger.info("Fetched %d entities from Arkiv using query: '%s'", len(entities), query_format)
+                    entities = list(client.arkiv.select().where("1 = 1").fetch())
+                    logger.info("Fetched %d entities from Arkiv using explicit query", len(entities))
                     return entities
-                except TypeError as type_exc:
-                    # Catch type errors specifically (like "unsupported operand type(s) for |=: 'int' and 'str'")
-                    # This is a known bug in arkiv-sdk==1.0.0b1
-                    last_error = type_exc
-                    error_msg = str(type_exc)
-                    if "|=" in error_msg:
-                        logger.debug(
-                            "Query format '%s' failed with SDK type error (known bug in arkiv-sdk==1.0.0b1): %s",
-                            query_format, 
-                            type_exc
-                        )
-                    else:
-                        logger.debug("Query format '%s' failed with type error: %s", query_format, type_exc)
-                    continue
-                except Exception as query_exc:
-                    last_error = query_exc
-                    logger.debug("Query format '%s' failed: %s", query_format, query_exc)
-                    continue
-            
-            # If all query formats failed due to the SDK bug, log a clear error message
-            if last_error:
-                error_msg = str(last_error)
-                if "|=" in error_msg:
-                    logger.warning(
-                        "⚠️ Arkiv SDK query bug detected (arkiv-sdk==1.0.0b1). "
-                        "Cannot fetch entities from Arkiv due to SDK internal error: %s. "
-                        "This is a known issue with the beta SDK version. "
-                        "Entities will be synced on next push operation.",
-                        last_error
-                    )
-                else:
-                    import traceback
-                    error_details = traceback.format_exc()
-                    logger.error(
-                        "Failed to fetch Arkiv entities with all query formats. "
-                        "Last error: %s\n%s", 
-                        last_error, 
-                        error_details
-                    )
-            
-            return []
+                except Exception as explicit_exc:
+                    # If that also fails, try querying by owner explicitly
+                    logger.debug("Explicit query failed, trying owner-based query: %s", explicit_exc)
+                    try:
+                        from app.services.evm_utils import get_wallet_address_from_private_key
+                        if self.config.private_key:
+                            wallet_address = get_wallet_address_from_private_key(self.config.private_key)
+                            owner_query = f'$owner = "{wallet_address}"'
+                            entities = list(client.arkiv.select().where(owner_query).fetch())
+                            logger.info("Fetched %d entities from Arkiv using owner query", len(entities))
+                            return entities
+                    except Exception as owner_exc:
+                        logger.error("All query methods failed. Last error: %s", owner_exc)
+                        raise owner_exc
+                    raise explicit_exc
         except Exception as exc:
             import traceback
             error_details = traceback.format_exc()

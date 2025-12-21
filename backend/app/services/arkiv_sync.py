@@ -615,38 +615,38 @@ class ArkivSyncClient:
             # Use filecoin_root_cid for downloading (decrypted from encrypted_cid if needed)
             download_cid = filecoin_cid
                 
-                if download_cid:
-                    try:
-                        logger.info("Downloading video from IPFS for recalculation: %s", download_cid)
-                        # Download from IPFS
-                        file_content = _download_from_ipfs(download_cid)
-                        
-                        # Save to temporary file for recalculation
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
-                            temp_file.write(file_content)
-                            temp_file_path = temp_file.name
-                        
-                        # Recalculate metadata from downloaded file
-                        recalculated_metadata = _recalculate_video_metadata(temp_file_path, is_encrypted)
-                        logger.info("Recalculated metadata: phash=%s, duration=%s, file_size=%s", 
-                                  recalculated_metadata.get("phash"), 
-                                  recalculated_metadata.get("duration"),
-                                  recalculated_metadata.get("file_size"))
-                    except Exception as e:
-                        logger.warning("Failed to download/recalculate from IPFS for CID %s: %s", download_cid, e)
-                        # Continue with fallback values from payload/attributes
-                
-                # Use recalculated values if available, otherwise fallback to payload/attributes
-                final_phash = recalculated_metadata.get("phash") or phash
-                final_duration = recalculated_metadata.get("duration") or 0
-                final_file_size = recalculated_metadata.get("file_size") or get_field("file_size", "file_size")
-                final_file_extension = recalculated_metadata.get("file_extension") or get_field("file_extension", "file_ext")
-                final_mime_type = recalculated_metadata.get("mime_type")
-                final_codec = recalculated_metadata.get("codec") or get_field("codec", "codec")
-                
-                # Update path if phash was recalculated
-                if final_phash and not phash:
-                    video_path = f"arkiv:phash:{final_phash}"
+            if download_cid:
+                try:
+                    logger.info("Downloading video from IPFS for recalculation: %s", download_cid)
+                    # Download from IPFS
+                    file_content = _download_from_ipfs(download_cid)
+                    
+                    # Save to temporary file for recalculation
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
+                        temp_file.write(file_content)
+                        temp_file_path = temp_file.name
+                    
+                    # Recalculate metadata from downloaded file
+                    recalculated_metadata = _recalculate_video_metadata(temp_file_path, is_encrypted)
+                    logger.info("Recalculated metadata: phash=%s, duration=%s, file_size=%s", 
+                              recalculated_metadata.get("phash"), 
+                              recalculated_metadata.get("duration"),
+                              recalculated_metadata.get("file_size"))
+                except Exception as e:
+                    logger.warning("Failed to download/recalculate from IPFS for CID %s: %s", download_cid, e)
+                    # Continue with fallback values from payload/attributes
+            
+            # Use recalculated values if available, otherwise fallback to payload/attributes
+            final_phash = recalculated_metadata.get("phash") or phash
+            final_duration = recalculated_metadata.get("duration") or 0
+            final_file_size = recalculated_metadata.get("file_size") or get_field("file_size", "file_size")
+            final_file_extension = recalculated_metadata.get("file_extension") or get_field("file_extension", "file_ext")
+            final_mime_type = recalculated_metadata.get("mime_type")
+            final_codec = recalculated_metadata.get("codec") or get_field("codec", "codec")
+            
+            # Update path if phash was recalculated
+            if final_phash and not phash:
+                video_path = f"arkiv:phash:{final_phash}"
                 
                 # Prepare timestamps (video_path will be set after Video is created)
                 ts_payloads = payload.get("timestamps") or []

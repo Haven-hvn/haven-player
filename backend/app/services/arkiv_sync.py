@@ -14,7 +14,16 @@ import requests
 from arkiv import Arkiv
 from arkiv.account import NamedAccount
 from arkiv.provider import ProviderBuilder
-from arkiv.types import Attributes, EntityKey
+from arkiv.types import (
+    Attributes,
+    EntityKey,
+    KEY,
+    ATTRIBUTES,
+    PAYLOAD,
+    CONTENT_TYPE,
+    OWNER,
+    CREATED_AT,
+)
 from requests.exceptions import HTTPError
 from sqlalchemy.orm import Session
 from web3.exceptions import Web3RPCError
@@ -470,40 +479,36 @@ class ArkivSyncClient:
         try:
             # Use the fluent query API correctly:
             # - select() expects field bitmasks (integers), not query strings
-            # - where() is used to specify the query condition
+            # - where() is used to specify the query condition (must be in parentheses)
             # - fetch() executes the query and returns an iterator
             # 
-            # The default query is "1 = 1" which matches all entities.
-            # Since entities are automatically scoped to the authenticated account,
-            # this will return all entities owned by the current account.
+            # IMPORTANT: Exclude LAST_MODIFIED_AT from fields since it's not always
+            # available in RPC responses and causes errors. We only need:
+            # - KEY: Entity identifier
+            # - ATTRIBUTES: Custom attributes (phash, title, encrypted_cid, etc.)
+            # - PAYLOAD: JSON payload with metadata
+            # - CONTENT_TYPE: To verify it's JSON
+            # - OWNER: To verify ownership
+            # - CREATED_AT: Creation timestamp (optional but available)
             
-            # Try using the fluent API with default query (matches all entities for current account)
-            try:
-                entities = list(client.arkiv.select().fetch())
-                logger.info("Fetched %d entities from Arkiv", len(entities))
-                return entities
-            except Exception as exc:
-                # If default query fails, try explicitly specifying "1 = 1"
-                logger.debug("Default query failed, trying explicit '1 = 1' query: %s", exc)
-                try:
-                    entities = list(client.arkiv.select().where("1 = 1").fetch())
-                    logger.info("Fetched %d entities from Arkiv using explicit query", len(entities))
-                    return entities
-                except Exception as explicit_exc:
-                    # If that also fails, try querying by owner explicitly
-                    logger.debug("Explicit query failed, trying owner-based query: %s", explicit_exc)
-                    try:
-                        from app.services.evm_utils import get_wallet_address_from_private_key
-                        if self.config.private_key:
-                            wallet_address = get_wallet_address_from_private_key(self.config.private_key)
-                            owner_query = f'$owner = "{wallet_address}"'
-                            entities = list(client.arkiv.select().where(owner_query).fetch())
-                            logger.info("Fetched %d entities from Arkiv using owner query", len(entities))
-                            return entities
-                    except Exception as owner_exc:
-                        logger.error("All query methods failed. Last error: %s", owner_exc)
-                        raise owner_exc
-                    raise explicit_exc
+            # Select only the fields we need (excluding LAST_MODIFIED_AT)
+            required_fields = KEY | ATTRIBUTES | PAYLOAD | CONTENT_TYPE | OWNER | CREATED_AT
+            
+            # Query by owner - entities are scoped to the authenticated account,
+            # but we query explicitly to ensure we get all entities
+            from app.services.evm_utils import get_wallet_address_from_private_key
+            if self.config.private_key:
+                wallet_address = get_wallet_address_from_private_key(self.config.private_key)
+                # Query must be in parentheses per Arkiv query parser requirements
+                owner_query = f'($owner = "{wallet_address}")'
+            else:
+                # Fallback: use (1 = 1) to match all entities (still scoped to account)
+                owner_query = "(1 = 1)"
+            
+            # Execute query with specific fields
+            entities = list(client.arkiv.select(required_fields).where(owner_query).fetch())
+            logger.info("Fetched %d entities from Arkiv", len(entities))
+            return entities
         except Exception as exc:
             import traceback
             error_details = traceback.format_exc()

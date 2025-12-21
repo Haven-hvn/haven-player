@@ -469,13 +469,50 @@ class ArkivSyncClient:
         
         try:
             # The Arkiv query parser expects expressions in parentheses
-            # Passing "(1 = 1)" as a query string to fetch all entities
+            # Try different query formats to fetch all entities
             # Note: Entities are automatically scoped to the authenticated account
-            entities = list(client.arkiv.select("(1 = 1)").fetch())
-            logger.info("Fetched %d entities from Arkiv", len(entities))
-            return entities
+            # The "(1 = 1)" format may cause a type error in some SDK versions,
+            # so we try multiple formats as fallbacks
+            query_formats = [
+                "(true)",   # Boolean in parentheses (most compatible)
+                "true",     # Boolean literal
+                "(1 = 1)",  # Original format (may cause type errors in some SDK versions)
+            ]
+            
+            entities = []
+            last_error = None
+            for query_format in query_formats:
+                try:
+                    logger.debug("Trying query format: %s", query_format)
+                    entities = list(client.arkiv.select(query_format).fetch())
+                    logger.info("Fetched %d entities from Arkiv using query: %s", len(entities), query_format)
+                    return entities
+                except TypeError as type_exc:
+                    # Catch type errors specifically (like "unsupported operand type(s) for |=: 'int' and 'str'")
+                    last_error = type_exc
+                    logger.debug("Query format '%s' failed with type error (likely SDK bug): %s", query_format, type_exc)
+                    continue
+                except Exception as query_exc:
+                    last_error = query_exc
+                    logger.debug("Query format '%s' failed: %s", query_format, query_exc)
+                    continue
+            
+            # If all query formats failed, log the error with full traceback
+            if last_error:
+                import traceback
+                error_details = traceback.format_exc()
+                logger.error(
+                    "Failed to fetch Arkiv entities with all query formats. "
+                    "Last error: %s\n%s", 
+                    last_error, 
+                    error_details
+                )
+            
+            return []
         except Exception as exc:
-            logger.error("Failed to fetch Arkiv entities: %s", exc)
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error("Failed to fetch Arkiv entities: %s\n%s", exc, error_details)
             return []
 
     def restore_catalog(self, db_session: Session) -> dict:

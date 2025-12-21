@@ -187,7 +187,13 @@ async function createCarFromVideo(
     cleanupTasks.push(preparedSource.cleanup);
   }
 
-  const createCarOptions: CreateCarOptions = { logger };
+  // Use bare: true to create a file CID directly without directory wrapping
+  // This makes the root CID point directly to the file, not a directory containing the file
+  // This eliminates the need to discover the filename from directory listings
+  const createCarOptions: CreateCarOptions = { 
+    logger,
+    bare: true, // Create bare file CID without directory wrapper
+  };
 
   try {
     onProgress?.({

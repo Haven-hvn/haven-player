@@ -37,8 +37,12 @@ export const buildIpfsGatewayUrl = (
 ): { uri: string; gatewayBase: string } => {
   const gatewayBase = normalizeGatewayBase(gatewayConfig.baseUrl || DEFAULT_IPFS_GATEWAY);
   const normalizedCid = normalizeCid(cid);
+  
+  // With bare: true option, the CID points directly to the file (no directory wrapper)
+  // So we can access it directly without needing a filename
   return { uri: `${gatewayBase}${normalizedCid}`, gatewayBase };
 };
+
 
 export const resolvePlaybackSource = async (
   input: PlaybackResolutionInput
@@ -50,10 +54,15 @@ export const resolvePlaybackSource = async (
     checkFileExists,
     isEncrypted = false,
     litEncryptionMetadata = null,
+    title,
+    fileExtension,
   } = input;
 
   const fileExists = await checkFileExists(videoPath);
   const hasIpfsCid = Boolean(rootCid);
+
+  // With bare: true option, the CID points directly to the file (no directory wrapper)
+  // No filename needed - we can access the file directly via the CID
 
   // If both local and IPFS are available, return both
   if (fileExists && hasIpfsCid) {

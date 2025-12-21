@@ -598,11 +598,30 @@ export async function decryptFileFromStorage(
       ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
       console.log('[Lit Decryption] Decoded ciphertext length:', ciphertext.length);
       
-      // Validate the decoded ciphertext looks reasonable (should be non-empty)
-      // Lit Protocol ciphertext is base64-encoded, not JSON, so we don't check for '{'
+      // Validate the decoded ciphertext looks reasonable
+      // Lit Protocol ciphertext is a JSON string, so it should start with '{' and end with '}'
+      // Check for valid JSON structure to catch truncation issues
       if (ciphertext.length < 10) {
         console.warn('[Lit Decryption] Decoded ciphertext seems too short');
         throw new Error('Decoded ciphertext appears invalid (too short)');
+      }
+      
+      // Check if ciphertext appears to be valid JSON (Lit Protocol ciphertext is JSON)
+      const trimmed = ciphertext.trim();
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        console.warn('[Lit Decryption] Ciphertext does not appear to be valid JSON');
+        console.warn('[Lit Decryption] First 100 chars:', trimmed.substring(0, 100));
+        console.warn('[Lit Decryption] Last 100 chars:', trimmed.substring(Math.max(0, trimmed.length - 100)));
+        throw new Error('Decoded ciphertext does not appear to be valid JSON. The encrypted file may be corrupted or incomplete.');
+      }
+      
+      // Try to parse as JSON to catch truncation issues early
+      try {
+        JSON.parse(ciphertext);
+        console.log('[Lit Decryption] Ciphertext is valid JSON');
+      } catch (parseError) {
+        console.error('[Lit Decryption] Failed to parse ciphertext as JSON:', parseError);
+        throw new Error(`Ciphertext is not valid JSON: ${parseError instanceof Error ? parseError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete.`);
       }
     } catch (decodeError) {
       console.error('[Lit Decryption] Error decoding encrypted data:', decodeError);

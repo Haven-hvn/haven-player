@@ -837,10 +837,19 @@ const VideoPlayer: React.FC = () => {
               if (!response.ok) {
                 throw new Error(`Failed to fetch encrypted video from gateway: ${response.status} ${response.statusText}`);
               }
+              // Check Content-Length header if available to verify we get the full file
+              const contentLength = response.headers.get('content-length');
+              if (contentLength) {
+                console.log('[VideoPlayer] Expected file size from Content-Length:', contentLength);
+              }
               // Ensure we get the full response body
             const buffer = await response.arrayBuffer();
               if (buffer.byteLength === 0) {
                 throw new Error('Received empty response from IPFS gateway');
+              }
+              console.log('[VideoPlayer] Downloaded file size:', buffer.byteLength, 'bytes');
+              if (contentLength && parseInt(contentLength, 10) !== buffer.byteLength) {
+                console.warn('[VideoPlayer] File size mismatch! Expected:', contentLength, 'Got:', buffer.byteLength);
               }
             return new Uint8Array(buffer);
             } catch (error) {
@@ -881,10 +890,19 @@ const VideoPlayer: React.FC = () => {
             if (!response.ok) {
               throw new Error(`Failed to fetch encrypted video from gateway: ${response.status} ${response.statusText}`);
             }
+            // Check Content-Length header if available to verify we get the full file
+            const contentLength = response.headers.get('content-length');
+            if (contentLength) {
+              console.log('[VideoPlayer] Expected file size from Content-Length:', contentLength);
+            }
             // Ensure we get the full response body
           const buffer = await response.arrayBuffer();
             if (buffer.byteLength === 0) {
               throw new Error('Received empty response from IPFS gateway');
+            }
+            console.log('[VideoPlayer] Downloaded file size:', buffer.byteLength, 'bytes');
+            if (contentLength && parseInt(contentLength, 10) !== buffer.byteLength) {
+              console.warn('[VideoPlayer] File size mismatch! Expected:', contentLength, 'Got:', buffer.byteLength);
             }
           return new Uint8Array(buffer);
           } catch (error) {

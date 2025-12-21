@@ -609,7 +609,7 @@ export async function decryptFileFromStorage(
   } else {
     // Last resort: try to convert metadata.ciphertext if it's not a string
     if (metadata.ciphertext) {
-      console.warn('[Lit] Ciphertext is not a string, attempting conversion');
+    console.warn('[Lit] Ciphertext is not a string, attempting conversion');
       try {
         ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(metadata.ciphertext as unknown as Uint8Array);
       } catch (decodeError) {

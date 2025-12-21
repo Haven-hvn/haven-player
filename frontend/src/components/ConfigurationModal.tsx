@@ -497,7 +497,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
                 `Restored ${result.restored}, skipped ${result.skipped}. Decrypted ${decryptedCount} CID(s).`
               );
             } else {
-              setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
+      setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
             }
           } else {
             setRestoreProgress(null);

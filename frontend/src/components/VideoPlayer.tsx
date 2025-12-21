@@ -833,16 +833,16 @@ const VideoPlayer: React.FC = () => {
         if (source.type === 'ipfs' && videoData.is_encrypted && videoData.lit_encryption_metadata) {
           const loadEncryptedData = async () => {
             try {
-              const response = await fetch(source.uri);
+            const response = await fetch(source.uri);
               if (!response.ok) {
                 throw new Error(`Failed to fetch encrypted video from gateway: ${response.status} ${response.statusText}`);
               }
               // Ensure we get the full response body
-              const buffer = await response.arrayBuffer();
+            const buffer = await response.arrayBuffer();
               if (buffer.byteLength === 0) {
                 throw new Error('Received empty response from IPFS gateway');
               }
-              return new Uint8Array(buffer);
+            return new Uint8Array(buffer);
             } catch (error) {
               console.error('[VideoPlayer] Error fetching encrypted data from IPFS:', error);
               throw error;
@@ -877,16 +877,16 @@ const VideoPlayer: React.FC = () => {
       if (!decryptedUrl && decryptionStatus.status !== 'decrypting' && decryptionStatus.status !== 'loading') {
         const loadEncryptedData = async () => {
           try {
-            const response = await fetch(playbackSource.ipfs.uri);
+          const response = await fetch(playbackSource.ipfs.uri);
             if (!response.ok) {
               throw new Error(`Failed to fetch encrypted video from gateway: ${response.status} ${response.statusText}`);
             }
             // Ensure we get the full response body
-            const buffer = await response.arrayBuffer();
+          const buffer = await response.arrayBuffer();
             if (buffer.byteLength === 0) {
               throw new Error('Received empty response from IPFS gateway');
             }
-            return new Uint8Array(buffer);
+          return new Uint8Array(buffer);
           } catch (error) {
             console.error('[VideoPlayer] Error fetching encrypted data from IPFS:', error);
             throw error;

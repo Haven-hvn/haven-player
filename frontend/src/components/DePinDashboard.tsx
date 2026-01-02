@@ -35,6 +35,9 @@ import { useVideos } from '@/hooks/useVideos';
 import { useFilecoinUpload } from '@/hooks/useFilecoinUpload';
 import { FilecoinConfig } from '@/types/filecoin';
 import { SettingsTab } from '@/context/SettingsNavigationContext';
+import { generateExplorerLinks } from '@/utils/explorerLinks';
+import { loadGatewayConfig } from '@/services/playbackConfig';
+import Link from '@mui/material/Link';
 
 // Define local interface for the tick response
 interface TickResponse {
@@ -69,8 +72,9 @@ interface DePinDashboardProps {
 const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoinConfigProp = null, onRequireSettings }) => {
   const theme = useTheme();
   const [isActive, setIsActive] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<Array<{ message: string; links?: Record<string, string> }>>([]);
   const [currentTask, setCurrentTask] = useState<string>('Idle');
+  const [ipfsGateway, setIpfsGateway] = useState<string>('https://ipfs.io/ipfs/');
   const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(filecoinConfigProp);
   const [lastTick, setLastTick] = useState<Date | null>(null);
   const [currentRecording, setCurrentRecording] = useState<{
@@ -100,9 +104,21 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
   // Ref to track previous isActive state to detect transitions
   const prevIsActiveRef = useRef<boolean | null>(null);
   
-  const addLog = (message: string) => {
-    setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev].slice(0, 100));
+  const addLog = (message: string, links?: Record<string, string>) => {
+    setLogs(prev => [{
+      message: `[${new Date().toLocaleTimeString()}] ${message}`,
+      links
+    }, ...prev].slice(0, 100));
   };
+
+  // Load IPFS gateway config on mount
+  useEffect(() => {
+    loadGatewayConfig().then(config => {
+      setIpfsGateway(config.baseUrl);
+    }).catch(err => {
+      console.error('Failed to load IPFS gateway config:', err);
+    });
+  }, []);
 
   const level = useMemo(() => Math.floor(points / 1000) + 1, [points]);
   const rankTitle = useMemo(() => {
@@ -513,8 +529,22 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
             addLog(`⬆️ Starting upload for: ${pendingVideo.title}`);
 
             try {
-              await uploadVideo(pendingVideo.path, filecoinConfig);
-              addLog(`✅ Upload Complete: ${pendingVideo.title}`);
+              const uploadResult = await uploadVideo(pendingVideo.path, filecoinConfig, addLog);
+              
+              // Generate explorer links for transparency (Arkiv entity key will be added after sync)
+              const links = generateExplorerLinks({
+                rpcUrl: filecoinConfig.rpcUrl,
+                transactionHash: uploadResult.transactionHash,
+                rootCid: uploadResult.rootCid,
+                pieceCid: uploadResult.pieceCid,
+                ipfsGateway: ipfsGateway,
+              });
+              
+              addLog(`✅ Upload Complete: ${pendingVideo.title}`, links);
+              
+              // Refresh videos to get updated metadata (including Arkiv entity key if synced)
+              // Note: Arkiv sync happens asynchronously on backend, entity key may appear later
+              await refreshVideos();
               
               // Reward points
               setPoints(p => p + 500);
@@ -1009,14 +1039,73 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
           {logs.map((log, index) => (
             <ListItem key={index} dense sx={{ py: 0.5, borderBottom: '1px solid #eee' }}>
               <ListItemText 
-                primary={log} 
-                primaryTypographyProps={{ 
-                  variant: 'body2', 
-                  fontFamily: 'monospace',
-                  fontSize: '0.75rem',
-                  color: log.includes('❌') ? 'error' : log.includes('🎉') ? 'secondary' : 'text.primary',
-                  fontWeight: log.includes('🎉') ? 600 : 400
-                }} 
+                primary={
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      fontFamily="monospace"
+                      fontSize="0.75rem"
+                      color={log.message.includes('❌') ? 'error.main' : log.message.includes('🎉') ? 'secondary.main' : 'text.primary'}
+                      fontWeight={log.message.includes('🎉') ? 600 : 400}
+                    >
+                      {log.message}
+                    </Typography>
+                    {log.links && Object.keys(log.links).length > 0 && (
+                      <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                        {log.links.transaction && (
+                          <Link
+                            href={log.links.transaction}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                          >
+                            🔗 Transaction
+                          </Link>
+                        )}
+                        {log.links.ipfs && (
+                          <Link
+                            href={log.links.ipfs}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                          >
+                            📦 IPFS
+                          </Link>
+                        )}
+                        {log.links.filecoin && (
+                          <Link
+                            href={log.links.filecoin}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                          >
+                            ⛏️ Filecoin
+                          </Link>
+                        )}
+                        {log.links.ipni && (
+                          <Link
+                            href={log.links.ipni}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                          >
+                            🔍 IPNI
+                          </Link>
+                        )}
+                        {log.links.entity && (
+                          <Link
+                            href={log.links.entity}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                          >
+                            📋 Arkiv
+                          </Link>
+                        )}
+                      </Box>
+                    )}
+                  </Box>
+                }
               />
             </ListItem>
           ))}

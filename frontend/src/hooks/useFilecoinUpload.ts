@@ -7,7 +7,7 @@ const { ipcRenderer } = require('electron');
 
 export interface UseFilecoinUploadReturn {
   uploadStatus: Record<string, FilecoinUploadStatus>;
-  uploadVideo: (videoPath: string, config: FilecoinConfig) => Promise<FilecoinUploadResult>;
+  uploadVideo: (videoPath: string, config: FilecoinConfig, onProgressLog?: (message: string) => void) => Promise<FilecoinUploadResult>;
   cancelUpload: (videoPath: string) => void;
   clearStatus: (videoPath: string) => void;
 }
@@ -17,7 +17,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
   const [uploadControllers, setUploadControllers] = useState<Record<string, AbortController>>({});
 
   const uploadVideo = useCallback(
-    async (videoPath: string, config: FilecoinConfig): Promise<FilecoinUploadResult> => {
+    async (videoPath: string, config: FilecoinConfig, onProgressLog?: (message: string) => void): Promise<FilecoinUploadResult> => {
       // Cancel any existing upload for this video
       if (uploadControllers[videoPath]) {
         uploadControllers[videoPath].abort();
@@ -46,6 +46,21 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
             progress: payload.progress.progress,
           },
         }));
+
+        // Log detailed progress messages if callback provided
+        if (onProgressLog && payload.progress.message) {
+          // Only log significant stage changes to avoid spam
+          const stage = payload.progress.stage;
+          const message = payload.progress.message;
+          
+          // Log stage transitions and important messages
+          if (stage === 'encrypting' || stage === 'creating-car' || stage === 'checking-payments' || 
+              stage === 'uploading' || stage === 'validating' || stage === 'completed') {
+            // Format progress percentage for display
+            const progressPercent = Math.round(payload.progress.progress);
+            onProgressLog(`📤 ${message} (${progressPercent}%)`);
+          }
+        }
       };
 
       ipcRenderer.on('filecoin-upload-progress', handleProgress);

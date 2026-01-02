@@ -4,10 +4,12 @@
  */
 
 export interface ExplorerLinkConfig {
-  rpcUrl?: string;
-  transactionHash?: string;
-  rootCid?: string;
-  pieceCid?: string;
+  rpcUrl?: string; // Filecoin RPC URL
+  arkivRpcUrl?: string; // Arkiv RPC URL (for detecting Arkiv transactions)
+  transactionHash?: string; // Arkiv blockchain transaction hash
+  filecoinTransactionHash?: string; // Filecoin FVM transaction hash (for storage payment)
+  rootCid?: string; // IPFS CID (NOT a transaction)
+  pieceCid?: string; // Filecoin piece CID (NOT a transaction)
   entityKey?: string;
   ipfsGateway?: string;
 }
@@ -88,15 +90,47 @@ export function getExplorerBaseUrl(rpcUrl?: string): string | null {
 }
 
 /**
- * Generate transaction explorer link
+ * Generate Arkiv blockchain transaction explorer link
+ * Arkiv has its own blockchain with explorer at explorer.mendoza.hoodi.arkiv.network
  */
-export function getTransactionLink(transactionHash: string, rpcUrl?: string): string | null {
+export function getArkivTransactionLink(transactionHash: string, arkivRpcUrl?: string): string | null {
   if (!transactionHash) return null;
   
-  const explorerBase = getExplorerBaseUrl(rpcUrl);
-  if (!explorerBase) return null;
+  // Extract network from Arkiv RPC URL
+  // Default is mendoza (mainnet), but could be other networks
+  const rpcLower = (arkivRpcUrl || '').toLowerCase();
   
-  return `${explorerBase}/tx/${transactionHash}`;
+  // Default to mendoza (mainnet) explorer
+  // Format: https://explorer.{network}.arkiv.network/tx/{hash}
+  if (rpcLower.includes('mendoza') || !arkivRpcUrl) {
+    return `https://explorer.mendoza.hoodi.arkiv.network/tx/${transactionHash}`;
+  }
+  
+  // For other networks, try to extract network name from RPC URL
+  // e.g., https://{network}.arkiv.network/rpc -> explorer.{network}.arkiv.network
+  const networkMatch = rpcLower.match(/([^.]+)\.arkiv\.network/);
+  if (networkMatch) {
+    const network = networkMatch[1];
+    return `https://explorer.${network}.arkiv.network/tx/${transactionHash}`;
+  }
+  
+  // Fallback to mendoza
+  return `https://explorer.mendoza.hoodi.arkiv.network/tx/${transactionHash}`;
+}
+
+/**
+ * Generate Filecoin FVM transaction explorer link
+ */
+export function getFilecoinTransactionLink(txHash: string, rpcUrl?: string): string | null {
+  if (!txHash) return null;
+  
+  const rpcLower = rpcUrl?.toLowerCase() || '';
+  const isTestnet = rpcLower.includes('calibration') || rpcLower.includes('testnet');
+  
+  if (isTestnet) {
+    return `https://calibration.filfox.info/en/message/${txHash}`;
+  }
+  return `https://filfox.info/en/message/${txHash}`;
 }
 
 /**
@@ -113,7 +147,8 @@ export function getIpfsGatewayLink(cid: string, gatewayBase?: string): string {
 }
 
 /**
- * Generate Filecoin block explorer link for a CID
+ * Generate Filecoin block explorer link for a CID (content identifier)
+ * NOTE: CIDs are NOT transactions - they're identifiers for content on IPFS/Filecoin
  */
 export function getFilecoinExplorerLink(cid: string, rpcUrl?: string): string | null {
   if (!cid) return null;
@@ -121,10 +156,11 @@ export function getFilecoinExplorerLink(cid: string, rpcUrl?: string): string | 
   const rpcLower = rpcUrl?.toLowerCase() || '';
   const isTestnet = rpcLower.includes('calibration') || rpcLower.includes('testnet');
   
+  // Link to view the CID/data on Filecoin explorer (not a transaction)
   if (isTestnet) {
-    return `https://calibration.filfox.info/en/message/${cid}`;
+    return `https://calibration.filfox.info/en/deal?cid=${cid}`;
   }
-  return `https://filfox.info/en/message/${cid}`;
+  return `https://filfox.info/en/deal?cid=${cid}`;
 }
 
 /**
@@ -150,7 +186,8 @@ export function getArkivEntityLink(entityKey: string, rpcUrl?: string): string |
  * Generate all relevant links for an upload/transaction
  */
 export function generateExplorerLinks(config: ExplorerLinkConfig): {
-  transaction?: string;
+  transaction?: string; // Arkiv blockchain transaction (for Arkiv sync)
+  filecoinTransaction?: string; // Filecoin FVM transaction (for storage payment)
   ipfs?: string;
   filecoin?: string;
   ipni?: string;
@@ -158,14 +195,22 @@ export function generateExplorerLinks(config: ExplorerLinkConfig): {
 } {
   const links: {
     transaction?: string;
+    filecoinTransaction?: string;
     ipfs?: string;
     filecoin?: string;
     ipni?: string;
     entity?: string;
   } = {};
   
+  // Filecoin FVM transaction (for storage payment) - this comes from executeUpload
+  if (config.filecoinTransactionHash) {
+    links.filecoinTransaction = getFilecoinTransactionLink(config.filecoinTransactionHash, config.rpcUrl) || undefined;
+  }
+  
+  // Arkiv blockchain transaction - this comes from backend after Arkiv sync
+  // Arkiv transactions are on the Arkiv blockchain (not EVM chains)
   if (config.transactionHash) {
-    links.transaction = getTransactionLink(config.transactionHash, config.rpcUrl) || undefined;
+    links.transaction = getArkivTransactionLink(config.transactionHash, config.arkivRpcUrl) || undefined;
   }
   
   if (config.rootCid) {

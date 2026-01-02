@@ -531,10 +531,11 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
             try {
               const uploadResult = await uploadVideo(pendingVideo.path, filecoinConfig, addLog);
               
-              // Generate explorer links for transparency (Arkiv entity key will be added after sync)
+              // Generate explorer links for transparency
+              // uploadResult.transactionHash is the Filecoin FVM transaction for storage payment
               const links = generateExplorerLinks({
                 rpcUrl: filecoinConfig.rpcUrl,
-                transactionHash: uploadResult.transactionHash,
+                filecoinTransactionHash: uploadResult.transactionHash, // Filecoin FVM transaction
                 rootCid: uploadResult.rootCid,
                 pieceCid: uploadResult.pieceCid,
                 ipfsGateway: ipfsGateway,
@@ -1052,6 +1053,16 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
                     </Typography>
                     {log.links && Object.keys(log.links).length > 0 && (
                       <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                        {log.links.filecoinTransaction && (
+                          <Link
+                            href={log.links.filecoinTransaction}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                          >
+                            ⛏️ Filecoin Transaction
+                          </Link>
+                        )}
                         {log.links.transaction && (
                           <Link
                             href={log.links.transaction}
@@ -1059,7 +1070,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
                             rel="noopener noreferrer"
                             sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
                           >
-                            🔗 Transaction
+                            🔗 Arkiv Transaction
                           </Link>
                         )}
                         {log.links.ipfs && (
@@ -1079,7 +1090,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
                             rel="noopener noreferrer"
                             sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
                           >
-                            ⛏️ Filecoin
+                            ⛏️ Filecoin CID
                           </Link>
                         )}
                         {log.links.ipni && (
@@ -1099,7 +1110,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
                             rel="noopener noreferrer"
                             sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
                           >
-                            📋 Arkiv
+                            📋 Arkiv Entity
                           </Link>
                         )}
                       </Box>

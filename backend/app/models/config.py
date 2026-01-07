@@ -20,6 +20,8 @@ class AppConfig(Base):
     livekit_api_key: Mapped[str] = mapped_column(String, default="")
     livekit_api_secret: Mapped[str] = mapped_column(String, default="")
     recording_directory: Mapped[str] = mapped_column(String, default="~/.haven-player/recordings")
+    # Glitter Configuration
+    glitter_endpoint: Mapped[str] = mapped_column(String, default="https://gw.magnode.ru/v1/sql/query")
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -34,5 +36,6 @@ class AppConfig(Base):
             'livekit_api_key': self.livekit_api_key,
             'livekit_api_secret': self.livekit_api_secret,
             'recording_directory': self.recording_directory,
+            'glitter_endpoint': self.glitter_endpoint,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
-        } 
+        }

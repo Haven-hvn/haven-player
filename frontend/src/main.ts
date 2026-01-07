@@ -277,6 +277,47 @@ ipcMain.handle('select-video', async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('add-magnet-url', async (_event, magnetUrl: string) => {
+  try {
+    const infohashMatch = magnetUrl.match(/urn:btih:([a-zA-Z0-9]{40})/);
+    if (!infohashMatch) {
+      throw new Error('Invalid magnet URL');
+    }
+    const infohash = infohashMatch[1];
+
+    const body = {
+      plugin_name: 'BitTorrentPlugin',
+      operation: 'archive',
+      params: {
+        source: {
+          source_id: infohash,
+          media_type: 'bittorrent',
+          uri: magnetUrl,
+          metadata: {},
+        },
+      },
+    };
+
+    const response = await fetch('http://localhost:8000/api/plugins/execute', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'Failed to start torrent download');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to handle magnet URL:', error);
+    throw error;
+  }
+});
+
 // Handle reading video file as File object data
 ipcMain.handle('read-video-file', async (_event, filePath: string) => {
   try {

@@ -13,6 +13,7 @@ def init_db():
     from app.models.analysis_job import AnalysisJob
     from app.models.live_session import LiveSession
     from app.models.pumpfun_coin import PumpFunCoin
+    from app.models.youtube_plugin import YouTubeChannel, YouTubeVideo
 
     # Create all tables using the imported engine
     Base.metadata.create_all(bind=engine)

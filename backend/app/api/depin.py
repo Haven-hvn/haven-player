@@ -1,63 +1,76 @@
 from fastapi import APIRouter, HTTPException
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timezone
 import logging
 
-from app.services.pumpfun_service import PumpFunService
+from app.api.plugins import plugin_manager
 from app.api.recording import recording_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Initialize PumpFunService locally
-pumpfun_service = PumpFunService()
-
 @router.post("/tick", response_model=Dict[str, Any])
 async def depin_tick():
     """
-    Trigger a 'tick' of the DePin Auto-Recording Agent.
+    Trigger a 'tick' of the DePin Auto-Recording Agent (Plugin-Aware Version).
     
     Logic:
-    1. Fetch the most popular live stream from Pump Fun.
-    2. Check if we are currently recording it.
-    3. If not recording or if recording duration > 30 seconds:
-       - Stop current recording (if any).
-       - Start recording the new top stream.
+    1. Discover sources from all loaded plugins
+    2. Rank sources by priority (participants + priority level)
+    3. Check if we're currently recording
+    4. Switch to better source if needed
     
     This endpoint is designed to be called periodically (e.g., every 1 minute) by the DePin node (frontend).
     """
     try:
-        # 1. Get top live stream
-        popular_streams = await pumpfun_service.get_popular_live_streams(limit=1)
-        if not popular_streams:
-            return {"success": True, "message": "No live streams found on Pump Fun."}
+        if not plugin_manager:
+            return {"success": False, "message": "Plugin manager not initialized"}
         
-        top_stream = popular_streams[0]
-        top_mint_id = top_stream.get("mint")
-        top_participants = top_stream.get("num_participants", 0)
-        top_name = top_stream.get("name", "Unknown")
-        top_symbol = top_stream.get("symbol", "N/A")
+        # 1. Discover sources from all loaded plugins
+        all_sources = await plugin_manager.discover_all_sources()
         
-        if not top_mint_id:
-            return {"success": False, "message": "Top stream has no mint ID."}
+        # Flatten and filter sources
+        available_sources: List[Tuple[str, Dict[str, Any]]] = []
+        for plugin_name, sources in all_sources.items():
+            plugin = plugin_manager.get_plugin(plugin_name)
+            if not plugin:
+                continue
             
+            for source in sources:
+                available_sources.append((plugin_name, source))
+        
+        if not available_sources:
+            return {"success": True, "message": "No sources available from plugins"}
+        
+        # 2. Rank sources by priority and participants
+        def rank_source(item: Tuple[str, Dict[str, Any]]) -> tuple:
+            plugin_name, source = item
+            # Priority: high (3) > normal (2) > low (1)
+            priority_score = {"high": 3, "normal": 2, "low": 1}.get(source.priority, 0)
+            # Participants count
+            participants = source.metadata.get("participants", 0)
+            return (priority_score, participants)
+        
+        available_sources.sort(key=rank_source, reverse=True)
+        
+        # Get top source
+        plugin_name, top_source = available_sources[0]
+        
         logger.info(
-            f"DePin Tick: Top stream is {top_mint_id} "
-            f"({top_name} / {top_symbol}) - {top_participants} participants"
+            f"DePin Tick: Top source is {top_source.source_id} "
+            f"(plugin: {plugin_name}, priority: {top_source.priority})"
         )
         
-        # 2. Check current recording status
+        # 3. Check current recording status
         active_recordings = recording_service.active_recordings
         current_mint_id = None
         current_recorder = None
         
         if active_recordings:
-            # Assuming we only want one recording active at a time for DePin mode
-            # We'll grab the first one we find.
             current_mint_id = list(active_recordings.keys())[0]
             current_recorder = active_recordings[current_mint_id]
-            
-        # 3. Decision Logic
+        
+        # 4. Decision logic
         should_stop_current = False
         should_start_new = False
         reason = ""
@@ -65,37 +78,38 @@ async def depin_tick():
         if current_mint_id:
             # Calculate duration
             duration = 0
-            if current_recorder.start_time:
+            if current_recorder and current_recorder.start_time:
                 duration = (datetime.now(timezone.utc) - current_recorder.start_time).total_seconds()
             
             logger.info(f"Current recording: {current_mint_id}, Duration: {duration:.1f}s")
             
-            if current_mint_id != top_mint_id:
+            # Check if top source is different
+            if current_mint_id != top_source.source_id:
                 should_stop_current = True
                 should_start_new = True
-                reason = f"Swapping to more popular stream (Current: {current_mint_id}, New: {top_mint_id})"
-            elif duration > 30: # 30 seconds
+                reason = f"Swapping to higher priority source (Current: {current_mint_id}, New: {top_source.source_id})"
+            elif duration > 30:
                 should_stop_current = True
                 should_start_new = True
                 reason = "Recording duration exceeded 30 seconds (chunking)"
             else:
                 return {
-                    "success": True, 
-                    "message": f"Continuing to record {current_mint_id} ({duration:.1f}s elapsed). Top stream: {top_name} ({top_participants} participants).",
-                    "current_mint_id": current_mint_id,
+                    "success": True,
+                    "message": f"Continuing to record {current_mint_id} ({duration:.1f}s elapsed). Top source: {top_source.source_id}",
+                    "current_source": current_mint_id,
                     "duration": duration,
-                    "top_stream": {
-                        "mint_id": top_mint_id,
-                        "name": top_name,
-                        "symbol": top_symbol,
-                        "participants": top_participants
+                    "top_source": {
+                        "source_id": top_source.source_id,
+                        "plugin": plugin_name,
+                        "priority": top_source.priority,
+                        "metadata": top_source.metadata,
                     }
                 }
         else:
             should_start_new = True
             reason = "No active recording"
-            
-        # Execute Actions
+        
+        # 5. Execute actions
         result_data = {"actions": []}
         
         if should_stop_current and current_mint_id:
@@ -106,52 +120,55 @@ async def depin_tick():
                 logger.error(f"Failed to stop recording {current_mint_id}: {stop_result.get('error')}")
         
         if should_start_new:
+            # Check if plugin supports archiving
+            plugin = plugin_manager.get_plugin(plugin_name)
+            if not plugin:
+                return {
+                    "success": False,
+                    "message": f"Plugin {plugin_name} not loaded",
+                    "actions": result_data["actions"]
+                }
+            
             # Check if recording is currently stopping (encoding)
-            if top_mint_id in recording_service.active_recordings:
-                recorder = recording_service.active_recordings[top_mint_id]
+            if top_source.source_id in recording_service.active_recordings:
+                recorder = recording_service.active_recordings[top_source.source_id]
                 if recorder.state.value == "stopping":
                     logger.info(
-                        f"DePin Action: Waiting for {top_mint_id} to finish encoding "
+                        f"DePin Action: Waiting for {top_source.source_id} to finish encoding "
                         f"before starting new recording"
                     )
                     return {
                         "success": True,
-                        "message": f"Recording for {top_mint_id} is currently encoding. Will retry next tick.",
+                        "message": f"Recording for {top_source.source_id} is currently encoding. Will retry next tick.",
                         "actions": result_data["actions"]
                     }
             
-            logger.info(f"DePin Action: Starting {top_mint_id} - {reason}")
-            # Ensure we wait a bit if we just stopped, although stop_recording handles some cleanup
-            # Start the new recording
-            start_result = await recording_service.start_recording(
-                mint_id=top_mint_id,
-                output_format="webm",
-                video_quality="best"
-            )
+            logger.info(f"DePin Action: Starting {top_source.source_id} using {plugin_name} - {reason}")
             
-            if start_result.get("success"):
-                result_data["actions"].append(f"Started {top_mint_id}")
+            # Archive using plugin
+            result = await plugin.archive(top_source)
+            
+            if result.success:
+                result_data["actions"].append(f"Started {top_source.source_id}")
                 return {
                     "success": True,
-                    "message": f"Switched recording to {top_name} ({top_participants} participants). Reason: {reason}",
+                    "message": f"Switched recording to {top_source.source_id} using {plugin_name}. Reason: {reason}",
                     "actions": result_data["actions"],
-                    "top_stream": {
-                        "mint_id": top_mint_id,
-                        "name": top_name,
-                        "symbol": top_symbol,
-                        "participants": top_participants
-                    }
+                    "top_source": {
+                        "source_id": top_source.source_id,
+                        "plugin": plugin_name,
+                        "priority": top_source.priority,
+                    },
                 }
             else:
                 return {
                     "success": False,
-                    "message": f"Failed to start recording {top_mint_id}: {start_result.get('error')}",
+                    "message": f"Failed to start archiving {top_source.source_id}: {result.error}",
                     "actions": result_data["actions"]
                 }
-                
-        return {"success": True, "message": "No action taken."}
-
+        
+        return {"success": True, "message": "No action taken"}
+    
     except Exception as e:
-        logger.error(f"Error in DePin tick: {e}")
+        logger.error(f"Error in DePIN tick: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-

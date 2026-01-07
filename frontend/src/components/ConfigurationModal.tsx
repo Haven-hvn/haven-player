@@ -35,6 +35,7 @@ import {
   CloudUpload as CloudUploadIcon,
   Lock as LockIcon,
   AccountTree as ArkivIcon,
+  Hub as GlitterIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
@@ -43,6 +44,11 @@ import {
 import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService, evmService } from "@/services/api";
 import type { SettingsTab } from "@/context/SettingsNavigationContext";
+
+interface SettingsTabWithGlitter extends SettingsTab {
+  glitter: "glitter";
+}
+
 import type { IpfsGatewayConfig } from "@/types/playback";
 import {
   DEFAULT_IPFS_GATEWAY,
@@ -58,6 +64,7 @@ interface AppConfig {
   llm_model: string;
   max_batch_size: number;
   livekit_url: string;
+  glitter_endpoint: string;
   updated_at: string;
 }
 
@@ -65,8 +72,8 @@ type EditableAppConfig = Omit<AppConfig, "id" | "updated_at">;
 
 interface ConfigurationModalProps {
   open: boolean;
-  activeTab: SettingsTab;
-  onTabChange: (tab: SettingsTab) => void;
+  activeTab: SettingsTabWithGlitter;
+  onTabChange: (tab: SettingsTabWithGlitter) => void;
   onClose: () => void;
   onSave: (config: EditableAppConfig) => Promise<void>;
   onSaveFilecoin: (config: FilecoinConfig) => Promise<void>;
@@ -93,6 +100,7 @@ const defaultAppConfig: EditableAppConfig = {
   llm_model: "HuggingFaceTB/SmolVLM-Instruct",
   max_batch_size: 1,
   livekit_url: "wss://pump-prod-tg2x8veh.livekit.cloud",
+  glitter_endpoint: "https://gw.magnode.ru/v1/sql/query",
 };
 
 const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
@@ -178,6 +186,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         llm_model: data.llm_model,
         max_batch_size: data.max_batch_size,
         livekit_url: data.livekit_url,
+        glitter_endpoint: data.glitter_endpoint,
       });
     } catch (err) {
       setError(
@@ -434,8 +443,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         await onSave(config);
       }
 
-      // Only close if no critical errors (warnings are OK)
-      if (!filecoinError && !arkivError) {
+      // Only close if no critical errors (warnings are OK) and no glitter endpoint error
+      if (!filecoinError && !arkivError && !error) {
         onClose();
       }
     } catch (err) {
@@ -1447,10 +1456,33 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         return renderEncryptionContent();
       case "arkiv":
         return renderArkivContent();
+      case "glitter":
+        return renderGlitterContent();
       default:
         return null;
     }
   };
+
+  const renderGlitterContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        Glitter Configuration
+      </Typography>
+      <TextField
+        fullWidth
+        label="Glitter Endpoint URL"
+        value={config.glitter_endpoint}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setConfig((prev: EditableAppConfig) => ({
+            ...prev,
+            glitter_endpoint: e.target.value,
+          }))
+        }
+        placeholder="https://gw.magnode.ru/v1/sql/query"
+        helperText="URL for the Glitter protocol endpoint"
+      />
+    </Box>
+  );
 
   return (
     <Dialog
@@ -1536,7 +1568,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 
         <Tabs
           value={activeTab}
-          onChange={(event: SyntheticEvent, value: SettingsTab) => {
+          onChange={(event: SyntheticEvent, value: SettingsTabWithGlitter) => {
             event.preventDefault();
             onTabChange(value);
           }}
@@ -1545,6 +1577,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         >
           <Tab label="AI / LLM" value="ai" icon={<AIIcon fontSize="small" />} iconPosition="start" />
           <Tab label="LiveKit" value="livekit" icon={<ServerIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="Glitter" value="glitter" icon={<GlitterIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Processing" value="processing" icon={<BatchIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Playback" value="playback" icon={<PlaybackIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Filecoin" value="filecoin" icon={<CloudUploadIcon fontSize="small" />} iconPosition="start" />

@@ -14,6 +14,7 @@ import {
   AcUnit as BrainIcon,
   LiveTv as LiveTvIcon,
   CloudUpload as CloudUploadIcon,
+  Extension as PluginsIcon,
 } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -49,6 +50,12 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
         label: "Dashboard",
         path: "/",
         active: location.pathname === "/",
+      },
+      {
+        icon: PluginsIcon,
+        label: "Plugins",
+        path: "/plugins",
+        active: location.pathname === "/plugins" || location.pathname.startsWith("/plugins/"),
       },
       {
         icon: LiveTvIcon,

@@ -6,7 +6,7 @@ python-dotenv==1.2.1
 pytest==9.0.2
 pytest-cov==7.0.0
 httpx==0.28.1
-vlm-engine==0.4.19
+vlm-engine==0.5.1
 livekit==1.0.23
 # opencv-python==4.10.0.84
 ImageHash==4.3.2
@@ -16,3 +16,8 @@ av==16.0.1
 Pillow==12.0.0
 python-multipart==0.0.21
 arkiv-sdk==1.0.0b1
+yt-dlp>=2024.0.0
+apscheduler>=3.10.0
+libtorrent==2.0.10
+requests==2.32.3
+rich==13.7.1

@@ -17,6 +17,10 @@ import {
   LinearProgress,
   Button,
   Divider,
+  Grid,
+  Badge,
+  IconButton,
+  Link,
 } from '@mui/material';
 import {
   CloudUpload as CloudUploadIcon,
@@ -30,6 +34,13 @@ import {
   CheckCircle as CheckCircleIcon,
   Bolt as BoltIcon,
   MilitaryTech as MilitaryIcon,
+  Settings as SettingsIcon,
+  Extension,
+  PlayArrow,
+  Pause,
+  Stop,
+  VideoLibrary,
+  CloudUpload,
 } from '@mui/icons-material';
 import { useVideos } from '@/hooks/useVideos';
 import { useFilecoinUpload } from '@/hooks/useFilecoinUpload';
@@ -37,16 +48,8 @@ import { FilecoinConfig } from '@/types/filecoin';
 import { SettingsTab } from '@/context/SettingsNavigationContext';
 import { generateExplorerLinks } from '@/utils/explorerLinks';
 import { loadGatewayConfig } from '@/services/playbackConfig';
-import Link from '@mui/material/Link';
-
-// Define local interface for the tick response
-interface TickResponse {
-  success: boolean;
-  message: string;
-  actions?: string[];
-  current_mint_id?: string;
-  duration?: number;
-}
+import { useDePinDashboard } from '@/hooks/useDePinDashboard';
+import { PluginConfigurationModal } from '@/components/Plugins/PluginConfigurationModal';
 
 type PointTier = {
   name: string;
@@ -69,70 +72,73 @@ interface DePinDashboardProps {
   onRequireSettings?: (tab: SettingsTab) => void;
 }
 
-const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoinConfigProp = null, onRequireSettings }) => {
+const DePinDashboard: React.FC<DePinDashboardProps> = ({
+  filecoinConfig: filecoinConfigProp = null,
+  onRequireSettings,
+}) => {
   const theme = useTheme();
-  const [isActive, setIsActive] = useState(false);
   const [logs, setLogs] = useState<Array<{ message: string; links?: Record<string, string> }>>([]);
-  const [currentTask, setCurrentTask] = useState<string>('Idle');
   const [ipfsGateway, setIpfsGateway] = useState<string>('https://ipfs.io/ipfs/');
   const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(filecoinConfigProp);
-  const [lastTick, setLastTick] = useState<Date | null>(null);
-  const [currentRecording, setCurrentRecording] = useState<{
-    mintId: string;
-    duration: number;
-    startTime: Date | null;
-  } | null>(null);
-  const [points, setPoints] = useState(1420);
-  const [archivedStreams, setArchivedStreams] = useState(18);
-  const [dailyStreak, setDailyStreak] = useState(4);
-  const [bonusAvailable, setBonusAvailable] = useState(180);
-  const [archivedMinutesAwarded, setArchivedMinutesAwarded] = useState(0);
-  const [archivedChunksAwarded, setArchivedChunksAwarded] = useState(0);
-  const [missionStates, setMissionStates] = useState({
-    archiveStream: true,
-    uploadChunk: false,
-    maintainStreak: true,
-  });
-  
+
+  const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [configPlugin, setConfigPlugin] = useState<{ name: string; displayName: string } | null>(
+    null
+  );
+
   const { videos, refreshVideos } = useVideos();
   const { uploadVideo } = useFilecoinUpload();
-  
-  // Ref to track if an upload is currently in progress to prevent overlaps
-  const isUploadingRef = useRef(false);
-  // Ref to track if a tick check is in progress
-  const isTickInProgressRef = useRef(false);
-  // Ref to track previous isActive state to detect transitions
-  const prevIsActiveRef = useRef<boolean | null>(null);
-  
+
+  const {
+    state,
+    loading,
+    error,
+    toggleActive,
+    runTick,
+    stopOperation,
+    toggleOperationPause,
+    loadPluginStatus,
+  } = useDePinDashboard();
+
   const addLog = (message: string, links?: Record<string, string>) => {
-    setLogs(prev => [{
-      message: `[${new Date().toLocaleTimeString()}] ${message}`,
-      links
-    }, ...prev].slice(0, 100));
+    setLogs((prev) =>
+      [
+        {
+          message: `[${new Date().toLocaleTimeString()}] ${message}`,
+          links,
+        },
+        ...prev,
+      ].slice(0, 100)
+    );
   };
 
   // Load IPFS gateway config on mount
   useEffect(() => {
-    loadGatewayConfig().then(config => {
-      setIpfsGateway(config.baseUrl);
-    }).catch(err => {
-      console.error('Failed to load IPFS gateway config:', err);
-    });
+    loadGatewayConfig()
+      .then((config) => {
+        setIpfsGateway(config.baseUrl);
+      })
+      .catch((err) => {
+        console.error('Failed to load IPFS gateway config:', err);
+      });
   }, []);
 
-  const level = useMemo(() => Math.floor(points / 1000) + 1, [points]);
+  const level = useMemo(() => Math.floor(state.points / 1000) + 1, [state.points]);
   const rankTitle = useMemo(() => {
-    if (points >= 8000) return 'Mythic Librarian';
-    if (points >= 5000) return 'Chronicle Guardian';
-    if (points >= 2500) return 'Signal Keeper';
-    if (points >= 1000) return 'Archivist';
+    if (state.points >= 8000) return 'Mythic Librarian';
+    if (state.points >= 5000) return 'Chronicle Guardian';
+    if (state.points >= 2500) return 'Signal Keeper';
+    if (state.points >= 1000) return 'Archivist';
     return 'Observer';
-  }, [points]);
-  const streak = dailyStreak;
+  }, [state.points]);
+  const streak = state.daily_streak;
 
   const currentTier = useMemo(() => {
-    return POINT_TIERS.find((tier) => points >= tier.min && points <= tier.max) ?? POINT_TIERS[0];
-  }, [points]);
+    return (
+      POINT_TIERS.find((tier) => state.points >= tier.min && state.points <= tier.max) ??
+      POINT_TIERS[0]
+    );
+  }, [state.points]);
 
   const nextTier = useMemo(() => {
     const index = POINT_TIERS.findIndex((tier) => tier.name === currentTier.name);
@@ -142,61 +148,11 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
   const progressToNextTier = useMemo(() => {
     if (nextTier.min === currentTier.min) return 100;
     const range = nextTier.min - currentTier.min;
-    const progress = points - currentTier.min;
+    const progress = state.points - currentTier.min;
     return Math.min(100, Math.round((progress / range) * 100));
-  }, [currentTier.min, nextTier.min, points]);
+  }, [currentTier.min, nextTier.min, state.points]);
 
-  const handleClaimBonus = () => {
-    setPoints((prev) => prev + bonusAvailable);
-    setBonusAvailable(0);
-    addLog('✨ Claimed Early Adopter bonus points!');
-  };
-
-  const handleSimulateBoost = () => {
-    setPoints((prev) => prev + 75);
-    setDailyStreak((prev) => prev + 1);
-    setMissionStates((prev) => ({ ...prev, maintainStreak: true }));
-    addLog('⚡ Node boost engaged: simulated archival burst.');
-  };
-
-  const completedUploads = useMemo(
-    () => videos.filter((video) => video.filecoin_root_cid).length,
-    [videos]
-  );
-
-  const leaderboardEntries = useMemo(() => [
-    { name: 'GammaNodes', score: 3210, badge: 'Signal Keeper' },
-    { name: 'Haven Alpha', score: 2980, badge: 'Archivist' },
-    { name: '▲ You', score: points, badge: currentTier.name, highlight: true },
-    { name: 'SolScope Labs', score: 2210, badge: 'Archivist' },
-    { name: 'Chronicle DAO', score: 1980, badge: 'Observer' },
-  ], [points, currentTier.name]);
-
-  useEffect(() => {
-    if (!currentRecording) {
-      setArchivedMinutesAwarded(0);
-      setArchivedChunksAwarded(0);
-      return;
-    }
-
-    const minutesRecorded = Math.floor(currentRecording.duration / 60);
-    if (minutesRecorded > archivedMinutesAwarded) {
-      const delta = minutesRecorded - archivedMinutesAwarded;
-      setArchivedMinutesAwarded(minutesRecorded);
-      setPoints((prev) => prev + delta * 25);
-    }
-
-    // Award archived stream every 30 seconds
-    const chunksRecorded = Math.floor(currentRecording.duration / 30);
-    if (chunksRecorded > archivedChunksAwarded) {
-      const delta = chunksRecorded - archivedChunksAwarded;
-      setArchivedChunksAwarded(chunksRecorded);
-      setArchivedStreams((prev) => prev + delta);
-      setMissionStates((prev) => ({ ...prev, archiveStream: true, uploadChunk: true }));
-    }
-  }, [currentRecording?.duration, archivedMinutesAwarded, archivedChunksAwarded]);
-
-  // Load Filecoin config and restore state on mount
+  // Load Filecoin config on mount
   useEffect(() => {
     const loadConfig = async () => {
       try {
@@ -213,349 +169,87 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
         addLog('❌ Failed to load Filecoin config.');
       }
     };
-    
-    const restoreState = async () => {
-      try {
-        // Check for active recordings
-        const response = await fetch('http://localhost:8000/api/recording/active');
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.recordings && Object.keys(data.recordings).length > 0) {
-            // There are active recordings - restore state
-            const recordingEntries = Object.entries(data.recordings);
-            const firstRecording = recordingEntries[0][1] as any;
-            const mintId = recordingEntries[0][0];
-            
-            if (firstRecording.state === 'recording' || firstRecording.is_recording) {
-              setIsActive(true);
-              setCurrentTask(`Recording: ${mintId}`);
-              
-              // Set current recording info
-              if (firstRecording.start_time) {
-                const startTime = new Date(firstRecording.start_time);
-                const duration = Math.floor((Date.now() - startTime.getTime()) / 1000);
-                setCurrentRecording({
-                  mintId,
-                  duration,
-                  startTime
-                });
-                addLog(`🔄 Restored active recording: ${mintId} (${Math.floor(duration / 60)}m ${duration % 60}s)`);
-              } else {
-                setCurrentRecording({
-                  mintId,
-                  duration: 0,
-                  startTime: null
-                });
-                addLog(`🔄 Restored active recording: ${mintId}`);
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to restore state:', error);
-      }
-    };
-    
+
     if (!filecoinConfigProp) {
       loadConfig();
     } else {
       setFilecoinConfig(filecoinConfigProp);
     }
-    restoreState();
   }, [filecoinConfigProp]);
-  const handleToggleActive = (checked: boolean) => {
-    if (checked && !filecoinConfig) {
-      addLog('⚠️ Filecoin config missing. Opening settings.');
+
+  const handleOpenConfig = (pluginName: string) => {
+    const plugin = state.enabled_plugins.find((p) => p.name === pluginName);
+    if (plugin) {
+      setConfigPlugin({ name: pluginName, displayName: plugin.display_name });
+      setConfigModalOpen(true);
+    }
+  };
+
+  const handleCloseConfig = () => {
+    setConfigModalOpen(false);
+    setConfigPlugin(null);
+  };
+
+  const handleConfigSave = () => {
+    loadPluginStatus();
+    addLog(`✅ Updated ${configPlugin!.displayName} configuration`);
+  };
+
+  const handleToggleActive = async (active: boolean) => {
+    if (active && !filecoinConfig) {
+      addLog('⚠️ Filecoin config required. Opening settings...');
       onRequireSettings?.('filecoin');
       return;
     }
-    setIsActive(checked);
+
+    toggleActive(active);
+    addLog(active ? '🚀 DePIN Node Activated' : '⏹️  DePIN Node Deactivated');
   };
 
-
-  // Stop all active recordings when node is deactivated
-  useEffect(() => {
-    // Only stop recordings when transitioning from active to inactive (not on initial mount)
-    if (prevIsActiveRef.current === true && !isActive) {
-      const stopAllRecordings = async () => {
-        try {
-          // Fetch all active recordings
-          const response = await fetch('http://localhost:8000/api/recording/active');
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.recordings && Object.keys(data.recordings).length > 0) {
-              const recordingEntries = Object.entries(data.recordings);
-              const mintIds = recordingEntries.map(([mintId]) => mintId);
-              
-              addLog(`🛑 Stopping ${mintIds.length} active recording(s)...`);
-              
-              // Stop each recording
-              const stopPromises = mintIds.map(async (mintId: string) => {
-                try {
-                  const stopResponse = await fetch('http://localhost:8000/api/recording/stop', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ mint_id: mintId }),
-                  });
-                  
-                  if (stopResponse.ok) {
-                    const stopData = await stopResponse.json();
-                    if (stopData.success) {
-                      addLog(`✅ Stopped recording: ${mintId.slice(0, 8)}...`);
-                      return true;
-                    } else {
-                      addLog(`❌ Failed to stop ${mintId.slice(0, 8)}...: ${stopData.error || 'Unknown error'}`);
-                      return false;
-                    }
-                  } else {
-                    const errorData = await stopResponse.json().catch(() => ({}));
-                    addLog(`❌ Failed to stop ${mintId.slice(0, 8)}...: ${errorData.detail || `HTTP ${stopResponse.status}`}`);
-                    return false;
-                  }
-                } catch (error) {
-                  addLog(`❌ Error stopping ${mintId.slice(0, 8)}...: ${String(error)}`);
-                  return false;
-                }
-              });
-              
-              await Promise.all(stopPromises);
-              addLog('🛑 All recordings stopped');
-            }
-          }
-        } catch (error) {
-          console.error('Failed to stop recordings:', error);
-          addLog(`❌ Failed to stop recordings: ${String(error)}`);
-        } finally {
-          // Clear local state
-          setCurrentRecording(null);
-          setCurrentTask('Idle');
-        }
-      };
-      
-      stopAllRecordings();
-    }
-    
-    // Update the previous value
-    prevIsActiveRef.current = isActive;
-  }, [isActive]);
-
-  // Tick Loop (Backend Agent)
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout | undefined;
-
-    if (isActive) {
-      const tick = async () => {
-        let startedRecording = false;
-        try {
-          isTickInProgressRef.current = true;
-          setCurrentTask('Checking Top Stream...');
-          const response = await fetch('http://localhost:8000/api/depin/tick', {
-            method: 'POST',
-          });
-          const data: TickResponse = await response.json();
-          
-          if (data.success) {
-            if (data.actions && data.actions.length > 0) {
-              data.actions.forEach(action => addLog(`🤖 Agent: ${action}`));
-              
-              // Check if a new recording was started
-              if (data.actions.some((a: string) => a.includes('Started'))) {
-                startedRecording = true;
-                // Fetch current recording status
-                const activeResponse = await fetch('http://localhost:8000/api/recording/active');
-                if (activeResponse.ok) {
-                  const activeData = await activeResponse.json();
-                  if (activeData.success && activeData.recordings) {
-                    const recordingEntries = Object.entries(activeData.recordings);
-                    if (recordingEntries.length > 0) {
-                      const [mintId, recording] = recordingEntries[0] as [string, any];
-                      if (recording.start_time) {
-                        const startTime = new Date(recording.start_time);
-                        setCurrentRecording({
-                          mintId,
-                          duration: 0,
-                          startTime
-                        });
-                        setCurrentTask(`Recording: ${mintId}`);
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            
-            // Update current recording info if available
-            if (data.current_mint_id && data.duration !== undefined) {
-              setCurrentRecording({
-                mintId: data.current_mint_id,
-                duration: data.duration,
-                startTime: null
-              });
-            }
-          } else {
-            addLog(`❌ Agent Error: ${data.message}`);
-          }
-          setLastTick(new Date());
-        } catch (error) {
-          console.error('Tick error:', error);
-          addLog(`❌ Agent Tick Failed: ${String(error)}`);
-        } finally {
-          isTickInProgressRef.current = false;
-          // Only set to Idle if we aren't immediately transitioning to another state
-          // and didn't just start a recording
-          if (!isUploadingRef.current && !startedRecording) {
-             setCurrentTask('Idle');
-          }
-        }
-      };
-
-      // Run immediately then interval
-      tick();
-      intervalId = setInterval(tick, 60000); // Every 1 minute
-    }
-
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [isActive]);
-
-  // Update current recording duration periodically
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout;
-
-    if (currentRecording && currentRecording.startTime) {
-      const updateDuration = () => {
-        const duration = Math.floor((Date.now() - currentRecording.startTime!.getTime()) / 1000);
-        setCurrentRecording(prev => prev ? { ...prev, duration } : null);
-      };
-
-      updateDuration(); // Update immediately
-      intervalId = setInterval(updateDuration, 1000); // Update every second
-    }
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [currentRecording?.startTime]);
-
-  // Periodically check for active recordings (in case recording stops externally)
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout;
-
-    if (isActive) {
-      const checkActiveRecordings = async () => {
-        try {
-          const response = await fetch('http://localhost:8000/api/recording/active');
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.recordings && Object.keys(data.recordings).length > 0) {
-              const recordingEntries = Object.entries(data.recordings);
-              const [mintId, recording] = recordingEntries[0] as [string, any];
-              
-              if (recording.state === 'recording' || recording.is_recording) {
-                if (recording.start_time) {
-                  const startTime = new Date(recording.start_time);
-                  const duration = Math.floor((Date.now() - startTime.getTime()) / 1000);
-                  setCurrentRecording({
-                    mintId,
-                    duration,
-                    startTime
-                  });
-                  setCurrentTask(`Recording: ${mintId}`);
-                }
-              } else if (recording.state === 'stopping') {
-                // Handle stopping/encoding state
-                setCurrentTask(`Encoding: ${mintId}`);
-                // Keep current recording info visible but maybe freeze duration?
-                // For now, we just update the status text as requested.
-              } else {
-                // Recording stopped
-                setCurrentRecording(null);
-                // Only set Idle if not checking stream or uploading
-                if (!isTickInProgressRef.current && !isUploadingRef.current) {
-                  setCurrentTask('Idle');
-                }
-              }
-            } else {
-              // No active recordings
-              setCurrentRecording(null);
-              // Only set Idle if not checking stream or uploading
-              if (!isTickInProgressRef.current && !isUploadingRef.current) {
-                setCurrentTask('Idle');
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Failed to check active recordings:', error);
-        }
-      };
-
-      intervalId = setInterval(checkActiveRecordings, 5000); // Check every 5 seconds
-    } else {
-      // Clear recording info when inactive
-      setCurrentRecording(null);
-      setCurrentTask('Idle');
-    }
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [isActive]);
+  // Ref to track if an upload is currently in progress to prevent overlaps
+  const isUploadingRef = useRef(false);
 
   // Upload Loop (Frontend Worker)
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
 
-    if (isActive && filecoinConfig) {
+    if (state.is_active && filecoinConfig) {
       const checkUploads = async () => {
         if (isUploadingRef.current) return;
 
         try {
           // Refresh videos to get latest status
           await refreshVideos();
-          
+
           // Find first video that needs upload
           const pendingVideo = videos
-            .filter(v => !v.filecoin_root_cid) // Not yet uploaded
+            .filter((v) => !v.filecoin_root_cid) // Not yet uploaded
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
 
           if (pendingVideo) {
             isUploadingRef.current = true;
-            setCurrentTask(`Uploading: ${pendingVideo.title}`);
             addLog(`⬆️ Starting upload for: ${pendingVideo.title}`);
 
             try {
               const uploadResult = await uploadVideo(pendingVideo.path, filecoinConfig, addLog);
-              
+
               // Generate explorer links for transparency
-              // uploadResult.transactionHash is the Filecoin FVM transaction for storage payment
               const links = generateExplorerLinks({
                 rpcUrl: filecoinConfig.rpcUrl,
-                filecoinTransactionHash: uploadResult.transactionHash, // Filecoin FVM transaction
+                filecoinTransactionHash: uploadResult.transactionHash,
                 rootCid: uploadResult.rootCid,
                 pieceCid: uploadResult.pieceCid,
                 ipfsGateway: ipfsGateway,
               });
-              
+
               addLog(`✅ Upload Complete: ${pendingVideo.title}`, links);
-              
-              // Refresh videos to get updated metadata (including Arkiv entity key if synced)
-              // Note: Arkiv sync happens asynchronously on backend, entity key may appear later
+
+              // Refresh videos to get updated metadata
               await refreshVideos();
-              
-              // Reward points
-              setPoints(p => p + 500);
-              addLog(`🎉 Earned 500 Haven Points for archiving!`);
-              
             } catch (error) {
               addLog(`❌ Upload Failed: ${pendingVideo.title} - ${String(error)}`);
             } finally {
               isUploadingRef.current = false;
-              setCurrentTask('Idle');
             }
           }
         } catch (error) {
@@ -568,17 +262,26 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
     }
 
     return () => clearInterval(intervalId);
-  }, [isActive, filecoinConfig, videos, refreshVideos, uploadVideo]);
+  }, [state.is_active, filecoinConfig, videos, refreshVideos, uploadVideo, ipfsGateway]);
 
   return (
-    <Box sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column', gap: 3, overflowY: 'auto', minHeight: 0 }}>
-      
+    <Box
+      sx={{
+        p: 3,
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 3,
+        overflowY: 'auto',
+        minHeight: 0,
+      }}
+    >
       {/* Rewards Dashboard Header */}
-      <Paper 
+      <Paper
         elevation={0}
-        sx={{ 
-          p: 0, 
-          display: 'flex', 
+        sx={{
+          p: 0,
+          display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
           background: 'linear-gradient(135deg, #1a237e 0%, #0d47a1 100%)',
@@ -591,72 +294,91 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
           minHeight: 'auto',
           position: 'relative',
           '&::before': {
-            display: 'none'
-          }
+            display: 'none',
+          },
         }}
       >
-        <Box sx={{ 
-          p: { xs: 2, sm: 3 }, 
-          display: 'flex', 
-          flexDirection: { xs: 'column', md: 'row' },
-          alignItems: { xs: 'flex-start', md: 'center' },
-          justifyContent: 'space-between',
-          gap: { xs: 2, md: 0 },
-          width: '100%',
-          boxSizing: 'border-box'
-        }}>
+        <Box
+          sx={{
+            p: { xs: 2, sm: 3 },
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            alignItems: { xs: 'flex-start', md: 'center' },
+            justifyContent: 'space-between',
+            gap: { xs: 2, md: 0 },
+            width: '100%',
+            boxSizing: 'border-box',
+          }}
+        >
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="overline" sx={{ opacity: 0.8, letterSpacing: { xs: 1, sm: 2 }, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
+            <Typography
+              variant="overline"
+              sx={{ opacity: 0.8, letterSpacing: { xs: 1, sm: 2 }, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}
+            >
               HAVEN REWARDS DASHBOARD
             </Typography>
-            <Typography variant="h3" sx={{ 
-              fontWeight: 700, 
-              my: 1,
-              fontSize: { xs: '1.75rem', sm: '2.5rem', md: '3rem' }
-            }}>
-              {Math.floor(points).toLocaleString()} <Typography component="span" variant="h5" sx={{ opacity: 0.7, fontSize: { xs: '1rem', sm: '1.5rem' } }}>PTS</Typography>
+            <Typography
+              variant="h3"
+              sx={{
+                fontWeight: 700,
+                my: 1,
+                fontSize: { xs: '1.75rem', sm: '2.5rem', md: '3rem' },
+              }}
+            >
+              {Math.floor(state.points).toLocaleString()}{' '}
+              <Typography
+                component="span"
+                variant="h5"
+                sx={{ opacity: 0.7, fontSize: { xs: '1rem', sm: '1.5rem' } }}
+              >
+                PTS
+              </Typography>
             </Typography>
-            <Box sx={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: 1, 
-              mt: 1,
-              flexWrap: 'wrap'
-            }}>
-              <Chip 
-                icon={<StarIcon sx={{ color: '#FFD700 !important' }} />} 
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                mt: 1,
+                flexWrap: 'wrap',
+              }}
+            >
+              <Chip
+                icon={<StarIcon sx={{ color: '#FFD700 !important' }} />}
                 label={rankTitle}
                 size="small"
-                sx={{ 
-                  bgcolor: 'rgba(255,255,255,0.1)', 
-                  color: 'white', 
+                sx={{
+                  bgcolor: 'rgba(255,255,255,0.1)',
+                  color: 'white',
                   fontWeight: 600,
                   border: '1px solid rgba(255,255,255,0.2)',
-                  fontSize: { xs: '0.7rem', sm: '0.75rem' }
-                }} 
+                  fontSize: { xs: '0.7rem', sm: '0.75rem' },
+                }}
               />
-              <Chip 
-                icon={<StreakIcon sx={{ color: '#FF5722 !important' }} />} 
+              <Chip
+                icon={<StreakIcon sx={{ color: '#FF5722 !important' }} />}
                 label={`${streak} Day Streak`}
                 size="small"
-                sx={{ 
-                  bgcolor: 'rgba(255,255,255,0.1)', 
+                sx={{
+                  bgcolor: 'rgba(255,255,255,0.1)',
                   color: 'white',
                   border: '1px solid rgba(255,255,255,0.2)',
-                  fontSize: { xs: '0.7rem', sm: '0.75rem' }
-                }} 
+                  fontSize: { xs: '0.7rem', sm: '0.75rem' },
+                }}
               />
             </Box>
           </Box>
-          <Box sx={{ 
-            textAlign: { xs: 'left', md: 'right' },
-            width: { xs: '100%', md: 'auto' },
-            mt: { xs: 1, md: 0 }
-          }}>
+          <Box
+            sx={{
+              textAlign: { xs: 'left', md: 'right' },
+              width: { xs: '100%', md: 'auto' },
+              mt: { xs: 1, md: 0 },
+            }}
+          >
             <FormControlLabel
               control={
                 <Switch
-                  checked={isActive}
+                  checked={state.is_active}
                   onChange={(e) => handleToggleActive(e.target.checked)}
                   color="success"
                   disabled={!filecoinConfig}
@@ -671,46 +393,61 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
                 />
               }
               label={
-                <Typography sx={{ 
-                  fontWeight: 600, 
-                  color: isActive ? '#4CAF50' : 'rgba(255,255,255,0.7)',
-                  fontSize: { xs: '0.75rem', sm: '0.875rem' }
-                }}>
-                  {isActive ? "NODE ACTIVE" : "NODE INACTIVE"}
+                <Typography
+                  sx={{
+                    fontWeight: 600,
+                    color: state.is_active ? '#4CAF50' : 'rgba(255,255,255,0.7)',
+                    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                  }}
+                >
+                  {state.is_active ? 'NODE ACTIVE' : 'NODE INACTIVE'}
                 </Typography>
               }
               labelPlacement="start"
             />
-            <Typography variant="caption" display="block" sx={{ opacity: 0.6, mt: 1, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
-              {isActive ? "Earning passive rewards..." : "Start node to earn rewards"}
+            <Typography
+              variant="caption"
+              display="block"
+              sx={{ opacity: 0.6, mt: 1, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}
+            >
+              {state.is_active ? 'Earning passive rewards...' : 'Start node to earn rewards'}
             </Typography>
           </Box>
         </Box>
-        
+
         {/* Level Progress Bar */}
         <Box sx={{ bgcolor: 'rgba(0,0,0,0.2)', px: { xs: 2, sm: 3 }, py: 1.5 }}>
-          <Box sx={{ 
-            display: 'flex', 
-            flexDirection: { xs: 'column', sm: 'row' },
-            justifyContent: 'space-between', 
-            mb: 0.5,
-            gap: { xs: 0.5, sm: 0 }
-          }}>
-            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>Level {level}</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>{(points % 1000).toFixed(0)} / 1000 XP to Level {level + 1}</Typography>
+          <Box
+            sx={{
+              display: 'flex',
+              flexDirection: { xs: 'column', sm: 'row' },
+              justifyContent: 'space-between',
+              mb: 0.5,
+              gap: { xs: 0.5, sm: 0 },
+            }}
+          >
+            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
+              Level {level}
+            </Typography>
+            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
+              {(state.points % 1000).toFixed(0)} / 1000 XP to Level {level + 1}
+            </Typography>
           </Box>
           <Box sx={{ height: 6, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden' }}>
-            <Box 
-              sx={{ 
-                width: `${(points % 1000) / 10}%`, 
-                height: '100%', 
-                bgcolor: '#4CAF50', 
-                transition: 'width 0.5s ease-out' 
-              }} 
+            <Box
+              sx={{
+                width: `${(state.points % 1000) / 10}%`,
+                height: '100%',
+                bgcolor: '#4CAF50',
+                transition: 'width 0.5s ease-out',
+              }}
             />
           </Box>
         </Box>
       </Paper>
+
+      {loading && state.is_active && <Alert severity="info">Loading dashboard data...</Alert>}
+      {error && <Alert severity="error">Error: {error.message}</Alert>}
 
       {!filecoinConfig && (
         <Alert severity="warning">
@@ -718,413 +455,334 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({ filecoinConfig: filecoi
         </Alert>
       )}
 
-      {/* Key Metrics */}
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: {
-            xs: '1fr',
-            md: 'repeat(3, 1fr)',
-          },
-          gap: 2,
-        }}
-      >
-        <Card sx={{ height: '100%' }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-              <Box sx={{ p: 1, borderRadius: 2, bgcolor: theme.palette.primary.main + '15' }}>
-                <TrendingUpIcon color="primary" />
-              </Box>
-              <Typography variant="subtitle2" color="text.secondary">Network Status</Typography>
-            </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              {isActive ? (
-                <CircularProgress size={20} color="success" />
-              ) : (
-                <StorageIcon color="disabled" />
-              )}
-              <Typography variant="h6">
-                {isActive ? currentTask : 'Stopped'}
-              </Typography>
-            </Box>
-          </CardContent>
-        </Card>
-        
-        <Card sx={{ height: '100%', border: currentRecording ? '2px solid #4CAF50' : undefined }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-              <Box sx={{ p: 1, borderRadius: 2, bgcolor: theme.palette.secondary.main + '15' }}>
-                <TimelineIcon color="secondary" />
-              </Box>
-              <Typography variant="subtitle2" color="text.secondary">Active Recording</Typography>
-            </Box>
-            {currentRecording ? (
-              <Box>
-                <Typography variant="h5" sx={{ fontFamily: 'monospace' }}>
-                  {Math.floor(currentRecording.duration / 60)}:{(currentRecording.duration % 60).toString().padStart(2, '0')}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
-                  ID: {currentRecording.mintId.slice(0, 8)}...
-                </Typography>
-              </Box>
-            ) : (
-              <Typography variant="body1" color="text.secondary">No active session</Typography>
-            )}
-          </CardContent>
-        </Card>
+      {/* Active Operations Section */}
+      <Typography variant="h6">Active Operations</Typography>
 
-        <Card sx={{ height: '100%' }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-              <Box sx={{ p: 1, borderRadius: 2, bgcolor: '#9c27b015' }}>
-                <CloudUploadIcon sx={{ color: '#9c27b0' }} />
-              </Box>
-              <Typography variant="subtitle2" color="text.secondary">Pending Uploads</Typography>
-            </Box>
-            <Typography variant="h4">
-              {videos.filter(v => !v.filecoin_root_cid).length}
+      {state.active_operations.length === 0 && state.is_active ? (
+        <Card>
+          <CardContent sx={{ textAlign: 'center', py: 4 }}>
+            <CircularProgress size={40} sx={{ mb: 2 }} />
+            <Typography variant="body1" color="text.secondary">
+              Discovering and archiving content...
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              Queued for archival
+              Waiting for plugin operations to start
             </Typography>
           </CardContent>
         </Card>
-      </Box>
-
-      {/* Concept: Points + Missions Dashboard */}
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: {
-            xs: '1fr',
-            lg: '1.2fr 1fr',
-          },
-          gap: 2,
-          mt: 0,
-        }}
-      >
-        <Box>
-          <Paper
-            sx={{
-              p: 3,
-              background:
-                'linear-gradient(135deg, rgba(17,25,40,0.95), rgba(17,25,40,0.7)), url(https://images.unsplash.com/photo-1520607162513-77705c0f0d4a?auto=format&fit=crop&w=1200&q=80)',
-              backgroundSize: 'cover',
-              color: '#fff',
-            }}
-          >
-            <Typography variant="overline" sx={{ opacity: 0.8, letterSpacing: 3 }}>
-              POINTSTREAM // EARLY ACCESS
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-              <Typography variant="h3" sx={{ fontWeight: 700 }}>
-                {points.toLocaleString()}
-              </Typography>
-              <Typography variant="body1" sx={{ opacity: 0.7 }}>
-                pts
-              </Typography>
-              <Chip
-                label={currentTier.name}
-                size="small"
-                sx={{
-                  bgcolor: currentTier.color,
-                  color: '#fff',
-                  fontWeight: 600,
-                }}
+      ) : (
+        <Grid container spacing={2}>
+          {state.active_operations.map((operation) => (
+            <Grid item xs={12} md={6} lg={4} key={operation.operation_id}>
+              <OperationCard
+                operation={operation}
+                onStop={() => stopOperation(operation.operation_id)}
+                onPause={(paused: boolean) => toggleOperationPause(operation.operation_id, paused)}
               />
-            </Box>
-            <Typography variant="body2" sx={{ mt: 1, opacity: 0.8 }}>
-              {currentTier.name} tier · {nextTier.min.toLocaleString()} pts unlocks {nextTier.name}
-            </Typography>
+            </Grid>
+          ))}
+        </Grid>
+      )}
 
-            <Box sx={{ mt: 3 }}>
-              <LinearProgress
-                variant="determinate"
-                value={progressToNextTier}
-                sx={{
-                  height: 10,
-                  borderRadius: 999,
-                  bgcolor: 'rgba(255,255,255,0.1)',
-                  '& .MuiLinearProgress-bar': { backgroundColor: currentTier.color },
-                }}
-              />
-              <Typography variant="caption" sx={{ display: 'block', mt: 1, opacity: 0.7 }}>
-                {progressToNextTier}% to {nextTier.name}
-              </Typography>
-            </Box>
+      {/* Plugin Status Section */}
+      <Typography variant="h6">Plugin Status</Typography>
 
-            <Box
-              sx={{
-                mt: 3,
-                p: 2,
-                borderRadius: 2,
-                border: '1px dashed rgba(255,255,255,0.3)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <Box>
-                <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                  Early Adopter Boost
-                </Typography>
-                <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                  +{bonusAvailable.toLocaleString()} pts
-                </Typography>
-              </Box>
-              <Button
-                variant="contained"
-                color="success"
-                disabled={bonusAvailable === 0}
-                onClick={handleClaimBonus}
-                sx={{ borderRadius: 999 }}
-              >
-                {bonusAvailable === 0 ? 'Claimed' : 'Claim Bonus'}
-              </Button>
-            </Box>
-          </Paper>
-        </Box>
-
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: {
-              xs: '1fr',
-              md: 'repeat(2, 1fr)',
-            },
-            gap: 2,
-          }}
-        >
-          <Paper sx={{ p: 3, height: '100%' }}>
-            <Typography variant="subtitle2" color="text.secondary">
-              Archival Impact
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-              <Box>
-                <Typography variant="h4">{archivedStreams}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Streams archived
-                </Typography>
-              </Box>
-              <Divider orientation="vertical" flexItem />
-              <Box>
-                <Typography variant="h4">{dailyStreak}d</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Streak
-                </Typography>
-              </Box>
-              <Divider orientation="vertical" flexItem />
-              <Box>
-                <Typography variant="h4">{completedUploads}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Uploads
-                </Typography>
-              </Box>
-            </Box>
-
-            <Box sx={{ mt: 3 }}>
-              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Daily Missions
-              </Typography>
-              {[
-                {
-                  label: 'Archive 1 livestream (30 sec chunk)',
-                  reward: '+150 pts',
-                  complete: missionStates.archiveStream,
-                },
-                {
-                  label: 'Upload 3 chunks to Filecoin',
-                  reward: '+250 pts',
-                  complete: missionStates.uploadChunk,
-                },
-                {
-                  label: 'Keep node active 30 min',
-                  reward: '+200 pts',
-                  complete: missionStates.maintainStreak,
-                },
-              ].map((mission) => (
-                <Box
-                  key={mission.label}
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    py: 1,
-                    borderBottom: '1px dashed #eee',
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {mission.complete ? (
-                      <CheckCircleIcon fontSize="small" color="success" />
-                    ) : (
-                      <ScheduleIcon fontSize="small" color="disabled" />
-                    )}
-                    <Typography variant="body2">{mission.label}</Typography>
+      <Grid container spacing={2}>
+        {state.enabled_plugins.map((plugin) => (
+          <Grid item xs={12} sm={6} md={4} key={plugin.name}>
+            <Card>
+              <CardContent>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                    <Extension fontSize="small" />
+                    <Typography variant="body2">{plugin.display_name}</Typography>
                   </Box>
-                  <Chip
-                    label={mission.reward}
-                    size="small"
-                    color={mission.complete ? 'success' : 'default'}
-                  />
+                  <Badge badgeContent={plugin.active_operations_count} color="primary">
+                    <Chip
+                      label={plugin.status}
+                      size="small"
+                      color={plugin.status === 'active' ? 'success' : 'default'}
+                    />
+                  </Badge>
                 </Box>
-              ))}
-            </Box>
 
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<BoltIcon />}
-              sx={{ mt: 2 }}
-              onClick={handleSimulateBoost}
-            >
-              Simulate Node Boost
-            </Button>
-          </Paper>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  {plugin.active_operations_count} active operation(s)
+                </Typography>
 
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="subtitle2" color="text.secondary">
-              Leaderboard (Concept)
-            </Typography>
-            <List dense>
-              {leaderboardEntries.map((entry) => (
-                <ListItem
-                  key={entry.name}
-                  sx={{
-                    borderBottom: '1px solid #f0f0f0',
-                    bgcolor: entry.highlight ? 'rgba(76,175,80,0.08)' : 'transparent',
-                  }}
+                <Button
+                  size="small"
+                  startIcon={<SettingsIcon />}
+                  onClick={() => handleOpenConfig(plugin.name)}
+                  sx={{ mt: 1 }}
                 >
-                  <MilitaryIcon fontSize="small" color={entry.highlight ? 'success' : 'disabled'} />
-                  <ListItemText
-                    sx={{ ml: 1 }}
-                    primary={
-                      <Typography sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span>{entry.name}</span>
-                        <strong>{entry.score.toLocaleString()} pts</strong>
-                      </Typography>
-                    }
-                    secondary={
-                      <Typography variant="caption" color="text.secondary">
-                        {entry.badge}
-                      </Typography>
-                    }
-                  />
-                </ListItem>
-              ))}
-            </List>
-          </Paper>
-        </Box>
-      </Box>
+                  Configure
+                </Button>
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+
+      {/* Key Metrics */}
+      <Grid container spacing={2}>
+        <Grid item xs={12} sm={6} md={3}>
+          <MetricCard
+            title="Total Archived"
+            value={state.total_archived}
+            icon={<ScheduleIcon />}
+            color="primary"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <MetricCard
+            title="Uploaded to Filecoin"
+            value={state.total_uploaded}
+            icon={<CloudUploadIcon />}
+            color="secondary"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <MetricCard
+            title="Pending Uploads"
+            value={state.pending_uploads}
+            icon={<BoltIcon />}
+            color="warning"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <MetricCard
+            title="Active Operations"
+            value={state.active_operations.length}
+            icon={<Extension />}
+            color="info"
+          />
+        </Grid>
+      </Grid>
 
       {/* Activity Log */}
-      <Paper sx={{ flexGrow: 1, p: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 200 }}>
+      <Paper
+        sx={{
+          flexGrow: 1,
+          p: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          minHeight: 200,
+        }}
+      >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexShrink: 0 }}>
           <ScheduleIcon color="action" fontSize="small" />
-          <Typography variant="subtitle2">
-            Node Activity Log
-          </Typography>
-          {lastTick && (
+          <Typography variant="subtitle2">Node Activity Log</Typography>
+          {state.last_tick && (
             <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-              Last Tick: {lastTick.toLocaleTimeString()}
+              Last Tick: {new Date(state.last_tick).toLocaleTimeString()}
             </Typography>
           )}
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <List sx={{ flex: 1, overflow: 'auto', bgcolor: '#f8f9fa', borderRadius: 2, p: 1, minHeight: 0 }}>
-          {logs.length === 0 && (
-            <Box sx={{ p: 4, textAlign: 'center', opacity: 0.6 }}>
-              <Typography variant="body2">No activity recorded this session.</Typography>
-              <Typography variant="caption">Activate the node to start earning rewards.</Typography>
-            </Box>
-          )}
-          {logs.map((log, index) => (
-            <ListItem key={index} dense sx={{ py: 0.5, borderBottom: '1px solid #eee' }}>
-              <ListItemText 
-                primary={
-                  <Box>
-                    <Typography
-                      variant="body2"
-                      fontFamily="monospace"
-                      fontSize="0.75rem"
-                      color={log.message.includes('❌') ? 'error.main' : log.message.includes('🎉') ? 'secondary.main' : 'text.primary'}
-                      fontWeight={log.message.includes('🎉') ? 600 : 400}
-                    >
-                      {log.message}
-                    </Typography>
-                    {log.links && Object.keys(log.links).length > 0 && (
-                      <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {log.links.filecoinTransaction && (
-                          <Link
-                            href={log.links.filecoinTransaction}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                          >
-                            ⛏️ Filecoin Transaction
-                          </Link>
-                        )}
-                        {log.links.transaction && (
-                          <Link
-                            href={log.links.transaction}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                          >
-                            🔗 Arkiv Transaction
-                          </Link>
-                        )}
-                        {log.links.ipfs && (
-                          <Link
-                            href={log.links.ipfs}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                          >
-                            📦 IPFS
-                          </Link>
-                        )}
-                        {log.links.filecoin && (
-                          <Link
-                            href={log.links.filecoin}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                          >
-                            ⛏️ Filecoin CID
-                          </Link>
-                        )}
-                        {log.links.ipni && (
-                          <Link
-                            href={log.links.ipni}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                          >
-                            🔍 IPNI
-                          </Link>
-                        )}
-                        {log.links.entity && (
-                          <Link
-                            href={log.links.entity}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                          >
-                            📋 Arkiv Entity
-                          </Link>
-                        )}
-                      </Box>
-                    )}
-                  </Box>
-                }
-              />
-            </ListItem>
-          ))}
-        </List>
+            {logs.length === 0 && (
+              <Box sx={{ p: 4, textAlign: 'center', opacity: 0.6 }}>
+                <Typography variant="body2">No activity recorded this session.</Typography>
+                <Typography variant="caption">Activate the node to start earning rewards.</Typography>
+              </Box>
+            )}
+            {logs.map((log, index) => (
+              <ListItem key={index} dense sx={{ py: 0.5, borderBottom: '1px solid #eee' }}>
+                <ListItemText
+                  primary={
+                    <Box>
+                      <Typography
+                        variant="body2"
+                        fontFamily="monospace"
+                        fontSize="0.75rem"
+                        color={
+                          log.message.includes('❌')
+                            ? 'error.main'
+                            : log.message.includes('🎉')
+                            ? 'secondary.main'
+                            : 'text.primary'
+                        }
+                        fontWeight={log.message.includes('🎉') ? 600 : 400}
+                      >
+                        {log.message}
+                      </Typography>
+                      {log.links && Object.keys(log.links).length > 0 && (
+                        <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {log.links.filecoinTransaction && (
+                            <Link
+                              href={log.links.filecoinTransaction}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                            >
+                              ⛏️ Filecoin Transaction
+                            </Link>
+                          )}
+                          {log.links.transaction && (
+                            <Link
+                              href={log.links.transaction}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                            >
+                              🔗 Arkiv Transaction
+                            </Link>
+                          )}
+                          {log.links.ipfs && (
+                            <Link
+                              href={log.links.ipfs}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                            >
+                              📦 IPFS
+                            </Link>
+                          )}
+                          {log.links.filecoin && (
+                            <Link
+                              href={log.links.filecoin}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                            >
+                              ⛏️ Filecoin CID
+                            </Link>
+                          )}
+                          {log.links.ipni && (
+                            <Link
+                              href={log.links.ipni}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                            >
+                              🔍 IPNI
+                            </Link>
+                          )}
+                          {log.links.entity && (
+                            <Link
+                              href={log.links.entity}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
+                            >
+                              📋 Arkiv Entity
+                            </Link>
+                          )}
+                        </Box>
+                      )}
+                    </Box>
+                  }
+                />
+              </ListItem>
+            ))}
+          </List>
         </Box>
       </Paper>
+
+      {/* Configuration Modal */}
+      {configPlugin && (
+        <PluginConfigurationModal
+          open={configModalOpen}
+          pluginName={configPlugin.name}
+          pluginDisplayName={configPlugin.displayName}
+          onClose={handleCloseConfig}
+          onSave={handleConfigSave}
+        />
+      )}
     </Box>
   );
 };
 
+function OperationCard({ operation, onStop, onPause }: any) {
+  const getOperationIcon = (type: string) => {
+    switch (type) {
+      case 'real-time':
+        return <PlayArrow />;
+      case 'subscription':
+        return <VideoLibrary />;
+      case 'download':
+        return <CloudUpload />;
+      default:
+        return <Extension />;
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'running':
+        return 'success';
+      case 'paused':
+        return 'warning';
+      case 'completed':
+        return 'primary';
+      case 'failed':
+        return 'error';
+      default:
+        return 'default';
+    }
+  };
+
+  return (
+    <Card sx={{ height: '100%' }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            {getOperationIcon(operation.operation_type)}
+            <Box>
+              <Typography variant="subtitle2">{operation.plugin_display_name}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {operation.source_name}
+              </Typography>
+            </Box>
+          </Box>
+          <Chip label={operation.status} size="small" color={getStatusColor(operation.status) as any} />
+        </Box>
+
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            <Typography variant="caption" color="text.secondary">
+              {Math.floor(operation.duration_seconds / 60)}:
+              {(operation.duration_seconds % 60).toString().padStart(2, '0')}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {operation.progress}%
+            </Typography>
+          </Box>
+          <LinearProgress variant="determinate" value={operation.progress} sx={{ height: 6, borderRadius: 3 }} />
+        </Box>
+
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <IconButton size="small" onClick={() => onPause(operation.status === 'running')}>
+            {operation.status === 'running' ? <Pause /> : <PlayArrow />}
+          </IconButton>
+          <IconButton size="small" color="error" onClick={onStop}>
+            <Stop />
+          </IconButton>
+        </Box>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MetricCard({ title, value, icon, color }: any) {
+  return (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+          <Box sx={{ p: 1, borderRadius: 2, bgcolor: `${color}15` }}>
+            {React.cloneElement(icon, { color: color as any })}
+          </Box>
+          <Typography variant="subtitle2" color="text.secondary">
+            {title}
+          </Typography>
+        </Box>
+        <Typography variant="h4">{value}</Typography>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default DePinDashboard;
+          

@@ -14,7 +14,9 @@ import VideoAnalysisList from "@/components/VideoAnalysisList";
 import VideoGrid from "@/components/VideoGrid";
 import VideoPlayer from "@/components/VideoPlayer";
 import ConfigurationModal from "@/components/ConfigurationModal";
+import AddVideoModal from "@/components/AddVideoModal";
 import { useVideos } from "@/hooks/useVideos";
+import { usePlugins } from "@/hooks/usePlugins";
 import { useFilecoinUpload } from "@/hooks/useFilecoinUpload";
 import { Video } from "@/types/video";
 import type { FilecoinConfig, FilecoinUploadStatus } from "@/types/filecoin";
@@ -26,6 +28,8 @@ import {
 } from "@/services/api";
 import LivestreamRecorderPage from "@/components/LivestreamRecorder/LivestreamRecorderPage";
 import DePinDashboard from "@/components/DePinDashboard";
+import PluginManagementPage from "@/components/Plugins/PluginManagementPage";
+import PluginSourcesView from "@/components/Plugins/PluginSourcesView";
 import {
   SettingsNavigationProvider,
   useSettingsNavigation,
@@ -199,8 +203,11 @@ const MainApp: React.FC = () => {
     closeSettings,
     setActiveTab,
   } = useSettingsNavigation();
+  const { plugins } = usePlugins();
+  const [isAddVideoModalOpen, setAddVideoModalOpen] = useState(false);
+  const [downloadingTorrents, setDownloadingTorrents] = useState<Set<string>>(new Set());
   const [analysisStatuses, setAnalysisStatuses] = useState<
-    Record<string, "pending" | "analyzing" | "completed" | "error">
+    Record<string, "pending" | "analyzing" | "completed" | "error" | "downloading">
   >({});
   const [activeJobs, setActiveJobs] = useState<Record<string, number>>({});
   const [jobProgresses, setJobProgresses] = useState<Record<string, number>>(
@@ -342,6 +349,11 @@ const MainApp: React.FC = () => {
     }
   }, [hiddenVideos]);
 
+  const isBitTorrentEnabled = useMemo(() => {
+    const bittorrentPlugin = plugins.find((p) => p.name === "BitTorrentPlugin");
+    return bittorrentPlugin ? bittorrentPlugin.enabled : false;
+  }, [plugins]);
+
   // Load view mode preference from localStorage on mount
   useEffect(() => {
     try {
@@ -441,6 +453,44 @@ const MainApp: React.FC = () => {
       });
     }
   }, [addVideo, hiddenVideos]);
+
+  const handleAddMagnetUrl = useCallback(
+    async (url: string) => {
+      try {
+        const { ipcRenderer } = require("electron");
+        const infohashMatch = url.match(/urn:btih:([a-zA-Z0-9]{40})/);
+        if (!infohashMatch) {
+          throw new Error("Invalid magnet URL");
+        }
+        const infohash = infohashMatch[1];
+
+        setDownloadingTorrents((prev) => new Set(prev).add(infohash));
+        setAnalysisStatuses((prev) => ({ ...prev, [infohash]: "downloading" }));
+
+        const result = await ipcRenderer.invoke("add-magnet-url", url);
+        
+        setDownloadingTorrents((prev) => {
+          const newSet = new Set(prev);
+          newSet.delete(infohash);
+          return newSet;
+        });
+
+        // The main process will handle the download and add the video
+        // to the database. We just need to refresh the video list.
+        await refreshVideos();
+
+      } catch (error) {
+        console.error("Failed to add magnet URL:", error);
+        setNotification({
+          open: true,
+          message:
+            error instanceof Error ? error.message : "Failed to add magnet URL",
+          severity: "error",
+        });
+      }
+    },
+    [refreshVideos]
+  );
 
   const ensureAiSettings = useCallback((): boolean => {
     if (isAiConfigDefault(aiConfig)) {
@@ -717,7 +767,7 @@ const MainApp: React.FC = () => {
         >
           <Header
             videoCount={visibleVideos.length}
-            onAddVideo={handleAddVideo}
+            onAddVideo={() => setAddVideoModalOpen(true)}
             onAnalyzeAll={handleAnalyzeAll}
             isAnalyzing={isAnalyzingAll}
             onSearch={handleSearch}
@@ -797,6 +847,14 @@ const MainApp: React.FC = () => {
         onSave={handleConfigSave}
         onSaveFilecoin={handleFilecoinConfigSave}
         initialFilecoinConfig={filecoinConfig}
+      />
+
+      <AddVideoModal
+        open={isAddVideoModalOpen}
+        onClose={() => setAddVideoModalOpen(false)}
+        onAddLocalFile={handleAddVideo}
+        onAddMagnetUrl={handleAddMagnetUrl}
+        isBitTorrentEnabled={isBitTorrentEnabled}
       />
 
       {/* Notification Snackbar for duplicate detection and errors */}
@@ -1013,6 +1071,86 @@ const App: React.FC = () => {
                         }}
                       >
                         <DePinDashboardWrapper />
+                      </Box>
+                    </Box>
+                  </Box>
+                }
+              />
+              <Route
+                path="/plugins"
+                element={
+                  <Box
+                    sx={{
+                      display: "flex",
+                      height: "100vh",
+                      backgroundColor: "#FFFFFF",
+                      borderRadius: "16px",
+                      overflow: "hidden",
+                      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
+                      margin: "8px",
+                      border: "1px solid #F0F0F0",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
+                        borderRight: "1px solid #E8E8E8",
+                      }}
+                    >
+                      <Sidebar />
+                    </Box>
+
+                    <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                      <Box
+                        sx={{
+                          flexGrow: 1,
+                          backgroundColor: "#FFFFFF",
+                          padding: "16px",
+                          height: "100%",
+                          overflow: "auto",
+                        }}
+                      >
+                        <PluginManagementPage />
+                      </Box>
+                    </Box>
+                  </Box>
+                }
+              />
+              <Route
+                path="/plugins/:pluginName/sources"
+                element={
+                  <Box
+                    sx={{
+                      display: "flex",
+                      height: "100vh",
+                      backgroundColor: "#FFFFFF",
+                      borderRadius: "16px",
+                      overflow: "hidden",
+                      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
+                      margin: "8px",
+                      border: "1px solid #F0F0F0",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
+                        borderRight: "1px solid #E8E8E8",
+                      }}
+                    >
+                      <Sidebar />
+                    </Box>
+
+                    <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                      <Box
+                        sx={{
+                          flexGrow: 1,
+                          backgroundColor: "#FFFFFF",
+                          padding: "16px",
+                          height: "100%",
+                          overflow: "auto",
+                        }}
+                      >
+                        <PluginSourcesView />
                       </Box>
                     </Box>
                   </Box>

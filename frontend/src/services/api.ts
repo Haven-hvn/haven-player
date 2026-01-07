@@ -1,6 +1,15 @@
 import axios from 'axios';
 import { Video, Timestamp, VideoCreate, TimestampCreate, StreamInfo, VideoGroup } from '@/types/video';
 import type { IpfsGatewayConfig } from '@/types/playback';
+import {
+  PluginMetadata,
+  PluginHealth,
+  MediaSource,
+  SourcesResponse,
+  ArchiveResult,
+  PluginConfig,
+  DiscoverResponse,
+} from '@/types/plugin';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
@@ -218,5 +227,83 @@ export const evmService = {
     // Use IPC to check balance - private key is loaded from secure storage in main process
     const result = await ipcRenderer.invoke('check-evm-balance', { rpcUrl });
     return result;
+  },
+};
+
+// Plugin-related API functions
+export const pluginService = {
+  // List all plugins
+  getAll: async (): Promise<PluginMetadata[]> => {
+    const response = await api.get<PluginMetadata[]>('/plugins');
+    return response.data;
+  },
+
+  // Discover new plugins
+  discover: async (): Promise<DiscoverResponse> => {
+    const response = await api.post<DiscoverResponse>('/plugins/discover');
+    return response.data;
+  },
+
+  // Load a plugin
+  load: async (name: string): Promise<PluginMetadata> => {
+    const response = await api.post<PluginMetadata>(`/plugins/${encodeURIComponent(name)}/load`);
+    return response.data;
+  },
+
+  // Unload a plugin
+  unload: async (name: string): Promise<PluginMetadata> => {
+    const response = await api.post<PluginMetadata>(`/plugins/${encodeURIComponent(name)}/unload`);
+    return response.data;
+  },
+
+  // Restart a plugin
+  restart: async (name: string): Promise<PluginMetadata> => {
+    const response = await api.post<PluginMetadata>(`/plugins/${encodeURIComponent(name)}/restart`);
+    return response.data;
+  },
+
+  // Health check all plugins
+  getHealth: async (): Promise<PluginHealth[]> => {
+    const response = await api.get<PluginHealth[]>('/plugins/health');
+    return response.data;
+  },
+
+  // Get plugin config
+  getConfig: async (name: string): Promise<PluginConfig> => {
+    const response = await api.get<PluginConfig>(`/plugins/${encodeURIComponent(name)}/config`);
+    return response.data;
+  },
+
+  // Update plugin config
+  updateConfig: async (name: string, config: PluginConfig): Promise<PluginConfig> => {
+    const response = await api.patch<PluginConfig>(`/plugins/${encodeURIComponent(name)}/config`, config);
+    return response.data;
+  },
+
+  // Delete plugin config
+  deleteConfig: async (name: string): Promise<void> => {
+    await api.delete(`/plugins/${encodeURIComponent(name)}/config`);
+  },
+
+  // Get all sources from all loaded plugins
+  getAllSources: async (): Promise<SourcesResponse> => {
+    const response = await api.get<SourcesResponse>('/plugins/sources');
+    return response.data;
+  },
+
+  // Get sources from a specific plugin
+  getPluginSources: async (name: string): Promise<SourcesResponse> => {
+    const response = await api.get<SourcesResponse>(`/plugins/${encodeURIComponent(name)}/sources`);
+    return response.data;
+  },
+
+  // Archive a source
+  archiveSource: async (pluginName: string, sourceId: string): Promise<ArchiveResult> => {
+    const params = new URLSearchParams({
+      plugin_name: pluginName,
+      source_id: sourceId,
+    });
+    const response = await api.post<ArchiveResult>(`/archive?${params.toString()}`);
+    return response.data;
   },
 };

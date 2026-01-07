@@ -45,10 +45,6 @@ import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService, evmService } from "@/services/api";
 import type { SettingsTab } from "@/context/SettingsNavigationContext";
 
-interface SettingsTabWithGlitter extends SettingsTab {
-  glitter: "glitter";
-}
-
 import type { IpfsGatewayConfig } from "@/types/playback";
 import {
   DEFAULT_IPFS_GATEWAY,
@@ -65,6 +61,7 @@ interface AppConfig {
   max_batch_size: number;
   livekit_url: string;
   glitter_endpoint: string;
+  download_directory: string; /* Added global download directory */
   updated_at: string;
 }
 
@@ -72,8 +69,8 @@ type EditableAppConfig = Omit<AppConfig, "id" | "updated_at">;
 
 interface ConfigurationModalProps {
   open: boolean;
-  activeTab: SettingsTabWithGlitter;
-  onTabChange: (tab: SettingsTabWithGlitter) => void;
+  activeTab: SettingsTab;
+  onTabChange: (tab: SettingsTab) => void;
   onClose: () => void;
   onSave: (config: EditableAppConfig) => Promise<void>;
   onSaveFilecoin: (config: FilecoinConfig) => Promise<void>;
@@ -101,6 +98,7 @@ const defaultAppConfig: EditableAppConfig = {
   max_batch_size: 1,
   livekit_url: "wss://pump-prod-tg2x8veh.livekit.cloud",
   glitter_endpoint: "https://gw.magnode.ru/v1/sql/query",
+  download_directory: "downloads", /* Added default download directory */
 };
 
 const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
@@ -187,6 +185,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         max_batch_size: data.max_batch_size,
         livekit_url: data.livekit_url,
         glitter_endpoint: data.glitter_endpoint,
+        download_directory: data.download_directory, /* Added global download directory */
       });
     } catch (err) {
       setError(
@@ -478,7 +477,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         setRestoreProgress("Checking for encrypted CIDs to decrypt...");
         const videosNeedingDecryption = await restoreService.getVideosNeedingDecryption();
         if (videosNeedingDecryption.length > 0) {
-          const { ipcRenderer } = require('electron');
+          import { ipcRenderer } from 'electron';
           const config: FilecoinConfig | null = await ipcRenderer.invoke('get-filecoin-config');
           
           if (config?.privateKey) {
@@ -820,6 +819,25 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         }
         inputProps={{ min: 1, max: 10 }}
         helperText="Number of videos to process simultaneously (1-10)"
+      />
+
+      <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
+
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        Download Directory
+      </Typography>
+      <TextField
+        fullWidth
+        label="Global Download Directory"
+        value={config.download_directory}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setConfig((prev: EditableAppConfig) => ({
+            ...prev,
+            download_directory: e.target.value,
+          }))
+        }
+        placeholder="downloads"
+        helperText="The default directory for all plugin downloads"
       />
     </Box>
   );
@@ -1463,6 +1481,15 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     }
   };
 
+  // Explicitly define JSX.IntrinsicElements for missing types
+  declare global {
+    namespace JSX {
+      interface IntrinsicElements {
+        "webview": React.DetailedHTMLProps<React.WebViewHTMLAttributes<HTMLWebViewElement>, HTMLWebViewElement>;
+      }
+    }
+  }
+
   const renderGlitterContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
       <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
@@ -1568,7 +1595,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 
         <Tabs
           value={activeTab}
-          onChange={(event: SyntheticEvent, value: SettingsTabWithGlitter) => {
+          onChange={(event: SyntheticEvent, value: SettingsTab) => {
             event.preventDefault();
             onTabChange(value);
           }}

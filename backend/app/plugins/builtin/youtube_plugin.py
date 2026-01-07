@@ -24,6 +24,9 @@ from app.plugins.plugin_interface import (
     MediaType,
 )
 from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
+
+from app.models.config import AppConfig
+from app.models.database import get_db as get_db_session
 from app.models.youtube_plugin import YouTubeChannel, YouTubeVideo
 from app.models.video import Video # Import Video model
 from app.models.base import get_db
@@ -46,8 +49,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     
     def __init__(self):
         self.config = {}
-        self._initialized = False
-        self._download_dir = "downloads/youtube"
+        self.initialized = False
+        self.download_dir = "downloads/youtube" # Default, will be overwritten by global config
         self._max_concurrent_downloads = 3
         self._active_downloads = {}  # video_id -> task
     
@@ -68,8 +71,14 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         self.config = config
         
         # Set download directory
-        self._download_dir = config.get("download_dir", "downloads/youtube")
-        os.makedirs(self._download_dir, exist_ok=True)
+        db = next(get_db_session())
+        app_config = db.query(AppConfig).first()
+        if app_config and app_config.download_directory:
+            self.download_dir = app_config.download_directory
+        else:
+            self.download_dir = config.get("download_dir", "downloads/youtube")
+        db.close()
+        os.makedirs(self.download_dir, exist_ok=True)
         
         # Set max concurrent downloads
         self._max_concurrent_downloads = config.get("max_concurrent_downloads", 3)
@@ -96,7 +105,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             logger.error(f"Error checking yt-dlp: {e}")
             return False
         
-        self._initialized = True
+        self.initialized = True
         logger.info("YouTubePlugin initialized")
         return True
     
@@ -107,12 +116,12 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         This is the standard operation used by the job scheduler.
         It polls ALL enabled channels and returns new videos.
         """
-        if not self._initialized:
+        if not self.initialized:
             logger.error("YouTubePlugin not initialized")
             return []
         
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             
             # Get all enabled channels
             stmt = select(YouTubeChannel).where(YouTubeChannel.enabled == True)
@@ -205,7 +214,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 error=f"Unsupported media type: {source.media_type}"
             )
         
-        if not self._initialized:
+        if not self.initialized:
             return ArchiveResult(
                 success=False,
                 error="YouTubePlugin not initialized"
@@ -215,7 +224,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         logger.info(f"Archiving YouTube video: {video_id}")
         
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             
             stmt = select(YouTubeVideo).where(YouTubeVideo.video_id == video_id)
             result = db.execute(stmt)
@@ -323,7 +332,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             if result.returncode != 0:
                 return False
             
-            if not os.path.exists(self._download_dir):
+            if not os.path.exists(self.download_dir):
                 return False
             
             return True
@@ -366,7 +375,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 channel_name = await self._get_channel_name(collection_uri)
             
             # Create channel record
-            db = next(get_db())
+            db = next(get_db_session())
             
             # Check if already subscribed
             existing_stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == channel_id)
@@ -428,7 +437,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         }
         """
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             
             stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == collection_id)
             result = db.execute(stmt)
@@ -471,7 +480,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         }
         """
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             
             stmt = select(YouTubeChannel).order_by(YouTubeChannel.channel_name)
             result = db.execute(stmt)
@@ -514,7 +523,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         }
         """
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             
             stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == collection_id)
             result = db.execute(stmt)
@@ -570,7 +579,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         }
         """
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             
             stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == collection_id)
             result = db.execute(stmt)
@@ -652,7 +661,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     def get_config(self) -> Dict[str, Any]:
         """Get current plugin configuration."""
         return {
-            "download_dir": self._download_dir,
+            "download_dir": self.download_dir,
             "max_concurrent_downloads": self._max_concurrent_downloads,
             **self.config
         }
@@ -662,8 +671,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         self.config.update(config)
         
         if "download_dir" in config:
-            self._download_dir = config["download_dir"]
-            os.makedirs(self._download_dir, exist_ok=True)
+            self.download_dir = config["download_dir"]
+            os.makedirs(self.download_dir, exist_ok=True)
         
         if "max_concurrent_downloads" in config:
             self._max_concurrent_downloads = config["max_concurrent_downloads"]
@@ -729,7 +738,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     async def _download_video(self, source: MediaSource, channel: YouTubeChannel) -> Dict[str, Any]:
         """Download a YouTube video using yt-dlp."""
         try:
-            channel_dir = os.path.join(self._download_dir, channel.channel_name)
+            channel_dir = os.path.join(self.download_dir, channel.channel_name)
             os.makedirs(channel_dir, exist_ok=True)
             
             safe_title = "".join(c for c in source.metadata.get("title", "video") if c.isalnum() or c in (' ', '-', '_'))

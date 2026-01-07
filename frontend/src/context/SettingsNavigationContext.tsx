@@ -7,7 +7,8 @@ export type SettingsTab =
   | "processing"
   | "filecoin"
   | "encryption"
-  | "arkiv";
+  | "arkiv"
+  | "glitter";
 
 interface SettingsNavigationContextValue {
   isOpen: boolean;

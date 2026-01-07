@@ -21,6 +21,9 @@ from app.plugins.plugin_interface import (
     MediaType,
 )
 from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
+
+from app.models.config import AppConfig
+from app.models.database import get_db as get_db_session  # Renamed to avoid conflict with `app.models.base.get_db`
 from app.models.bittorrent_plugin import BitTorrentSubscription, BitTorrentTorrent
 from app.models.video import Video
 from app.models.base import get_db
@@ -37,8 +40,8 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
 
     def __init__(self):
         self.config = {}
-        self._initialized = False
-        self._download_dir = "downloads/bittorrent"
+        self.initialized = False
+        self.download_dir = "downloads/bittorrent"  # Default, will be overwritten by global config
 
     def get_metadata(self) -> PluginMetadata:
         """Return plugin metadata."""
@@ -53,25 +56,31 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     async def initialize(self, config: Dict[str, Any]) -> bool:
         """Initialize plugin with configuration."""
         self.config = config
-        self._download_dir = config.get("download_dir", "downloads/bittorrent")
-        os.makedirs(self._download_dir, exist_ok=True)
+        db = next(get_db_session())
+        app_config = db.query(AppConfig).first()
+        if app_config and app_config.download_directory:
+            self.download_dir = app_config.download_directory
+        else:
+            self.download_dir = config.get("download_directory", "downloads/bittorrent")
+        db.close()
+        os.makedirs(self.download_dir, exist_ok=True)
         try:
             import libtorrent as lt
             logger.info(f"libtorrent version: {lt.version}")
         except ImportError:
             logger.error("libtorrent not found. Please install it.")
             return False
-        self._initialized = True
+        self.initialized = True
         logger.info("BitTorrentPlugin initialized")
         return True
 
     async def discover_sources(self) -> List[MediaSource]:
         """Discover new torrents from all subscriptions."""
-        if not self._initialized:
+        if not self.initialized:
             logger.error("BitTorrentPlugin not initialized")
             return []
         
-        db = next(get_db())
+        db = next(get_db_session())
         try:
             stmt = select(BitTorrentSubscription)
             subscriptions = db.execute(stmt).scalars().all()
@@ -123,13 +132,13 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             return ArchiveResult(
                 success=False, error=f"Unsupported media type: {source.media_type}"
             )
-        if not self._initialized:
+        if not self.initialized:
             return ArchiveResult(success=False, error="BitTorrentPlugin not initialized")
 
         infohash = source.source_id
         logger.info(f"Archiving torrent: {infohash}")
 
-        db = next(get_db())
+        db = next(get_db_session())
         try:
             stmt = select(BitTorrentTorrent).where(BitTorrentTorrent.infohash == infohash)
             torrent_record = db.execute(stmt).scalar_one_or_none()
@@ -142,12 +151,12 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
 
             ses = lt.session({'listen_interfaces': '0.0.0.0:6881'})
             params = {
-                'save_path': self._download_dir,
+                'save_path': self.download_dir,
             }
             handle = lt.add_magnet_uri(ses, source.uri, params)
             ses.start_dht()
 
-            logger.info(f"Downloading torrent {torrent_record.name} to {self._download_dir}")
+            logger.info(f"Downloading torrent {torrent_record.name} to {self.download_dir}")
 
             # Wait for metadata to be available
             logger.info("Waiting for torrent metadata...")
@@ -203,7 +212,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             logger.info("Download complete. Stopping torrent to prevent seeding...")
             
             # Get the output path for the downloaded file
-            output_path = os.path.join(self._download_dir, torrent_info.name(), files.file_path(largest_video_index))
+            output_path = os.path.join(self.download_dir, torrent_info.name(), files.file_path(largest_video_index))
             
             # Remove the torrent handle to stop seeding immediately
             ses.remove_torrent(handle)
@@ -244,7 +253,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             import libtorrent
         except ImportError:
             return False
-        return os.path.exists(self._download_dir)
+        return os.path.exists(self.download_dir)
 
     async def subscribe(
         self,
@@ -253,7 +262,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     ) -> Dict[str, Any]:
         """Subscribe to a search term."""
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             search_term = collection_uri
             existing_stmt = select(BitTorrentSubscription).where(BitTorrentSubscription.search_term == search_term)
             existing_result = db.execute(existing_stmt)
@@ -289,7 +298,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     async def unsubscribe(self, collection_id: str) -> Dict[str, Any]:
         """Unsubscribe from a search term."""
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             stmt = select(BitTorrentSubscription).where(BitTorrentSubscription.id == int(collection_id))
             result = db.execute(stmt)
             subscription = result.scalar_one_or_none()
@@ -315,7 +324,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     async def list_subscriptions(self) -> List[Dict[str, Any]]:
         """List all subscriptions."""
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             stmt = select(BitTorrentSubscription).order_by(BitTorrentSubscription.search_term)
             result = db.execute(stmt)
             subscriptions = result.scalars().all()
@@ -336,7 +345,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     async def get_subscription(self, collection_id: str) -> Dict[str, Any]:
         """Get subscription details."""
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             stmt = select(BitTorrentSubscription).where(BitTorrentSubscription.id == int(collection_id))
             result = db.execute(stmt)
             subscription = result.scalar_one_or_none()

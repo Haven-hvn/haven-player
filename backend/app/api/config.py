@@ -80,6 +80,7 @@ class ConfigUpdate(BaseModel):
     max_batch_size: int
     livekit_url: str
     glitter_endpoint: str
+    download_directory: str
 
     @field_validator('analysis_tags')
     @classmethod
@@ -139,6 +140,7 @@ class ConfigResponse(BaseModel):
     max_batch_size: int
     livekit_url: str
     glitter_endpoint: str
+    download_directory: str
     updated_at: datetime
 
 class AvailableModelsResponse(BaseModel):
@@ -172,6 +174,7 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     config.max_batch_size = config_update.max_batch_size
     config.livekit_url = config_update.livekit_url
     config.glitter_endpoint = config_update.glitter_endpoint
+    config.download_directory = config_update.download_directory
     config.updated_at = datetime.now(timezone.utc)
     
     db.commit()

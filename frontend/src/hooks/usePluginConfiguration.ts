@@ -12,16 +12,16 @@ const defaultWebRTCConfig: WebRTCPluginConfig = {
 
 export function usePluginConfiguration(pluginName: string) {
   const [configSchema, setConfigSchema] = useState<PluginConfigSchema | null>(null);
-  const [config, setConfig] = useState<Record<string, any>>({});
+  const [config, setConfig] = useState<PluginConfig | Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const getConfigWithDefaults = (currentConfig: Record<string, any>) => {
+  const getConfigWithDefaults = (currentConfig: Record<string, any>): PluginConfig => {
     if (pluginName.toLowerCase().includes('webrtc')) {
-      return { ...defaultWebRTCConfig, ...currentConfig };
+      return { ...defaultWebRTCConfig, ...currentConfig } as WebRTCPluginConfig;
     }
-    return currentConfig;
+    return currentConfig as PluginConfig;
   };
 
   // Load plugin configuration schema
@@ -50,7 +50,7 @@ export function usePluginConfiguration(pluginName: string) {
   }, [pluginName]);
 
   // Helper function to build config schema from current config
-  const buildConfigSchema = (currentConfig: Record<string, any> | null) => {
+  const buildConfigSchema = (currentConfig: PluginConfig | Record<string, any> | null) => {
     const schema: any[] = [];
     
     if (!currentConfig) {
@@ -98,7 +98,7 @@ export function usePluginConfiguration(pluginName: string) {
 
   // Update configuration value
   const updateConfigValue = useCallback((field_name: string, value: any) => {
-    setConfig((prev: Record<string, any>) => ({ ...prev, [field_name]: value }));
+    setConfig((prev: PluginConfig | Record<string, any>) => ({ ...prev, [field_name]: value }));
   }, []);
 
   const handleConfigChange = useCallback((newConfig: YouTubePluginConfig | BitTorrentPluginConfig | Record<string, any>) => {

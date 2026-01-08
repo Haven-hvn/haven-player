@@ -53,7 +53,7 @@ interface VideoAnalysisItemProps {
   video: Video;
   index: number;
   timestamps: Timestamp[];
-  analysisStatus: "pending" | "analyzing" | "completed" | "error";
+  analysisStatus: "pending" | "analyzing" | "completed" | "error" | "downloading";
   jobProgress?: number;
   uploadStatus?: {
     status: "pending" | "uploading" | "completed" | "error";
@@ -930,7 +930,7 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   const VideoListItem: React.FC<{
     video: Video;
     timestamps: Timestamp[];
-    analysisStatus: "pending" | "analyzing" | "completed" | "error";
+    analysisStatus: "pending" | "analyzing" | "completed" | "error" | "downloading";
     jobProgress: number;
     uploadStatus?: {
       status: "pending" | "uploading" | "completed" | "error";

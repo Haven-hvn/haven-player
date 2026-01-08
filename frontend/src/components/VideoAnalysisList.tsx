@@ -873,7 +873,7 @@ interface VideoAnalysisListProps {
   videoTimestamps: Record<string, Timestamp[]>;
   analysisStatuses: Record<
     string,
-    "pending" | "analyzing" | "completed" | "error"
+    "pending" | "analyzing" | "completed" | "error" | "downloading"
   >;
   jobProgresses?: Record<string, number>;
   viewMode?: "grid" | "list";

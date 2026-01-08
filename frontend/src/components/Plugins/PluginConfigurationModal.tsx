@@ -215,7 +215,7 @@ export function PluginConfigurationModal({
             {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin') && (
               <Grid container spacing={2}>
                 {configSchema.config_schema.map((field) => (
-                  <Grid item component="div" xs={12} sm={6} key={field.name}>
+                  <Grid item xs={12} sm={6} key={field.name}>
                     {renderConfigField(field)}
                   </Grid>
                 ))}

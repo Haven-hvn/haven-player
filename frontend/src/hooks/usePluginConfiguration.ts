@@ -53,6 +53,10 @@ export function usePluginConfiguration(pluginName: string) {
   const buildConfigSchema = (currentConfig: Record<string, any> | null) => {
     const schema: any[] = [];
     
+    if (!currentConfig) {
+      return schema;
+    }
+    
     for (const [key, value] of Object.entries(currentConfig)) {
       // Infer field type based on value
       let type = 'text';

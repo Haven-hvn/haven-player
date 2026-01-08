@@ -69,7 +69,7 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
         ) : (
           <Grid container spacing={2}>
             {config.subscriptions.map((subscription, index) => (
-              <Grid item component="div" xs={12} md={6} key={index}>
+              <Grid item xs={12} md={6} key={index}>
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 1 }}>
@@ -140,7 +140,7 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
       <Box>
         <Typography variant="h6" gutterBottom>Global Settings</Typography>
         <Grid container spacing={2}>
-          <Grid item component="div" xs={12} sm={6}>
+          <Grid item xs={12} sm={6}>
             <TextField
               fullWidth
               size="small"
@@ -151,7 +151,7 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
               placeholder="downloads/bittorrent"
             />
           </Grid>
-          <Grid item component="div" xs={12} sm={6}>
+          <Grid item xs={12} sm={6}>
             <TextField
               fullWidth
               size="small"

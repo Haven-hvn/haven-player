@@ -96,6 +96,8 @@ export interface DePinDashboardState {
   points: number;
   level: number;
   streak: number;
+  daily_streak: number;
+  last_tick: string | null;
   
   // Active operations
   active_operations: DePinActiveOperation[];

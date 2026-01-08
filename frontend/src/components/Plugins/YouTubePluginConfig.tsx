@@ -5,8 +5,7 @@ import {
   IconButton, Button, Grid, Divider, Chip, Alert
 } from '@mui/material';
 import { Add, Delete, YouTube as YouTubeIcon } from '@mui/icons-material';
-import { YouTubePluginConfig } from '@/types/plugin';
-
+import type { YouTubePluginConfig } from '@/types/plugin';
 interface YouTubePluginConfigProps {
   config: YouTubePluginConfig;
   onChange: (config: YouTubePluginConfig) => void;
@@ -73,7 +72,7 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
         ) : (
           <Grid container spacing={2}>
             {config.channels.map((channel, index) => (
-              <Grid item xs={12} md={6} key={index}>
+              <Grid item xs={12} md={6} key={index} component="div">
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 1 }}>
@@ -120,7 +119,7 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
                     />
 
                     <Grid container spacing={1}>
-                      <Grid item xs={6}>
+                      <Grid item xs={6} component="div">
                         <FormControl fullWidth size="small">
                           <InputLabel>Video Format</InputLabel>
                           <Select
@@ -134,7 +133,7 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
                           </Select>
                         </FormControl>
                       </Grid>
-                      <Grid item xs={6}>
+                      <Grid item xs={6} component="div">
                         <FormControl fullWidth size="small">
                           <InputLabel>Quality</InputLabel>
                           <Select
@@ -196,7 +195,7 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
       <Box>
         <Typography variant="h6" gutterBottom>Global Settings</Typography>
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={4} component="div">
             <TextField
               fullWidth
               size="small"
@@ -207,7 +206,7 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
               helperText="How often to check for new videos"
             />
           </Grid>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={4} component="div">
             <TextField
               fullWidth
               size="small"

@@ -13,6 +13,8 @@ export function useDePinDashboard() {
     points: 0,
     level: 1,
     streak: 0,
+    daily_streak: 0,
+    last_tick: null,
     active_operations: [],
     enabled_plugins: [],
     total_archived: 0,
@@ -23,8 +25,8 @@ export function useDePinDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  const tickIntervalRef = useRef<ReturnType<typeof setInterval>>();
-  const statusIntervalRef = useRef<ReturnType<typeof setInterval>>();
+  const tickIntervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const statusIntervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const isTickInProgressRef = useRef(false);
 
   // Load plugins and their status
@@ -38,7 +40,12 @@ export function useDePinDashboard() {
       );
       
       // Get active status for each plugin
-      const enabledPlugins = await Promise.all(
+      const enabledPlugins: Array<{
+        name: string;
+        display_name: string;
+        status: 'idle' | 'active' | 'paused' | 'error';
+        active_operations_count: number;
+      }> = await Promise.all(
         archivalPlugins.map(async (plugin: PluginMetadata) => {
           try {
             // Get sources from this plugin
@@ -50,7 +57,7 @@ export function useDePinDashboard() {
             return {
               name: plugin.name,
               display_name: plugin.description || plugin.name,
-              status: activeSources.length > 0 ? 'active' : 'idle',
+              status: (activeSources.length > 0 ? 'active' : 'idle') as 'idle' | 'active' | 'paused' | 'error',
               active_operations_count: activeSources.length,
             };
           } catch (err) {
@@ -100,7 +107,7 @@ export function useDePinDashboard() {
                 source_id: source.source_id,
                 source_name: source.metadata?.name || source.source_id,
                 source_uri: source.uri,
-                status: (status as 'running' | 'paused' | 'completed' | 'failed' | 'pending') || 'running',
+                status: (status as 'pending' | 'running' | 'paused' | 'completed' | 'failed') || 'running',
                 progress: source.metadata?.progress || 0,
                 start_time: new Date(source.metadata?.start_time || Date.now()),
                 estimated_completion: source.metadata?.estimated_completion 

@@ -53,6 +53,15 @@ import {
 import { gatewayService } from "@/services/api";
 import { ipcRenderer } from "electron";
 
+// Explicitly define JSX.IntrinsicElements for missing types
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      "webview": React.DetailedHTMLProps<React.WebViewHTMLAttributes<HTMLWebViewElement>, HTMLWebViewElement>;
+    }
+  }
+}
+
 interface AppConfig {
   id: number;
   analysis_tags: string;
@@ -477,7 +486,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         setRestoreProgress("Checking for encrypted CIDs to decrypt...");
         const videosNeedingDecryption = await restoreService.getVideosNeedingDecryption();
         if (videosNeedingDecryption.length > 0) {
-          import { ipcRenderer } from 'electron';
           const config: FilecoinConfig | null = await ipcRenderer.invoke('get-filecoin-config');
           
           if (config?.privateKey) {
@@ -1480,15 +1488,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         return null;
     }
   };
-
-  // Explicitly define JSX.IntrinsicElements for missing types
-  declare global {
-    namespace JSX {
-      interface IntrinsicElements {
-        "webview": React.DetailedHTMLProps<React.WebViewHTMLAttributes<HTMLWebViewElement>, HTMLWebViewElement>;
-      }
-    }
-  }
 
   const renderGlitterContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>

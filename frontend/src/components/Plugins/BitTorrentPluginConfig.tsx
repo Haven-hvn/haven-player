@@ -5,7 +5,7 @@ import {
   IconButton, Button, Grid, Divider, Chip, Alert
 } from '@mui/material';
 import { Add, Delete, CloudDownload as TorrentIcon } from '@mui/icons-material';
-import { BitTorrentPluginConfig } from '@/types/plugin';
+import type { BitTorrentPluginConfig } from '@/types/plugin';
 
 interface BitTorrentPluginConfigProps {
   config: BitTorrentPluginConfig;
@@ -69,7 +69,7 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
         ) : (
           <Grid container spacing={2}>
             {config.subscriptions.map((subscription, index) => (
-              <Grid item xs={12} md={6} key={index}>
+              <Grid item component="div" xs={12} md={6} key={index}>
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 1 }}>
@@ -140,7 +140,7 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
       <Box>
         <Typography variant="h6" gutterBottom>Global Settings</Typography>
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={6}>
+          <Grid item component="div" xs={12} sm={6}>
             <TextField
               fullWidth
               size="small"
@@ -151,7 +151,7 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
               placeholder="downloads/bittorrent"
             />
           </Grid>
-          <Grid item xs={12} sm={6}>
+          <Grid item component="div" xs={12} sm={6}>
             <TextField
               fullWidth
               size="small"

@@ -1,6 +1,14 @@
-import { useState, useCallback } from 'react';
-import { PluginConfigSchema } from '@/types/plugin';
+import { useState, useCallback, useEffect } from 'react';
+import { PluginConfigSchema, WebRTCPluginConfig, PluginConfig, YouTubePluginConfig, BitTorrentPluginConfig } from '@/types/plugin';
 import { pluginService } from '@/services/api';
+
+const defaultWebRTCConfig: WebRTCPluginConfig = {
+  video_format: 'webm',
+  video_quality: 'best',
+  audio_bitrate: 128,
+  record_transcode: false,
+  max_recording_duration_minutes: 120,
+};
 
 export function usePluginConfiguration(pluginName: string) {
   const [configSchema, setConfigSchema] = useState<PluginConfigSchema | null>(null);
@@ -9,41 +17,40 @@ export function usePluginConfiguration(pluginName: string) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const getConfigWithDefaults = (currentConfig: Record<string, any>) => {
+    if (pluginName.toLowerCase().includes('webrtc')) {
+      return { ...defaultWebRTCConfig, ...currentConfig };
+    }
+    return currentConfig;
+  };
+
   // Load plugin configuration schema
   const loadConfigSchema = useCallback(async () => {
     setLoading(true);
     setError(null);
-    
     try {
-      // Get current config
       const currentConfigResult = await pluginService.getConfig(pluginName);
+      const configWithDefaults = getConfigWithDefaults(currentConfigResult || {});
+      setConfig(configWithDefaults);
 
-      if (currentConfigResult) {
-        setConfig(currentConfigResult);
-      }
-
-      // Build config schema from the config
-      // This is a simplified approach - in a real implementation, the backend
-      // would provide a schema definition
       setConfigSchema({
         plugin_name: pluginName,
         display_name: pluginName,
         description: `Configuration for ${pluginName}`,
         version: '1.0.0',
-        config_schema: buildConfigSchema(currentConfigResult),
-        current_config: currentConfigResult,
+        config_schema: buildConfigSchema(configWithDefaults),
+        current_config: configWithDefaults,
       });
-
-      setLoading(false);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load config';
       setError(errorMessage);
+    } finally {
       setLoading(false);
     }
-  }, [pluginName, config]);
+  }, [pluginName]);
 
   // Helper function to build config schema from current config
-  const buildConfigSchema = (currentConfig: Record<string, any>) => {
+  const buildConfigSchema = (currentConfig: Record<string, any> | null) => {
     const schema: any[] = [];
     
     for (const [key, value] of Object.entries(currentConfig)) {
@@ -90,13 +97,17 @@ export function usePluginConfiguration(pluginName: string) {
     setConfig((prev: Record<string, any>) => ({ ...prev, [field_name]: value }));
   }, []);
 
+  const handleConfigChange = useCallback((newConfig: YouTubePluginConfig | BitTorrentPluginConfig | Record<string, any>) => {
+    setConfig(newConfig);
+  }, []);
+
   // Save configuration
   const saveConfig = useCallback(async () => {
     setSaving(true);
     setError(null);
     
     try {
-      await pluginService.updateConfig(pluginName, config);
+      await pluginService.updateConfig(pluginName, config as PluginConfig);
       setSaving(false);
       return { success: true };
     } catch (err) {
@@ -110,28 +121,24 @@ export function usePluginConfiguration(pluginName: string) {
   // Reset to defaults
   const resetToDefaults = useCallback(async () => {
     setLoading(true);
-    
     try {
-      // Reload current config
-      const currentConfigResult = await pluginService.getConfig(pluginName);
-      
-      if (currentConfigResult) {
-        setConfig(currentConfigResult);
-        
-        setConfigSchema({
-          plugin_name: pluginName,
-          display_name: pluginName,
-          description: `Configuration for ${pluginName}`,
-          version: '1.0.0',
-          config_schema: buildConfigSchema(currentConfigResult),
-          current_config: currentConfigResult,
-        });
-      }
+      // In a real scenario, this might delete the config file on the backend
+      // and then reload the default. For this hook, we'll just reset to the
+      // initial default state.
+      const defaultConfig = getConfigWithDefaults({});
+      setConfig(defaultConfig);
+      await pluginService.updateConfig(pluginName, defaultConfig);
 
-      setLoading(false);
+      setConfigSchema((prevSchema: PluginConfigSchema | null) => prevSchema ? {
+        ...prevSchema,
+        current_config: defaultConfig,
+        config_schema: buildConfigSchema(defaultConfig),
+      } : null);
+      
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to reset config';
       setError(errorMessage);
+    } finally {
       setLoading(false);
     }
   }, [pluginName]);
@@ -146,5 +153,6 @@ export function usePluginConfiguration(pluginName: string) {
     updateConfigValue,
     saveConfig,
     resetToDefaults,
+    handleConfigChange,
   };
 }

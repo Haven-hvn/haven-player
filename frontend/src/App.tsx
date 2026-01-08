@@ -712,7 +712,7 @@ const MainApp: React.FC = () => {
   useEffect(() => {
     const newStatuses: Record<
       string,
-      "pending" | "analyzing" | "completed" | "error"
+      "pending" | "analyzing" | "completed" | "error" | "downloading"
     > = {};
     visibleVideos.forEach((video) => {
       if (!(video.path in analysisStatuses)) {

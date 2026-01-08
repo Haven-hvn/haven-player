@@ -397,7 +397,7 @@ const PluginManagementPage: React.FC = () => {
       ) : (
         <Grid container spacing={2}>
           {filteredPlugins.map((plugin) => (
-            <Grid item xs={12} sm={6} md={4} key={plugin.name}>
+            <Grid item component="div" xs={12} sm={6} md={4} key={plugin.name}>
               <PluginCard
                 plugin={plugin}
                 health={getHealthForPlugin(plugin.name)}
@@ -449,7 +449,7 @@ const PluginManagementPage: React.FC = () => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDiscoverDialogOpen(false)} onClose={() => setDiscoverDialogOpen(false)}>
+          <Button onClick={() => setDiscoverDialogOpen(false)}>
             Close
           </Button>
           {discoverResult && (

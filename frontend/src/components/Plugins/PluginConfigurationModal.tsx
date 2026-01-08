@@ -37,6 +37,7 @@ export function PluginConfigurationModal({
     updateConfigValue,
     saveConfig,
     resetToDefaults,
+    handleConfigChange,
   } = usePluginConfiguration(pluginName);
 
   useEffect(() => {
@@ -200,13 +201,13 @@ export function PluginConfigurationModal({
             {pluginName === 'YouTubePlugin' && (
               <YouTubeConfig
                 config={config as YouTubePluginConfig}
-                onChange={updateConfigValue}
+                onChange={handleConfigChange}
               />
             )}
             {pluginName === 'BitTorrentPlugin' && (
               <BitTorrentConfig
                 config={config as BitTorrentPluginConfig}
-                onChange={updateConfigValue}
+                onChange={handleConfigChange}
               />
             )}
 
@@ -214,7 +215,7 @@ export function PluginConfigurationModal({
             {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin') && (
               <Grid container spacing={2}>
                 {configSchema.config_schema.map((field) => (
-                  <Grid item xs={12} sm={6} key={field.name}>
+                  <Grid item component="div" xs={12} sm={6} key={field.name}>
                     {renderConfigField(field)}
                   </Grid>
                 ))}

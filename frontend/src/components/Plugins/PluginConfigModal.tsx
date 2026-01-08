@@ -141,7 +141,7 @@ const PluginConfigModal: React.FC<{
 
     setSaving(true);
     try {
-      const result = await updateConfig(formConfig);
+      const result = await updateConfig(formConfig as PluginConfig);
       if (result.success) {
         setNotification({ open: true, message: 'Configuration saved successfully', severity: 'success' });
       } else {

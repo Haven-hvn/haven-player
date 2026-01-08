@@ -453,7 +453,7 @@ const PluginSourcesView: React.FC = () => {
       ) : (
         <Grid container spacing={2}>
           {filteredSources.map((source) => (
-            <Grid item xs={12} sm={6} md={4} lg={3} key={`${source.plugin}-${source.source_id}`}>
+            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={`${source.plugin}-${source.source_id}`}>
               <SourceCard
                 source={source}
                 pluginName={plugin.name}

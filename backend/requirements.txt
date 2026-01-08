@@ -18,6 +18,6 @@ python-multipart==0.0.21
 arkiv-sdk==1.0.0b1
 yt-dlp==2025.12.8
 apscheduler==3.11.2
-libtorrent==2.0.11
+# libtorrent==2.0.11 no support for python 3.14
 requests==2.32.3
 rich==13.7.1

@@ -473,7 +473,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
       ) : (
         <Grid container spacing={2}>
           {state.active_operations.map((operation) => (
-            <Grid item xs={12} md={6} lg={4} key={operation.operation_id}>
+            <Grid size={{ xs: 12, md: 6, lg: 4 }} key={operation.operation_id}>
               <OperationCard
                 operation={operation}
                 onStop={() => stopOperation(operation.operation_id)}
@@ -489,7 +489,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
 
       <Grid container spacing={2}>
         {state.enabled_plugins.map((plugin) => (
-          <Grid item xs={12} sm={6} md={4} key={plugin.name}>
+          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={plugin.name}>
             <Card>
               <CardContent>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
@@ -526,7 +526,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
 
       {/* Key Metrics */}
       <Grid container spacing={2}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <MetricCard
             title="Total Archived"
             value={state.total_archived}
@@ -534,7 +534,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
             color="primary"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <MetricCard
             title="Uploaded to Filecoin"
             value={state.total_uploaded}
@@ -542,7 +542,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
             color="secondary"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <MetricCard
             title="Pending Uploads"
             value={state.pending_uploads}
@@ -550,7 +550,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
             color="warning"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <MetricCard
             title="Active Operations"
             value={state.active_operations.length}

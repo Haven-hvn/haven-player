@@ -397,7 +397,7 @@ const PluginManagementPage: React.FC = () => {
       ) : (
         <Grid container spacing={2}>
           {filteredPlugins.map((plugin) => (
-            <Grid item xs={12} sm={6} md={4} key={plugin.name}>
+            <Grid size={{ xs: 12, sm: 6, md: 4 }} key={plugin.name}>
               <PluginCard
                 plugin={plugin}
                 health={getHealthForPlugin(plugin.name)}

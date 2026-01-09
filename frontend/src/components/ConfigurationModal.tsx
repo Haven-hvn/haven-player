@@ -1457,9 +1457,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     }
   };
 
-  const renderEncryptionContent = (): JSX.Element => (
-    <Dialog
-      open={open}
+  return (
       onClose={onClose}
       maxWidth="md"
       fullWidth

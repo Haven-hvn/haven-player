@@ -244,28 +244,40 @@ class PluginManager:
     async def load_plugin(self, plugin_name: str, config: Optional[Dict] = None) -> bool:
         """
         Load and initialize a specific plugin.
-        
+
         If the plugin is in the worker_plugins set, it will be loaded in a
         separate worker process (data plane). Otherwise, it runs in the
         same process (control plane).
-        
+
         Args:
-            plugin_name: Name of the plugin class to load
+            plugin_name: Name of the plugin (can be class name or metadata.name)
             config: Configuration dictionary for the plugin
-            
+
         Returns:
             True if plugin loaded successfully, False otherwise
         """
         if plugin_name in self.plugins:
             logger.warning(f"Plugin {plugin_name} already loaded")
             return True
-        
+
+        # First try direct class name lookup
         if plugin_name not in self.plugin_classes:
-            logger.error(f"Plugin {plugin_name} not found in discovered plugins")
-            # List available plugins for debugging
-            if self.plugin_classes:
-                logger.error(f"Available plugins: {list(self.plugin_classes.keys())}")
-            return False
+            # Try to find plugin by metadata name
+            found = False
+            for cls_name, cls in self.plugin_classes.items():
+                temp_plugin = cls()
+                metadata = temp_plugin.get_metadata()
+                if metadata.name == plugin_name:
+                    plugin_name = cls_name  # Use class name for actual loading
+                    found = True
+                    logger.info(f"Found plugin class '{cls_name}' for metadata name '{plugin_name}'")
+                    break
+
+            if not found:
+                logger.error(f"Plugin {plugin_name} not found in discovered plugins")
+                if self.plugin_classes:
+                    logger.error(f"Available plugins: {list(self.plugin_classes.keys())}")
+                return False
         
         config = config or {}
         

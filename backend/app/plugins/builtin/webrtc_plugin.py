@@ -39,7 +39,7 @@ class WebRTCPlugin(ArchiverPlugin):
     def get_metadata(self) -> PluginMetadata:
         """Return plugin metadata."""
         return PluginMetadata(
-            name="webrtc-archiver",
+            name="WebRTCPlugin",
             version="1.0.0",
             description="Archives WebRTC streams from pump.fun via LiveKit",
             media_types=[MediaType.WEBRTC],

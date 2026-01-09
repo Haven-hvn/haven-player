@@ -100,6 +100,26 @@ class WorkerProgress:
         }
 
 
+def _get_plugin_module_name(plugin_name: str) -> str:
+    """
+    Convert plugin class name to module file name.
+    
+    Examples:
+        "YouTubePlugin" -> "app.plugins.builtin.youtube_plugin"
+        "WebRTCPlugin" -> "app.plugins.builtin.webrtc_plugin"
+        "BitTorrentPlugin" -> "app.plugins.builtin.bittorrent_plugin"
+    
+    Args:
+        plugin_name: The plugin class name (e.g., "YouTubePlugin")
+        
+    Returns:
+        The full module import path (e.g., "app.plugins.builtin.youtube_plugin")
+    """
+    # Remove "Plugin" suffix and convert to lowercase
+    base_name = plugin_name.replace("Plugin", "").lower()
+    return f"app.plugins.builtin.{base_name}_plugin"
+
+
 def setup_worker_logging(plugin_name: str):
     """Configure logging for worker process."""
     log_format = f'[{plugin_name} Worker] %(asctime)s - %(levelname)s - %(message)s'
@@ -295,9 +315,9 @@ def worker_main(
     try:
         # Import plugin module
         import importlib
-        plugin_module_name = f"app.plugins.builtin.{plugin_name.lower()}_plugin"
+        plugin_module_name = _get_plugin_module_name(plugin_name)
         plugin_module = importlib.import_module(plugin_module_name)
-        plugin_class = getattr(plugin_module, f"{plugin_name}Plugin")
+        plugin_class = getattr(plugin_module, plugin_name)
         
         # Initialize plugin
         plugin = plugin_class()

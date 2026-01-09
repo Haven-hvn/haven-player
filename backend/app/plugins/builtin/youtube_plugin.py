@@ -33,6 +33,7 @@ from app.models.database import get_db as get_db_session
 from app.models.plugin import Plugin as PluginModel
 from app.models.video import Video, Timestamp
 from app.models.analysis_job import AnalysisJob
+from app.lib.phash_generator.phash_calculator import get_video_duration
 
 
 logger = logging.getLogger(__name__)
@@ -305,10 +306,17 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 file_size = download_result.get("file_size_bytes")
                 file_extension = os.path.splitext(file_path)[1].lstrip('.') if file_path else None
 
+                # Calculate actual duration from the file if not available from metadata
+                video_duration = source.estimated_duration_seconds
+                if not video_duration or video_duration == 0:
+                    logger.info(f"Duration not in metadata, calculating from file: {file_path}")
+                    video_duration = get_video_duration(file_path)
+                    logger.info(f"Calculated duration: {video_duration} seconds")
+
                 new_video_entry = Video(
                     path=file_path,
                     title=source.metadata.get("title"),
-                    duration=source.estimated_duration_seconds or 0,  # Default to 0 if not available
+                    duration=video_duration or 0,
                     thumbnail_path=source.metadata.get("thumbnail"),
                     file_size=file_size,
                     file_extension=file_extension,
@@ -338,7 +346,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                     success=True,
                     output_path=download_result["output_path"],
                     file_size_bytes=download_result.get("file_size_bytes"),
-                    duration_seconds=source.estimated_duration_seconds,
+                    duration_seconds=video_duration or 0,  # Use calculated duration
                     metadata={
                         "video_id": video_id,
                         "title": source.metadata.get("title"),

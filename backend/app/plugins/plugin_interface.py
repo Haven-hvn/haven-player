@@ -125,12 +125,14 @@ class PluginMetadata:
         description: str,
         media_types: List[MediaType],
         author: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
     ):
         self.name = name
         self.version = version
         self.description = description
         self.media_types = media_types
         self.author = author
+        self.capabilities = capabilities or []
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
@@ -140,6 +142,7 @@ class PluginMetadata:
             "description": self.description,
             "media_types": [t.value for t in self.media_types],
             "author": self.author,
+            "capabilities": self.capabilities,
         }
 
 

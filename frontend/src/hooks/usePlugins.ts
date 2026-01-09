@@ -47,9 +47,8 @@ export function usePlugins() {
     setError(null);
     try {
       const plugin = await pluginService.load(name);
-      setPlugins((prev: PluginMetadata[]) => 
-        prev.map((p: PluginMetadata) => p.name === name ? plugin : p)
-      );
+      // Refresh all plugins to get updated state after successful load
+      await refreshPlugins();
       return { success: true, plugin };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load plugin';
@@ -59,16 +58,15 @@ export function usePlugins() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshPlugins]);
 
   const unloadPlugin = useCallback(async (name: string) => {
     setLoading(true);
     setError(null);
     try {
       const plugin = await pluginService.unload(name);
-      setPlugins((prev: PluginMetadata[]) => 
-        prev.map((p: PluginMetadata) => p.name === name ? plugin : p)
-      );
+      // Refresh all plugins to get updated state after successful unload
+      await refreshPlugins();
       return { success: true, plugin };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to unload plugin';
@@ -78,16 +76,15 @@ export function usePlugins() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshPlugins]);
 
   const restartPlugin = useCallback(async (name: string) => {
     setLoading(true);
     setError(null);
     try {
       const plugin = await pluginService.restart(name);
-      setPlugins((prev: PluginMetadata[]) => 
-        prev.map((p: PluginMetadata) => p.name === name ? plugin : p)
-      );
+      // Refresh all plugins to get updated state after successful restart
+      await refreshPlugins();
       return { success: true, plugin };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to restart plugin';
@@ -97,7 +94,7 @@ export function usePlugins() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshPlugins]);
 
   // Load plugins on mount
   useEffect(() => {

@@ -190,6 +190,6 @@ export interface BitTorrentPluginConfig {
     enabled: boolean;
     auto_archive: boolean;
   }>;
-  download_dir: string;
   max_concurrent_downloads: number;
+  glitter_endpoint: string;
 }

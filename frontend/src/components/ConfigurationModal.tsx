@@ -34,7 +34,6 @@ import {
   CloudUpload as CloudUploadIcon,
   Lock as LockIcon,
   AccountTree as ArkivIcon,
-  Hub as GlitterIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
@@ -1458,6 +1457,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   };
 
   return (
+    <Dialog
+      open={true}
       onClose={onClose}
       maxWidth="md"
       fullWidth
@@ -1547,7 +1548,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           scrollButtons="auto"
         >
           <Tab label="AI / LLM" value="ai" icon={<AIIcon fontSize="small" />} iconPosition="start" />
-          <Tab label="Glitter" value="glitter" icon={<GlitterIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Processing" value="processing" icon={<BatchIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Playback" value="playback" icon={<PlaybackIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Filecoin" value="filecoin" icon={<CloudUploadIcon fontSize="small" />} iconPosition="start" />

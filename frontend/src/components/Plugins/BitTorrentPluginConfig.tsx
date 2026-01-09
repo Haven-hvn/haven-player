@@ -140,6 +140,17 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
       <Box>
         <Typography variant="h6" gutterBottom>Global Settings</Typography>
         <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Glitter Endpoint URL"
+              value={config.glitter_endpoint}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ ...config, glitter_endpoint: e.target.value })}
+              helperText="URL for the Glitter protocol index endpoint"
+              placeholder="https://gw.magnode.ru/v1/sql/query"
+            />
+          </Grid>
           <Grid size={{ xs: 12, sm: 6 }}>
             <TextField
               fullWidth

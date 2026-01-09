@@ -32,7 +32,6 @@ from app.services.webrtc_recording_service import WebRTCRecordingService
 from app.services.job_scheduler import JobScheduler
 from app.plugins.plugin_manager import PluginManager
 
-# Lifespan context manager for startup/shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -42,9 +41,9 @@ async def lifespan(app: FastAPI):
     init_db()
     print("✅ Database initialized")
     
-    # Create default configuration if none exists
     db = SessionLocal()
     try:
+        # Create default configuration if none exists
         config = db.query(AppConfig).first()
         if not config:
             print("Creating default AppConfig...")
@@ -57,6 +56,7 @@ async def lifespan(app: FastAPI):
             print(f"✅ AppConfig already exists with ID: {config.id}")
     except Exception as e:
         print(f"❌ Error initializing config: {e}")
+        db.rollback()
     finally:
         db.close()
     

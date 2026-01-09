@@ -269,16 +269,17 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
           "plugin_name": "WebRTCPlugin",
           "operation": "subscribe",
           "params": {
-            "collection_uri": "wss://pump-prod-tg2x8veh.livekit.cloud",
+            "collection_uri": "mint_id_or_stream_identifier",
             "config": {
               "stream_name": "My Stream",
               "stream_id": "my-stream-id",
-              "auto_record": true,
-              "livekit_api_key": "",
-              "livekit_api_secret": ""
+              "auto_record": true
             }
           }
         }
+        
+        Note: LiveKit URL is obtained from plugin-level configuration (not per-stream).
+        Use the plugin's update_config operation to set the shared LiveKit server URL.
         """
         try:
             db = next(get_db_session())
@@ -287,10 +288,10 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
             config = config or {}
             stream_id = config.get("stream_id", collection_uri)  # Default to collection_uri if no stream_id
             stream_name = config.get("stream_name", stream_id)
-            livekit_url = collection_uri  # collection_uri is the LiveKit URL
+            
+            # Get LiveKit URL from plugin-level configuration (shared by all streams)
+            livekit_url = self.config.get("livekit_url", "wss://pump-prod-tg2x8veh.livekit.cloud")
             auto_record = config.get("auto_record", True)
-            livekit_api_key = config.get("livekit_api_key", "")
-            livekit_api_secret = config.get("livekit_api_secret", "")
             
             # Check if already subscribed
             existing_stmt = select(WebRTCSubscription).where(WebRTCSubscription.stream_id == stream_id)
@@ -305,13 +306,11 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
                     "stream_name": existing_subscription.stream_name,
                 }
             
-            # Create new subscription
+            # Create new subscription with plugin-level LiveKit URL
             new_subscription = WebRTCSubscription(
                 stream_id=stream_id,
                 stream_name=stream_name,
-                livekit_url=livekit_url,
-                livekit_api_key=livekit_api_key,
-                livekit_api_secret=livekit_api_secret,
+                livekit_url=livekit_url,  # Uses plugin-level LiveKit URL
                 auto_record=auto_record,
                 config=config
             )
@@ -556,6 +555,9 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         """Get current plugin configuration."""
         return {
             "discover_limit": self.config.get("discover_limit", 20),
+            "livekit_url": self.config.get("livekit_url", "wss://pump-prod-tg2x8veh.livekit.cloud"),
+            "output_format": self.config.get("output_format", "webm"),
+            "video_quality": self.config.get("video_quality", "best"),
             **self.config
         }
     
@@ -568,6 +570,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         """Get default configuration."""
         return {
             "discover_limit": 20,
+            "livekit_url": "wss://pump-prod-tg2x8veh.livekit.cloud",
             "output_format": "webm",
             "video_quality": "best",
         }

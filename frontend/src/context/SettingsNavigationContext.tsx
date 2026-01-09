@@ -2,7 +2,6 @@ import React, { createContext, useContext, useMemo, useState, ReactNode } from "
 
 export type SettingsTab =
   | "ai"
-  | "livekit"
   | "playback"
   | "processing"
   | "filecoin"

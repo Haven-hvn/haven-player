@@ -3,11 +3,10 @@ import { PluginConfigSchema, WebRTCPluginConfig, PluginConfig, YouTubePluginConf
 import { pluginService } from '@/services/api';
 
 const defaultWebRTCConfig: WebRTCPluginConfig = {
-  video_format: 'webm',
+  livekit_url: 'wss://pump-prod-tg2x8veh.livekit.cloud',
+  output_format: 'webm',
   video_quality: 'best',
-  audio_bitrate: 128,
-  record_transcode: false,
-  max_recording_duration_minutes: 120,
+  discover_limit: 20,
 };
 
 export function usePluginConfiguration(pluginName: string) {

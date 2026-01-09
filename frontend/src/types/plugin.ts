@@ -178,11 +178,10 @@ export interface YouTubePluginConfig {
 }
 
 export interface WebRTCPluginConfig {
-  video_format: 'webm' | 'mp4';
-  video_quality: 'best' | '1080p' | '720p' | '480p';
-  audio_bitrate: number;
-  record_transcode: boolean;
-  max_recording_duration_minutes: number;
+  discover_limit?: number;
+  livekit_url: string;
+  output_format?: 'webm' | 'mp4';
+  video_quality?: 'best' | '1080p' | '720p' | '480p';
 }
 
 export interface BitTorrentPluginConfig {

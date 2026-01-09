@@ -30,7 +30,6 @@ import {
   Close as CloseIcon,
   SmartToy as AIIcon,
   SmartDisplay as PlaybackIcon,
-  Storage as ServerIcon,
   WorkspacePremium as BatchIcon,
   CloudUpload as CloudUploadIcon,
   Lock as LockIcon,
@@ -687,7 +686,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
               justifyContent: "center",
             }}
           >
-            <ServerIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
+            <SmartDisplay sx={{ color: "#FFFFFF", fontSize: 14 }} />
           </Box>
           <Typography
             variant="h6"
@@ -738,12 +737,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       </Box>
     </Box>
   );
-
-  const renderLivekitContent = (): JSX.Element => (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        LiveKit Configuration
-      </Typography>
 
   const renderPlaybackContent = (): JSX.Element => {
     const statusSeverity =
@@ -1452,8 +1445,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     switch (activeTab) {
       case "ai":
         return renderAiContent();
-      case "livekit":
-        return renderLivekitContent();
       case "playback":
         return renderPlaybackContent();
       case "processing":
@@ -1584,7 +1575,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           scrollButtons="auto"
         >
           <Tab label="AI / LLM" value="ai" icon={<AIIcon fontSize="small" />} iconPosition="start" />
-          <Tab label="LiveKit" value="livekit" icon={<ServerIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Glitter" value="glitter" icon={<GlitterIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Processing" value="processing" icon={<BatchIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Playback" value="playback" icon={<PlaybackIcon fontSize="small" />} iconPosition="start" />

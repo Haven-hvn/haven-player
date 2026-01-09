@@ -59,7 +59,8 @@ export function PluginConfigurationModal({
   };
 
   const renderConfigField = (field: PluginConfigField) => {
-    const value = config[field.name] !== undefined ? config[field.name] : field.default;
+    const configObj = config as Record<string, any>;
+    const value = configObj[field.name] !== undefined ? configObj[field.name] : field.default;
 
     switch (field.type) {
       case 'text':

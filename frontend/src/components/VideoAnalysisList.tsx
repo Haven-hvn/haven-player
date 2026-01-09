@@ -32,6 +32,7 @@ import {
   CloudUpload as UploadIcon,
   OpenInNew as OpenInNewIcon,
   ContentCopy as ContentCopyIcon,
+  Download as DownloadIcon,
 } from "@mui/icons-material";
 import { Video, Timestamp, VideoGroup } from "@/types/video";
 import TokenGroup from "@/components/TokenGroup";
@@ -229,6 +230,14 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
           bgColor: "#FFEBEE",
           label: "Error",
           chipColor: "error" as const,
+        };
+      case "downloading":
+        return {
+          icon: <DownloadIcon />,
+          color: "#2196F3",
+          bgColor: "#E3F2FD",
+          label: "Downloading",
+          chipColor: "info" as const,
         };
     }
   };

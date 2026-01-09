@@ -17,7 +17,7 @@ import { VideoGroup, TokenGroupInfo } from "@/types/video";
 interface TokenGroupProps {
   group: VideoGroup;
   videoTimestamps: Record<string, any[]>;
-  analysisStatuses: Record<string, "pending" | "analyzing" | "completed" | "error">;
+  analysisStatuses: Record<string, "pending" | "analyzing" | "completed" | "error" | "downloading">;
   jobProgresses: Record<string, number>;
   viewMode: "grid" | "list";
   onPlay: (video: any) => void;

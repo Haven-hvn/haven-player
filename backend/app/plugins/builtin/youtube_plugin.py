@@ -164,7 +164,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                                 thumbnail_url=video.get("thumbnail"),
                                 duration_seconds=video.get("duration"),
                                 upload_date=self._parse_upload_date(video.get("upload_date")),
-                                metadata=video,
+                                video_metadata=video,
                                 download_status="pending",
                             )
                             db.add(new_video)

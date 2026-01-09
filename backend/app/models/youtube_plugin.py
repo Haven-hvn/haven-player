@@ -92,7 +92,7 @@ class YouTubeVideo(Base):
     error_message = Column(String(1000), nullable=True)
     
     # Metadata
-    metadata = Column(JSON, nullable=True)
+    video_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
@@ -120,7 +120,7 @@ class YouTubeVideo(Base):
             "output_path": self.output_path,
             "file_size_bytes": self.file_size_bytes,
             "error_message": self.error_message,
-            "metadata": self.metadata,
+            "video_metadata": self.video_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

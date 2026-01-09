@@ -15,6 +15,7 @@ import {
   IconButton,
   CircularProgress,
   Alert,
+  FormHelperText,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -22,6 +23,7 @@ import {
   Pause as PauseIcon,
   Delete as DeleteIcon,
   PlayArrow as PlayArrowIcon,
+  Info as InfoIcon,
 } from '@mui/icons-material';
 import { useRecurringJobs } from '@/hooks/useRecurringJobs';
 import { RecurringJob, RecurringJobCreate } from '@/types/plugin';
@@ -154,6 +156,8 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
       ) : jobs.length === 0 && !showJobForm ? (
         <Alert severity="info" sx={{ mt: 2 }}>
           No recurring jobs configured for this plugin. Add a job to automatically run plugin operations on a schedule.
+          <br />
+          <strong>For YouTube Plugin:</strong> Use "Discover Sources" with "On Success: Archive All" to automatically poll channels and download new videos.
         </Alert>
       ) : (
         <Box display="grid" gap={2}>
@@ -298,8 +302,9 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
                   label="Method"
                   onChange={(e) => setNewJob({ ...newJob, method: e.target.value })}
                 >
-                  <MenuItem value="discover_sources">Discover Sources</MenuItem>
-                  <MenuItem value="archive">Archive</MenuItem>
+                  <MenuItem value="discover_sources">
+                    Discover Sources
+                  </MenuItem>
                 </Select>
               </FormControl>
               <FormControl fullWidth size="small">
@@ -309,12 +314,32 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
                   label="On Success"
                   onChange={(e) => setNewJob({ ...newJob, on_success: e.target.value })}
                 >
-                  <MenuItem value="log_only">Log Only</MenuItem>
-                  <MenuItem value="archive_all">Archive All</MenuItem>
-                  <MenuItem value="archive_new">Archive New Only</MenuItem>
+                  <MenuItem value="log_only">
+                    Log Only (just record discoveries)
+                  </MenuItem>
+                  <MenuItem value="archive_all">
+                    Archive All (download all discovered sources)
+                  </MenuItem>
+                  <MenuItem value="archive_new">
+                    Archive New Only (download newly discovered sources)
+                  </MenuItem>
                 </Select>
+                <FormHelperText>
+                  {newJob.on_success === 'log_only' && 'Only log discoveries without downloading'}
+                  {newJob.on_success === 'archive_all' && 'Automatically download all discovered videos'}
+                  {newJob.on_success === 'archive_new' && 'Download only newly discovered videos'}
+                </FormHelperText>
               </FormControl>
             </Box>
+
+            {/* Info box explaining the pattern */}
+            <Alert severity="info" icon={<InfoIcon />} sx={{ mt: 2 }}>
+              <Typography variant="body2">
+                <strong>How it works:</strong> The job will call <code>discover_sources()</code> to find new content,
+                then the <strong>On Success</strong> action determines what happens next.
+                For YouTube, set <strong>On Success: Archive All</strong> to automatically download discovered videos.
+              </Typography>
+            </Alert>
             <Box sx={{ mt: 2, display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
               <Button onClick={() => setShowJobForm(false)}>
                 Cancel

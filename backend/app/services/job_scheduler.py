@@ -7,9 +7,10 @@ every hour to find new videos.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from sqlalchemy.orm import Session
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -19,6 +20,41 @@ from app.models.database import SessionLocal
 from app.models.recurring_job import RecurringJob
 from app.models.plugin import Plugin as PluginModel
 from app.plugins.plugin_manager import PluginManager
+
+
+def sanitize_config_for_storage(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Sanitize job configuration to ensure it's JSON-serializable for storage.
+    
+    This converts complex objects (like AuthenticationString) to serializable strings.
+    
+    Args:
+        config: Configuration dictionary to sanitize
+        
+    Returns:
+        Sanitized configuration dictionary
+    """
+    sanitized = {}
+    for key, value in config.items():
+        # Convert complex types to strings
+        if isinstance(value, (str, int, float, bool, type(None))):
+            sanitized[key] = value
+        elif isinstance(value, (list, tuple)):
+            sanitized[key] = [str(item) for item in value]
+        elif isinstance(value, dict):
+            # Recursively sanitize nested dicts
+            sanitized[key] = sanitize_config_for_storage(value)
+        else:
+            # Convert any other type to string
+            try:
+                # Try to serialize to JSON first
+                json.dumps(value)
+                sanitized[key] = value
+            except (TypeError, ValueError):
+                sanitized[key] = str(value)
+                logging.warning(f"Converted non-serializable config key '{key}' to string")
+    
+    return sanitized
 
 logger = logging.getLogger(__name__)
 
@@ -190,9 +226,18 @@ class JobScheduler:
                 if not plugin:
                     raise Exception(f"Plugin {job.plugin_name} not loaded")
                 
-                # Execute plugin method
+                # Execute plugin method based on method type
                 if job.method == "discover_sources":
                     result = await self._execute_discover_sources(job, plugin)
+                elif job.method == "archive":
+                    # archive() requires MediaSource, not config keys
+                    # For scheduled jobs, archive doesn't make sense directly
+                    # Use discover_sources with on_success="archive_all" instead
+                    raise Exception(
+                        f"Method 'archive' cannot be scheduled directly. "
+                        f"Use method='discover_sources' with on_success='archive_all' "
+                        f"to discover and archive sources automatically."
+                    )
                 elif hasattr(plugin, job.method):
                     # Call custom method if exists
                     method = getattr(plugin, job.method)
@@ -297,6 +342,17 @@ class JobScheduler:
         """
         db = SessionLocal()
         try:
+            # Validate method
+            if method == "archive":
+                raise ValueError(
+                    f"Method 'archive' cannot be scheduled directly. "
+                    f"Use method='discover_sources' with on_success='archive_all' "
+                    f"to discover and archive sources automatically."
+                )
+            
+            # Sanitize config to ensure it's serializable
+            sanitized_config = sanitize_config_for_storage(config or {})
+            
             # Create job in database
             job = RecurringJob(
                 plugin_name=plugin_name,
@@ -304,7 +360,7 @@ class JobScheduler:
                 schedule=schedule,
                 method=method,
                 on_success=on_success,
-                config=config or {}
+                config=sanitized_config
             )
             
             db.add(job)

@@ -132,6 +132,15 @@ async def create_recurring_job(
                       f"Must be one of: {', '.join(valid_actions)}"
             )
         
+        # Validate method - archive cannot be scheduled directly
+        if job_data.method == "archive":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Method 'archive' cannot be scheduled directly. "
+                      f"Use method='discover_sources' with on_success='archive_all' "
+                      f"to discover and archive sources automatically."
+            )
+        
         # Check if plugin is loaded
         from app.plugins.plugin_manager import PluginManager
         # Access through scheduler's plugin_manager reference

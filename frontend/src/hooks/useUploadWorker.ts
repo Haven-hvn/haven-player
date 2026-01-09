@@ -112,12 +112,10 @@ export function useUploadWorker(): UseUploadWorkerReturn {
     try {
       setLoading(true);
       setError(null);
-      const response = await uploadWorkerService.updateConfig(newConfig);
+      await uploadWorkerService.updateConfig(newConfig);
 
       // Refresh status after updating config
       await refreshStatus();
-
-      return response;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to update upload worker config';
       setError(errorMessage);

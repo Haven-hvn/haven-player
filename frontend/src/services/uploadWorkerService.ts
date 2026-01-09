@@ -7,7 +7,11 @@
  * - Update upload worker configuration
  */
 
-import type { UploadCoordinatorConfig, UploadQueueStatus } from '../types/plugin';
+import type {
+  UploadCoordinatorConfig,
+  UploadQueueStatus,
+  UploadQueueEntry,
+} from '../types/plugin';
 
 export interface UploadWorkerStatus {
   isRunning: boolean;
@@ -121,7 +125,7 @@ export class UploadWorkerService {
    * @param status - Optional status filter
    * @returns Promise with queue entries
    */
-  async getQueueEntries(status?: string): Promise<any[]> {
+  async getQueueEntries(status?: string): Promise<UploadQueueEntry[]> {
     try {
       const url = status
         ? `http://localhost:8000/api/upload-queue?status=${status}`

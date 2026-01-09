@@ -107,12 +107,12 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
                   color={status?.config.enabled ? 'success' : 'default'}
                 />
                 <Chip
-                  label={`Poll Interval: ${status?.config.pollInterval / 1000}s`}
+                  label={`Poll Interval: ${(status?.config.pollInterval ?? 15000) / 1000}s`}
                   size="small"
                   variant="outlined"
                 />
                 <Chip
-                  label={`Max Retries: ${status?.config.retryAttempts}`}
+                  label={`Max Retries: ${status?.config.retryAttempts ?? 3}`}
                   size="small"
                   variant="outlined"
                 />

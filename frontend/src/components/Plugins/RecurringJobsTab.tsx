@@ -327,7 +327,7 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
                 <FormHelperText>
                   {newJob.on_success === 'log_only' && 'Only log discoveries without downloading'}
                   {newJob.on_success === 'archive_all' && 'Automatically download all discovered videos'}
-                  {newJob.on_success === 'archive_new' && 'Download only newly discovered videos'}
+                  {newJob.on_success === 'archive_new' && 'Download newly discovered videos (plugin filters out already-seen videos)'}
                 </FormHelperText>
               </FormControl>
             </Box>
@@ -337,7 +337,8 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
               <Typography variant="body2">
                 <strong>How it works:</strong> The job will call <code>discover_sources()</code> to find new content,
                 then the <strong>On Success</strong> action determines what happens next.
-                For YouTube, set <strong>On Success: Archive All</strong> to automatically download discovered videos.
+                For YouTube, use <strong>Archive All</strong> or <strong>Archive New</strong> to automatically download discovered videos.
+                The plugin tracks seen videos, so repeated runs won't re-download the same content.
               </Typography>
             </Alert>
             <Box sx={{ mt: 2, display: 'flex', gap: 1, justifyContent: 'flex-end' }}>

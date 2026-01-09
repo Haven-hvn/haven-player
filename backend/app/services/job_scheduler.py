@@ -318,17 +318,23 @@ class JobScheduler:
     async def _execute_discover_sources(self, job: RecurringJob, plugin) -> Dict[str, Any]:
         """
         Execute discover_sources method and handle results.
-        
+
         Args:
             job: RecurringJob instance
             plugin: Plugin instance
-            
+
         Returns:
             Execution results
         """
+        logger.info(f"Job {job.job_name}: calling discover_sources() on {job.plugin_name}")
+
         # Discover sources
         sources = await plugin.discover_sources()
-        
+
+        logger.info(f"Job {job.job_name}: discovered {len(sources)} sources from {job.plugin_name}")
+        if len(sources) > 0:
+            logger.info(f"Job {job.job_name}: first few sources: {[s.source_id for s in sources[:3]]}")
+
         result = {
             "sources_found": len(sources),
             "sources": [s.to_dict() for s in sources]
@@ -337,25 +343,53 @@ class JobScheduler:
         # Handle based on on_success configuration
         if job.on_success == "archive_all":
             # Archive all discovered sources
+            logger.info(f"Job {job.job_name}: on_success='archive_all', processing {len(sources)} sources")
             archived = 0
-            for source in sources:
+            for i, source in enumerate(sources, 1):
                 try:
+                    logger.info(f"Archiving source {i}/{len(sources)}: {source.source_id}")
                     archive_result = await self.plugin_manager.archive_source(
                         job.plugin_name,
                         source
                     )
                     if archive_result.success:
                         archived += 1
+                        logger.info(f"✅ Successfully archived {source.source_id}")
+                        if archive_result.output_path:
+                            logger.info(f"   → Saved to: {archive_result.output_path}")
+                    else:
+                        logger.warning(f"❌ Failed to archive {source.source_id}: {archive_result.error}")
                 except Exception as e:
-                    logger.error(f"Failed to archive {source.source_id}: {e}")
-            
+                    logger.error(f"❌ Error archiving {source.source_id}: {e}")
+
             result["archived"] = archived
-        
+            logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources")
+
         elif job.on_success == "archive_new":
-            # Only archive new sources (would need tracking of previously seen sources)
-            # For now, log only
-            logger.info(f"Found {len(sources)} new sources")
-        
+            # Archive all discovered sources (plugin should handle filtering of seen sources)
+            # For YouTubePlugin, discover_sources() already filters out seen videos via _seen_videos
+            logger.info(f"Job {job.job_name}: on_success='archive_new', processing {len(sources)} sources")
+            archived = 0
+            for i, source in enumerate(sources, 1):
+                try:
+                    logger.info(f"Archiving source {i}/{len(sources)}: {source.source_id}")
+                    archive_result = await self.plugin_manager.archive_source(
+                        job.plugin_name,
+                        source
+                    )
+                    if archive_result.success:
+                        archived += 1
+                        logger.info(f"✅ Successfully archived {source.source_id}")
+                        if archive_result.output_path:
+                            logger.info(f"   → Saved to: {archive_result.output_path}")
+                    else:
+                        logger.warning(f"❌ Failed to archive {source.source_id}: {archive_result.error}")
+                except Exception as e:
+                    logger.error(f"❌ Error archiving {source.source_id}: {e}")
+
+            result["archived"] = archived
+            logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources")
+
         # log_only is default - just log results
         logger.info(f"Job {job.job_name}: discovered {len(sources)} sources")
         

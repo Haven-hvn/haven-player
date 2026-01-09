@@ -1458,7 +1458,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 
   return (
     <Dialog
-      open={true}
+      open={open}
       onClose={onClose}
       maxWidth="md"
       fullWidth

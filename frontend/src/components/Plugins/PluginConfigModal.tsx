@@ -22,7 +22,6 @@ import {
   Chip,
   Card,
   CardContent,
-  Grid,
 } from '@mui/material';
 import {
   FormatAlignLeft as FormIcon,
@@ -31,11 +30,12 @@ import {
   Restore as RestoreIcon,
   Close as CloseIcon,
   Check as CheckIcon,
-  PlayArrow as PlayIcon,
+  PlayCircle as PlayIcon,
   Pause as PauseIcon,
   Delete as DeleteIcon,
   Add as AddIcon,
   Schedule as ScheduleIcon,
+  PlayArrow as PlayArrowIcon,
 } from '@mui/icons-material';
 import { usePluginConfig } from '@/hooks/usePlugins';
 import { useRecurringJobs } from '@/hooks/useRecurringJobs';
@@ -408,107 +408,105 @@ const PluginConfigModal: React.FC<{
                 No recurring jobs configured for this plugin. Add a job to automatically run plugin operations on a schedule.
               </Alert>
             ) : (
-              <Grid container spacing={2}>
+              <Box display="grid" gap={2}>
                 {jobs.map((job) => (
-                  <Grid item xs={12} key={job.id}>
-                    <Card variant="outlined">
-                      <CardContent>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <Box sx={{ flex: 1 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                              <Typography variant="subtitle1" fontWeight="600">
-                                {job.job_name}
-                              </Typography>
+                  <Card key={job.id} variant="outlined">
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <Box sx={{ flex: 1 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                            <Typography variant="subtitle1" fontWeight="600">
+                              {job.job_name}
+                            </Typography>
+                            <Chip
+                              label={job.enabled ? 'Enabled' : 'Paused'}
+                              color={job.enabled ? 'success' : 'default'}
+                              size="small"
+                            />
+                            {job.is_running && (
                               <Chip
-                                label={job.enabled ? 'Enabled' : 'Paused'}
-                                color={job.enabled ? 'success' : 'default'}
+                                label="Running"
+                                color="info"
                                 size="small"
                               />
-                              {job.is_running && (
-                                <Chip
-                                  label="Running"
-                                  color="info"
-                                  size="small"
-                                />
-                              )}
-                            </Box>
-                            <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
-                              <Chip
-                                label={getSchedulePresetLabel(job.schedule)}
-                                size="small"
-                                variant="outlined"
-                              />
-                              <Chip
-                                label={`Method: ${job.method}`}
-                                size="small"
-                                variant="outlined"
-                              />
-                              <Chip
-                                label={`On success: ${job.on_success}`}
-                                size="small"
-                                variant="outlined"
-                              />
-                            </Box>
-                            {job.last_run_at && (
-                              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                                Last run: {new Date(job.last_run_at).toLocaleString()}
-                              </Typography>
                             )}
-                            {job.next_run_at && (
-                              <Typography variant="body2" color="text.secondary">
-                                Next run: {new Date(job.next_run_at).toLocaleString()}
-                              </Typography>
-                            )}
-                            {job.last_error && (
-                              <Alert severity="error" sx={{ mt: 1 }} size="small">
-                                {job.last_error}
-                              </Alert>
-                            )}
-                            <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                              <Typography variant="caption" color="text.secondary">
-                                Total runs: {job.total_runs}
-                              </Typography>
-                              <Typography variant="caption" color="success.main">
-                                Success: {job.successful_runs}
-                              </Typography>
-                              <Typography variant="caption" color="error.main">
-                                Failed: {job.failed_runs}
-                              </Typography>
-                            </Box>
                           </Box>
-                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, ml: 2 }}>
-                            <Tooltip title={job.enabled ? 'Pause job' : 'Resume job'}>
-                              <IconButton
-                                size="small"
-                                onClick={() => handleToggleJob(job)}
-                              >
-                                {job.enabled ? <PauseIcon /> : <PlayIcon />}
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Run now">
-                              <IconButton
-                                size="small"
-                                onClick={() => handleRunJobNow(job.id)}
-                              >
-                                <PlayArrowIcon />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Delete job">
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => handleDeleteJob(job.id)}
-                              >
-                                <DeleteIcon />
-                              </IconButton>
-                            </Tooltip>
+                          <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                            <Chip
+                              label={getSchedulePresetLabel(job.schedule)}
+                              size="small"
+                              variant="outlined"
+                            />
+                            <Chip
+                              label={`Method: ${job.method}`}
+                              size="small"
+                              variant="outlined"
+                            />
+                            <Chip
+                              label={`On success: ${job.on_success}`}
+                              size="small"
+                              variant="outlined"
+                            />
+                          </Box>
+                          {job.last_run_at && (
+                            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                              Last run: {new Date(job.last_run_at).toLocaleString()}
+                            </Typography>
+                          )}
+                          {job.next_run_at && (
+                            <Typography variant="body2" color="text.secondary">
+                              Next run: {new Date(job.next_run_at).toLocaleString()}
+                            </Typography>
+                          )}
+                          {job.last_error && (
+                            <Alert severity="error" sx={{ mt: 1 }}>
+                              {job.last_error}
+                            </Alert>
+                          )}
+                          <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                            <Typography variant="caption" color="text.secondary">
+                              Total runs: {job.total_runs}
+                            </Typography>
+                            <Typography variant="caption" color="success.main">
+                              Success: {job.successful_runs}
+                            </Typography>
+                            <Typography variant="caption" color="error.main">
+                              Failed: {job.failed_runs}
+                            </Typography>
                           </Box>
                         </Box>
-                      </CardContent>
-                    </Card>
-                  </Grid>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, ml: 2 }}>
+                          <Tooltip title={job.enabled ? 'Pause job' : 'Resume job'}>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleToggleJob(job)}
+                            >
+                              {job.enabled ? <PauseIcon /> : <PlayIcon />}
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Run now">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleRunJobNow(job.id)}
+                            >
+                              <PlayArrowIcon />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Delete job">
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => handleDeleteJob(job.id)}
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </Box>
+                    </CardContent>
+                  </Card>
                 ))}
-              </Grid>
+              </Box>
             )}
           </Box>
 
@@ -519,65 +517,57 @@ const PluginConfigModal: React.FC<{
                 <Typography variant="subtitle1" fontWeight="600" gutterBottom>
                   Create New Recurring Job
                 </Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} sm={6}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Job Name"
-                      value={newJob.job_name}
-                      onChange={(e) => setNewJob({ ...newJob, job_name: e.target.value })}
-                      placeholder="e.g., poll_youtube_channel"
-                      required
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Schedule</InputLabel>
-                      <Select
-                        value={newJob.schedule}
-                        label="Schedule"
-                        onChange={(e) => setNewJob({ ...newJob, schedule: e.target.value })}
-                      >
-                        <MenuItem value="*/5 * * * *">Every 5 minutes</MenuItem>
-                        <MenuItem value="*/15 * * * *">Every 15 minutes</MenuItem>
-                        <MenuItem value="*/30 * * * *">Every 30 minutes</MenuItem>
-                        <MenuItem value="0 * * * *">Every hour</MenuItem>
-                        <MenuItem value="0 */2 * * *">Every 2 hours</MenuItem>
-                        <MenuItem value="0 */6 * * *">Every 6 hours</MenuItem>
-                        <MenuItem value="0 0 * * *">Daily at midnight</MenuItem>
-                        <MenuItem value="0 12 * * *">Daily at noon</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                  <Grid item xs={12} sm={6}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Method</InputLabel>
-                      <Select
-                        value={newJob.method}
-                        label="Method"
-                        onChange={(e) => setNewJob({ ...newJob, method: e.target.value })}
-                      >
-                        <MenuItem value="discover_sources">Discover Sources</MenuItem>
-                        <MenuItem value="archive">Archive</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                  <Grid item xs={12} sm={6}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>On Success</InputLabel>
-                      <Select
-                        value={newJob.on_success}
-                        label="On Success"
-                        onChange={(e) => setNewJob({ ...newJob, on_success: e.target.value })}
-                      >
-                        <MenuItem value="log_only">Log Only</MenuItem>
-                        <MenuItem value="archive_all">Archive All</MenuItem>
-                        <MenuItem value="archive_new">Archive New Only</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                </Grid>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Job Name"
+                    value={newJob.job_name}
+                    onChange={(e) => setNewJob({ ...newJob, job_name: e.target.value })}
+                    placeholder="e.g., poll_youtube_channel"
+                    required
+                  />
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Schedule</InputLabel>
+                    <Select
+                      value={newJob.schedule}
+                      label="Schedule"
+                      onChange={(e) => setNewJob({ ...newJob, schedule: e.target.value })}
+                    >
+                      <MenuItem value="*/5 * * * *">Every 5 minutes</MenuItem>
+                      <MenuItem value="*/15 * * * *">Every 15 minutes</MenuItem>
+                      <MenuItem value="*/30 * * * *">Every 30 minutes</MenuItem>
+                      <MenuItem value="0 * * * *">Every hour</MenuItem>
+                      <MenuItem value="0 */2 * * *">Every 2 hours</MenuItem>
+                      <MenuItem value="0 */6 * * *">Every 6 hours</MenuItem>
+                      <MenuItem value="0 0 * * *">Daily at midnight</MenuItem>
+                      <MenuItem value="0 12 * * *">Daily at noon</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Method</InputLabel>
+                    <Select
+                      value={newJob.method}
+                      label="Method"
+                      onChange={(e) => setNewJob({ ...newJob, method: e.target.value })}
+                    >
+                      <MenuItem value="discover_sources">Discover Sources</MenuItem>
+                      <MenuItem value="archive">Archive</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>On Success</InputLabel>
+                    <Select
+                      value={newJob.on_success}
+                      label="On Success"
+                      onChange={(e) => setNewJob({ ...newJob, on_success: e.target.value })}
+                    >
+                      <MenuItem value="log_only">Log Only</MenuItem>
+                      <MenuItem value="archive_all">Archive All</MenuItem>
+                      <MenuItem value="archive_new">Archive New Only</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
                 <Box sx={{ mt: 2, display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
                   <Button onClick={() => setShowJobForm(false)}>
                     Cancel

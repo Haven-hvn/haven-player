@@ -154,18 +154,6 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
               placeholder="https://gw.magnode.ru/v1/sql/query"
             />
           </Grid>
-          <Grid size={{ xs: 12 }}>
-            <TextField
-              fullWidth
-              size="small"
-              type="number"
-              label="Max Concurrent Downloads"
-              value={config.max_concurrent_downloads}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ ...config, max_concurrent_downloads: Number(e.target.value) })}
-              helperText="Maximum simultaneous torrent downloads"
-              inputProps={{ min: 1, max: 10 }}
-            />
-          </Grid>
         </Grid>
       </Box>
     </Box>

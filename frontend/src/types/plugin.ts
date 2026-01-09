@@ -173,8 +173,6 @@ export interface YouTubePluginConfig {
     download_subtitles: boolean;
     auto_archive: boolean;
   }>;
-  poll_interval_minutes: number;
-  max_concurrent_downloads: number;
 }
 
 export interface WebRTCPluginConfig {
@@ -190,7 +188,6 @@ export interface BitTorrentPluginConfig {
     enabled: boolean;
     auto_archive: boolean;
   }>;
-  max_concurrent_downloads: number;
   glitter_endpoint: string;
 }
 

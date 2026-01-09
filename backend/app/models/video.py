@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
-from typing import Optional, List, TYPE_CHECKING
-from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime, Text
+from typing import Optional, List, TYPE_CHECKING, Any, Dict
+from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime, Text, JSON
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.models.base import Base
 
@@ -51,6 +51,15 @@ class Video(Base):
     is_encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     lit_encryption_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Plugin metadata fields - generic storage for plugin-specific data
+    # This allows plugins to store necessary metadata without creating their own tables
+    plugin_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # e.g., "YouTubePlugin", "BitTorrentPlugin"
+    plugin_source_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # e.g., YouTube video ID, torrent infohash
+    plugin_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # Additional plugin-specific metadata
+    plugin_discovered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # When the plugin first discovered this video
+    plugin_auto_downloaded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # Was this auto-downloaded by a job?
+    plugin_subscriptions: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # List of subscription identifiers that link to this video
+
     timestamps: Mapped[List['Timestamp']] = relationship('Timestamp', back_populates='video', cascade='all, delete-orphan')
     analysis_jobs: Mapped[List['AnalysisJob']] = relationship('AnalysisJob', back_populates='video', cascade='all, delete-orphan')
 
@@ -85,6 +94,12 @@ class Video(Base):
             'encrypted_filecoin_cid': self.encrypted_filecoin_cid,
             'is_encrypted': self.is_encrypted,
             'lit_encryption_metadata': self.lit_encryption_metadata,
+            'plugin_name': self.plugin_name,
+            'plugin_source_id': self.plugin_source_id,
+            'plugin_metadata': self.plugin_metadata,
+            'plugin_discovered_at': self.plugin_discovered_at.isoformat() if self.plugin_discovered_at else None,
+            'plugin_auto_downloaded': self.plugin_auto_downloaded,
+            'plugin_subscriptions': self.plugin_subscriptions,
         }
 
 class Timestamp(Base):

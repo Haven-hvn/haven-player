@@ -11,13 +11,10 @@ const defaultWebRTCConfig: WebRTCPluginConfig = {
 
 const defaultYouTubeConfig: YouTubePluginConfig = {
   channels: [],
-  poll_interval_minutes: 60,
-  max_concurrent_downloads: 3,
 };
 
 const defaultBitTorrentConfig: BitTorrentPluginConfig = {
   subscriptions: [],
-  max_concurrent_downloads: 3,
   glitter_endpoint: 'https://gw.magnode.ru/v1/sql/query',
 };
 

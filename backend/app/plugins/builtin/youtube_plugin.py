@@ -1,8 +1,11 @@
 """
 YouTube archiver plugin for Haven Player (Refactored).
 
-This plugin uses standardized operations from CollectionPluginMixin.
-All operations are now accessible via the generic /api/plugins/execute endpoint.
+This plugin uses the generic plugins.config JSON column for storing channel subscriptions,
+following Haven Player's architecture principle that plugin systems should leverage generic
+tables rather than creating their own dedicated tables.
+
+All operations are accessible via the generic /api/plugins/execute endpoint.
 """
 
 import asyncio
@@ -27,7 +30,7 @@ from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 
 from app.models.config import AppConfig
 from app.models.database import get_db as get_db_session
-from app.models.youtube_plugin import YouTubeChannel, YouTubeVideo
+from app.models.plugin import Plugin as PluginModel
 from app.models.video import Video, Timestamp
 from app.models.analysis_job import AnalysisJob
 
@@ -38,24 +41,24 @@ logger = logging.getLogger(__name__)
 class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixin):
     """
     YouTube recording plugin with standardized operations.
-    
+
     Implements:
     - Core ArchiverPlugin interface: discover_sources, archive, health_check
     - CollectionPluginMixin: subscribe, unsubscribe, list_subscriptions, etc.
     - ConfigurablePluginMixin: get_config, update_config
-    
+
     All operations accessible via POST /api/plugins/execute
+
+    Channel subscriptions are stored in plugins.config JSON column (generic table approach).
     """
-    
+
     def __init__(self):
         self.config = {}
         self.initialized = False
         self.download_dir = "downloads/youtube" # Default, will be overwritten by global config
-        self._max_concurrent_downloads = 3
-        self._active_downloads = {}  # video_id -> task
-    
+
     # ========== Core ArchiverPlugin Interface (Required) ==========
-    
+
     def get_metadata(self) -> PluginMetadata:
         """Return plugin metadata."""
         return PluginMetadata(
@@ -65,11 +68,11 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             media_types=[MediaType.YOUTUBE],
             author="Haven Team",
         )
-    
+
     async def initialize(self, config: Dict[str, Any]) -> bool:
         """Initialize plugin with configuration."""
         self.config = config
-        
+
         # Set download directory
         db = next(get_db_session())
         app_config = db.query(AppConfig).first()
@@ -79,10 +82,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             self.download_dir = config.get("download_dir", "downloads/youtube")
         db.close()
         os.makedirs(self.download_dir, exist_ok=True)
-        
-        # Set max concurrent downloads
-        self._max_concurrent_downloads = config.get("max_concurrent_downloads", 3)
-        
+
         # Ensure yt-dlp is available
         try:
             result = subprocess.run(
@@ -104,17 +104,19 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         except Exception as e:
             logger.error(f"Error checking yt-dlp: {e}")
             return False
-        
+
         self.initialized = True
         logger.info("YouTubePlugin initialized")
         return True
-    
+
     async def discover_sources(self) -> List[MediaSource]:
         """
         Discover new videos from all subscribed channels.
 
         This is the standard operation used by the job scheduler.
         It polls ALL enabled channels and returns new videos.
+
+        Channels are read from plugins.config JSON column (generic table approach).
         """
         if not self.initialized:
             logger.error("YouTubePlugin not initialized")
@@ -123,90 +125,106 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         try:
             db = next(get_db_session())
 
-            # Get all enabled channels
-            stmt = select(YouTubeChannel).where(YouTubeChannel.enabled == True)
-            result = db.execute(stmt)
-            channels = result.scalars().all()
+            # Get plugin config with channels
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "YouTubePlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
 
-            # Debug logging
-            # First, check ALL channels (not just enabled)
-            all_channels_stmt = select(YouTubeChannel)
-            all_channels_result = db.execute(all_channels_stmt)
-            all_channels = all_channels_result.scalars().all()
-            logger.info(f"DEBUG: Total channels in database: {len(all_channels)}")
+            if not plugin or not plugin.config:
+                logger.info("No YouTube plugin config found")
+                return []
+
+            # Get enabled channels from config
+            all_channels = plugin.config.get("channels", [])
+            enabled_channels = [ch for ch in all_channels if ch.get("enabled", True)]
+
+            logger.info(f"Total channels in config: {len(all_channels)}, Enabled: {len(enabled_channels)}")
             for ch in all_channels:
-                logger.info(f"DEBUG: Channel '{ch.channel_name}' (ID: {ch.channel_id}) - enabled={ch.enabled}, url={ch.channel_url}")
+                logger.info(f"Channel '{ch.get('name', 'Unknown')}' - enabled={ch.get('enabled', True)}, url={ch.get('channel_url')}")
 
-            if not channels:
+            if not enabled_channels:
                 logger.info("No enabled channels to poll")
                 return []
 
-            logger.info(f"Polling {len(channels)} channels for new videos")
-            
+            logger.info(f"Polling {len(enabled_channels)} channels for new videos")
+
             new_sources = []
-            
-            for channel in channels:
+
+            for channel_config in enabled_channels:
                 try:
                     # Get channel videos using yt-dlp
-                    videos = await self._get_channel_videos(channel)
-                    
-                    logger.info(f"Found {len(videos)} videos for channel {channel.channel_name}")
-                    
-                    # Update channel metadata
-                    channel.last_polled_at = datetime.utcnow()
-                    channel.last_video_count = len(videos)
-                    
+                    videos = await self._get_channel_videos_from_url(channel_config.get("channel_url"))
+
+                    channel_name = channel_config.get("name", "Unknown")
+                    logger.info(f"Found {len(videos)} videos for channel {channel_name}")
+
+                    # Get seen video IDs from plugin config to avoid duplicates
+                    seen_videos = plugin.config.get("_seen_videos", {})
+                    if isinstance(seen_videos, dict):
+                        # Convert lists back to sets for comparison
+                        seen_videos = {k: set(v) if isinstance(v, list) else v for k, v in seen_videos.items()}
+
                     # Process each video
                     for video in videos:
-                        # Check if video already exists
-                        existing_stmt = select(YouTubeVideo).where(YouTubeVideo.video_id == video["id"])
-                        existing_result = db.execute(existing_stmt)
-                        existing_video = existing_result.scalar_one_or_none()
-                        
-                        if not existing_video:
-                            # Create new video record
-                            new_video = YouTubeVideo(
-                                video_id=video["id"],
-                                channel_id=channel.id,
-                                title=video.get("title"),
-                                video_url=video["url"],
-                                thumbnail_url=video.get("thumbnail"),
-                                duration_seconds=video.get("duration"),
-                                upload_date=self._parse_upload_date(video.get("upload_date")),
-                                video_metadata=video,
-                                download_status="pending",
-                            )
-                            db.add(new_video)
-                            
-                            # Create media source
-                            source = MediaSource(
-                                source_id=video["id"],
-                                media_type=MediaType.YOUTUBE,
-                                uri=video["url"],
-                                metadata={
-                                    "title": video.get("title"),
-                                    "channel_name": channel.channel_name,
-                                    "channel_id": channel.channel_id,
-                                    "duration": video.get("duration"),
-                                    "thumbnail": video.get("thumbnail"),
-                                    "upload_date": video.get("upload_date"),
-                                },
-                                priority="normal",
-                                estimated_size_bytes=video.get("filesize"),
-                                estimated_duration_seconds=video.get("duration"),
-                            )
-                            new_sources.append(source)
-                    
-                    db.commit()
-                    
+                        video_id = video["id"]
+
+                        # Skip if already seen
+                        if video_id in seen_videos.get(channel_name, set()):
+                            continue
+
+                        # Add to seen videos
+                        if channel_name not in seen_videos:
+                            seen_videos[channel_name] = set()
+                        seen_videos[channel_name].add(video_id)
+
+                        # Create media source
+                        source = MediaSource(
+                            source_id=video_id,
+                            media_type=MediaType.YOUTUBE,
+                            uri=video["url"],
+                            metadata={
+                                "title": video.get("title"),
+                                "channel_name": channel_name,
+                                "channel_url": channel_config.get("channel_url"),
+                                "duration": video.get("duration"),
+                                "thumbnail": video.get("thumbnail"),
+                                "upload_date": video.get("upload_date"),
+                                "video_format": channel_config.get("video_format", "best"),
+                                "download_subtitles": channel_config.get("download_subtitles", False),
+                            },
+                            priority="normal",
+                            estimated_size_bytes=video.get("filesize"),
+                            estimated_duration_seconds=video.get("duration"),
+                        )
+                        new_sources.append(source)
+
+                    # Update last polled timestamp in config
+                    channel_config["last_polled_at"] = datetime.utcnow().isoformat()
+
+                    # Update seen videos in config (convert sets back to lists for JSON serialization)
+                    config_copy = plugin.config.copy()
+                    config_copy["_seen_videos"] = {k: list(v) for k, v in seen_videos.items()}
+
+                    # Update the channels array with the updated channel_config
+                    channels_copy = []
+                    for ch in config_copy.get("channels", []):
+                        if ch.get("channel_url") == channel_config.get("channel_url"):
+                            channels_copy.append(channel_config)
+                        else:
+                            channels_copy.append(ch)
+                    config_copy["channels"] = channels_copy
+
+                    plugin.config = config_copy
+
                 except Exception as e:
-                    logger.error(f"Error polling channel {channel.channel_name}: {e}")
-                    db.rollback()
+                    logger.error(f"Error polling channel {channel_config.get('name', 'Unknown')}: {e}")
                     continue
-            
+
+            db.commit()  # Commit after processing all channels
+
             logger.info(f"Discovered {len(new_sources)} new videos")
             return new_sources
-        
+
         except Exception as e:
             logger.error(f"Error discovering sources: {e}")
             import traceback
@@ -214,7 +232,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             return []
         finally:
             db.close()
-    
+
     async def archive(self, source: MediaSource) -> ArchiveResult:
         """Archive a YouTube video (standard operation)."""
         if source.media_type != MediaType.YOUTUBE:
@@ -222,56 +240,62 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 success=False,
                 error=f"Unsupported media type: {source.media_type}"
             )
-        
+
         if not self.initialized:
             return ArchiveResult(
                 success=False,
                 error="YouTubePlugin not initialized"
             )
-        
+
         video_id = source.source_id
         logger.info(f"Archiving YouTube video: {video_id}")
-        
+
         try:
             db = next(get_db_session())
-            
-            stmt = select(YouTubeVideo).where(YouTubeVideo.video_id == video_id)
-            result = db.execute(stmt)
-            video = result.scalar_one_or_none()
-            
-            if not video:
+
+            # Get plugin config to check if already archived
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "YouTubePlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
+
+            if not plugin:
                 return ArchiveResult(
                     success=False,
-                    error=f"Video {video_id} not found in database"
+                    error="YouTube plugin not found"
                 )
-            
+
+            archived_videos = plugin.config.get("_archived_videos", {})
+
             # Check if already downloaded
-            if video.download_status == "completed":
+            if video_id in archived_videos:
                 logger.info(f"Video {video_id} already downloaded")
+                archived_info = archived_videos[video_id]
                 return ArchiveResult(
                     success=True,
-                    output_path=video.output_path,
-                    file_size_bytes=video.file_size_bytes,
-                    duration_seconds=video.duration_seconds,
+                    output_path=archived_info.get("output_path"),
+                    file_size_bytes=archived_info.get("file_size_bytes"),
+                    duration_seconds=source.estimated_duration_seconds,
                     metadata={"video_id": video_id},
                 )
-            
-            # Update status to downloading
-            video.download_status = "downloading"
-            video.download_started_at = datetime.utcnow()
-            db.commit()
-            
-            # Get channel for configuration
-            channel = video.channel
-            
+
             # Download video
-            download_result = await self._download_video(source, channel)
-            
+            download_result = await self._download_video(source)
+
             if download_result["success"]:
-                video.download_status = "completed"
-                video.download_completed_at = datetime.utcnow()
-                video.output_path = download_result["output_path"]
-                video.file_size_bytes = download_result.get("file_size_bytes")
+                # Mark as archived in config
+                _archived_videos = plugin.config.get("_archived_videos", {})
+                _archived_videos[video_id] = {
+                    "video_id": video_id,
+                    "title": source.metadata.get("title"),
+                    "output_path": download_result["output_path"],
+                    "file_size_bytes": download_result.get("file_size_bytes"),
+                    "archived_at": datetime.utcnow().isoformat(),
+                }
+
+                config_copy = plugin.config.copy()
+                config_copy["_archived_videos"] = _archived_videos
+                plugin.config = config_copy
+
                 db.commit()
 
                 # Create an entry in the main Video table
@@ -281,43 +305,50 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
                 new_video_entry = Video(
                     path=file_path,
-                    title=video.title,
-                    duration=video.duration_seconds,
-                    thumbnail_path=video.thumbnail_url,
+                    title=source.metadata.get("title"),
+                    duration=source.estimated_duration_seconds,
+                    thumbnail_path=source.metadata.get("thumbnail"),
                     file_size=file_size,
                     file_extension=file_extension,
-                    mime_type=f"video/{file_extension}" if file_extension else None,  # Simple inference
-                    creator_handle=channel.channel_name,
-                    source_uri=video.video_url,
+                    mime_type=f"video/{file_extension}" if file_extension else None,
+                    creator_handle=source.metadata.get("channel_name"),
+                    source_uri=source.uri,
+                    # Plugin metadata fields - stores YouTube-specific data without dedicated tables
+                    plugin_name="YouTubePlugin",
+                    plugin_source_id=video_id,
+                    plugin_metadata={
+                        "upload_date": source.metadata.get("upload_date"),
+                        "video_format": source.metadata.get("video_format"),
+                        "download_subtitles": source.metadata.get("download_subtitles"),
+                    },
+                    plugin_discovered_at=datetime.utcnow(),
+                    plugin_auto_downloaded=True,
+                    plugin_subscriptions=[source.metadata.get("channel_name")],
                 )
                 db.add(new_video_entry)
                 db.commit()
-                db.refresh(new_video_entry)  # Refresh to get auto-generated fields like ID
+                db.refresh(new_video_entry)
 
-                logger.info(f"Created main Video entry for YouTube video: {new_video_entry.id} - {new_video_entry.title}")
+                logger.info(f"Created main Video entry for YouTube video: {new_video_entry.id}")
 
                 return ArchiveResult(
                     success=True,
                     output_path=download_result["output_path"],
                     file_size_bytes=download_result.get("file_size_bytes"),
-                    duration_seconds=video.duration_seconds,
+                    duration_seconds=source.estimated_duration_seconds,
                     metadata={
                         "video_id": video_id,
-                        "title": video.title,
-                        "channel": channel.channel_name,
-                        "main_video_id": new_video_entry.id # Add main video ID to result
+                        "title": source.metadata.get("title"),
+                        "channel": source.metadata.get("channel_name"),
+                        "main_video_id": new_video_entry.id
                     },
                 )
             else:
-                video.download_status = "failed"
-                video.error_message = download_result.get("error", "Unknown error")
-                db.commit()
-                
                 return ArchiveResult(
                     success=False,
                     error=download_result.get("error", "Unknown error"),
                 )
-        
+
         except Exception as e:
             logger.error(f"Error archiving video {video_id}: {e}")
             import traceback
@@ -328,7 +359,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             )
         finally:
             db.close()
-    
+
     async def health_check(self) -> bool:
         """Check if plugin is healthy (standard operation)."""
         try:
@@ -340,17 +371,17 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             )
             if result.returncode != 0:
                 return False
-            
+
             if not os.path.exists(self.download_dir):
                 return False
-            
+
             return True
         except Exception as e:
             logger.error(f"YouTubePlugin health check failed: {e}")
             return False
-    
+
     # ========== CollectionPluginMixin Operations (Standardized) ==========
-    
+
     async def subscribe(
         self,
         collection_uri: str,
@@ -358,7 +389,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     ) -> Dict[str, Any]:
         """
         Subscribe to a YouTube channel (standardized operation).
-        
+
         Called via: POST /api/plugins/execute
         {
             "plugin_name": "YouTubePlugin",
@@ -370,6 +401,19 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         }
         """
         try:
+            db = next(get_db_session())
+
+            # Get plugin
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "YouTubePlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
+
+            if not plugin:
+                return {
+                    "success": False,
+                    "error": "YouTube plugin not found"
+                }
+
             # Extract channel ID from URL
             channel_id = await self._extract_channel_id(collection_uri)
             if not channel_id:
@@ -377,54 +421,56 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                     "success": False,
                     "error": "Could not extract channel ID from URL"
                 }
-            
+
             # Get channel name if not provided in config
-            channel_name = config.get("channel_name") if config else None
+            channel_name = config.get("name") if config else None
             if not channel_name:
                 channel_name = await self._get_channel_name(collection_uri)
-            
-            # Create channel record
-            db = next(get_db_session())
-            
+
+            # Get current channels list
+            channels = plugin.config.get("channels", [])
+
             # Check if already subscribed
-            existing_stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == channel_id)
-            existing_result = db.execute(existing_stmt)
-            existing_channel = existing_result.scalar_one_or_none()
-            
-            if existing_channel:
-                return {
-                    "success": False,
-                    "error": "Already subscribed to this channel",
-                    "collection_id": channel_id,
-                    "collection_name": existing_channel.channel_name,
-                }
-            
-            new_channel = YouTubeChannel(
-                channel_id=channel_id,
-                channel_name=channel_name or channel_id,
-                channel_url=collection_uri,
-                enabled=True,
-                download_videos=True,
-                video_format=config.get("video_format", "best") if config else "best",
-                download_subtitles=config.get("download_subtitles", False) if config else False,
-                auto_archive=config.get("auto_archive", True) if config else True,
-                config=config or {},
-            )
-            db.add(new_channel)
+            for ch in channels:
+                if ch.get("channel_url") == collection_uri:
+                    return {
+                        "success": False,
+                        "error": "Already subscribed to this channel",
+                        "collection_id": channel_id,
+                        "collection_name": ch.get("name", "Unknown"),
+                    }
+
+            # Add new channel
+            new_channel = {
+                "name": channel_name or channel_id,
+                "channel_id": channel_id,
+                "channel_url": collection_uri,
+                "enabled": True,
+                "video_format": config.get("video_format", "best") if config else "best",
+                "download_subtitles": config.get("download_subtitles", False) if config else False,
+                "auto_archive": config.get("auto_archive", True) if config else True,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+
+            channels.append(new_channel)
+
+            # Update plugin config
+            config_copy = plugin.config.copy()
+            config_copy["channels"] = channels
+            plugin.config = config_copy
+
             db.commit()
-            db.refresh(new_channel)
-            
-            logger.info(f"Subscribed to channel: {new_channel.channel_name}")
-            
+
+            logger.info(f"Subscribed to channel: {new_channel['name']}")
+
             return {
                 "success": True,
                 "collection_id": channel_id,
-                "collection_name": new_channel.channel_name,
+                "collection_name": new_channel["name"],
                 "collection_uri": collection_uri,
-                "config": config or {},
-                "created_at": new_channel.created_at.isoformat(),
+                "created_at": new_channel["created_at"],
             }
-        
+
         except Exception as e:
             logger.error(f"Error subscribing to channel: {e}")
             return {
@@ -433,11 +479,11 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             }
         finally:
             db.close()
-    
+
     async def unsubscribe(self, collection_id: str) -> Dict[str, Any]:
         """
         Unsubscribe from a YouTube channel (standardized operation).
-        
+
         Called via: POST /api/plugins/execute
         {
             "plugin_name": "YouTubePlugin",
@@ -447,27 +493,50 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """
         try:
             db = next(get_db_session())
-            
-            stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == collection_id)
-            result = db.execute(stmt)
-            channel = result.scalar_one_or_none()
-            
-            if not channel:
+
+            # Get plugin
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "YouTubePlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
+
+            if not plugin:
+                return {
+                    "success": False,
+                    "error": "YouTube plugin not found"
+                }
+
+            # Find and remove channel
+            channels = plugin.config.get("channels", [])
+            found = False
+            channel_name = "Unknown"
+
+            for i, ch in enumerate(channels):
+                if ch.get("channel_id") == collection_id or ch.get("channel_url") == collection_id:
+                    channel_name = ch.get("name", "Unknown")
+                    channels.pop(i)
+                    found = True
+                    break
+
+            if not found:
                 return {
                     "success": False,
                     "error": "Channel not found",
                 }
-            
-            db.delete(channel)
+
+            # Update plugin config
+            config_copy = plugin.config.copy()
+            config_copy["channels"] = channels
+            plugin.config = config_copy
+
             db.commit()
-            
-            logger.info(f"Unsubscribed from channel: {channel.channel_name}")
-            
+
+            logger.info(f"Unsubscribed from channel: {channel_name}")
+
             return {
                 "success": True,
-                "message": f"Unsubscribed from {channel.channel_name}",
+                "message": f"Unsubscribed from {channel_name}",
             }
-        
+
         except Exception as e:
             logger.error(f"Error unsubscribing from channel: {e}")
             return {
@@ -476,11 +545,11 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             }
         finally:
             db.close()
-    
+
     async def list_subscriptions(self) -> List[Dict[str, Any]]:
         """
         List all channel subscriptions (standardized operation).
-        
+
         Called via: POST /api/plugins/execute
         {
             "plugin_name": "YouTubePlugin",
@@ -490,40 +559,26 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """
         try:
             db = next(get_db_session())
-            
-            stmt = select(YouTubeChannel).order_by(YouTubeChannel.channel_name)
-            result = db.execute(stmt)
-            channels = result.scalars().all()
-            
-            subscriptions = []
-            for channel in channels:
-                subscriptions.append({
-                    "collection_id": channel.channel_id,
-                    "collection_name": channel.channel_name,
-                    "collection_uri": channel.channel_url,
-                    "enabled": channel.enabled,
-                    "download_videos": channel.download_videos,
-                    "video_format": channel.video_format,
-                    "download_subtitles": channel.download_subtitles,
-                    "auto_archive": channel.auto_archive,
-                    "created_at": channel.created_at.isoformat(),
-                    "last_polled_at": channel.last_polled_at.isoformat() if channel.last_polled_at else None,
-                    "last_video_count": channel.last_video_count,
-                    "source_count": len(channel.videos),
-                })
-            
-            return subscriptions
-        
+
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "YouTubePlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
+
+            if not plugin or not plugin.config:
+                return []
+
+            return plugin.config.get("channels", [])
+
         except Exception as e:
             logger.error(f"Error listing subscriptions: {e}")
             return []
         finally:
             db.close()
-    
-    async def get_subscription(self, collection_id: str) -> Dict[str, Any]:
+
+    async def get_subscription(self, collection_id: str) -> Optional[Dict[str, Any]]:
         """
         Get subscription details (standardized operation).
-        
+
         Called via: POST /api/plugins/execute
         {
             "plugin_name": "YouTubePlugin",
@@ -533,162 +588,48 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """
         try:
             db = next(get_db_session())
-            
-            stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == collection_id)
-            result = db.execute(stmt)
-            channel = result.scalar_one_or_none()
-            
-            if not channel:
+
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "YouTubePlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
+
+            if not plugin or not plugin.config:
                 return None
-            
-            return {
-                "collection_id": channel.channel_id,
-                "collection_name": channel.channel_name,
-                "collection_uri": channel.channel_url,
-                "enabled": channel.enabled,
-                "download_videos": channel.download_videos,
-                "video_format": channel.video_format,
-                "download_subtitles": channel.download_subtitles,
-                "auto_archive": channel.auto_archive,
-                "config": channel.config,
-                "created_at": channel.created_at.isoformat(),
-                "updated_at": channel.updated_at.isoformat(),
-                "last_polled_at": channel.last_polled_at.isoformat() if channel.last_polled_at else None,
-                "last_video_count": channel.last_video_count,
-                "video_count": len(channel.videos),
-                "videos": [
-                    {
-                        "video_id": v.video_id,
-                        "title": v.title,
-                        "download_status": v.download_status,
-                        "upload_date": v.upload_date.isoformat() if v.upload_date else None,
-                    }
-                    for v in channel.videos
-                ]
-            }
-        
+
+            channels = plugin.config.get("channels", [])
+
+            for ch in channels:
+                if ch.get("channel_id") == collection_id or ch.get("channel_url") == collection_id:
+                    return ch
+
+            return None
+
         except Exception as e:
             logger.error(f"Error getting subscription: {e}")
             return None
         finally:
             db.close()
-    
-    async def discover_from_subscription(
-        self,
-        collection_id: str
-    ) -> List[MediaSource]:
-        """
-        Discover videos from a specific channel (standardized operation).
-        
-        Called via: POST /api/plugins/execute
-        {
-            "plugin_name": "YouTubePlugin",
-            "operation": "discover_from_subscription",
-            "params": {"collection_id": "UC_x5XG1OV2P6uZZ5FSM9Ttw"}
-        }
-        """
-        try:
-            db = next(get_db_session())
-            
-            stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == collection_id)
-            result = db.execute(stmt)
-            channel = result.scalar_one_or_none()
-            
-            if not channel:
-                logger.error(f"Channel {collection_id} not found")
-                return []
-            
-            logger.info(f"Polling specific channel: {channel.channel_name}")
-            
-            # Get channel videos
-            videos = await self._get_channel_videos(channel)
-            
-            # Update channel metadata
-            channel.last_polled_at = datetime.utcnow()
-            channel.last_video_count = len(videos)
-            
-            # Create media sources
-            sources = []
-            for video in videos:
-                source = MediaSource(
-                    source_id=video["id"],
-                    media_type=MediaType.YOUTUBE,
-                    uri=video["url"],
-                    metadata={
-                        "title": video.get("title"),
-                        "channel_name": channel.channel_name,
-                        "channel_id": channel.channel_id,
-                        "duration": video.get("duration"),
-                        "thumbnail": video.get("thumbnail"),
-                        "upload_date": video.get("upload_date"),
-                    },
-                    priority="normal",
-                    estimated_size_bytes=video.get("filesize"),
-                    estimated_duration_seconds=video.get("duration"),
-                )
-                sources.append(source)
-            
-            db.commit()
-            logger.info(f"Discovered {len(sources)} sources from {channel.channel_name}")
-            return sources
-        
-        except Exception as e:
-            logger.error(f"Error discovering from subscription: {e}")
-            return []
-        finally:
-            db.close()
-    
-    async def archive_from_subscription(
-        self,
-        collection_id: str
-    ) -> List[ArchiveResult]:
-        """
-        Archive all videos from a channel (standardized operation).
-        
-        Called via: POST /api/plugins/execute
-        {
-            "plugin_name": "YouTubePlugin",
-            "operation": "archive_from_subscription",
-            "params": {"collection_id": "UC_x5XG1OV2P6uZZ5FSM9Ttw"}
-        }
-        """
-        sources = await self.discover_from_subscription(collection_id)
-        results = []
-        
-        for source in sources:
-            try:
-                result = await self.archive(source)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Failed to archive {source.source_id}: {e}")
-                results.append(ArchiveResult(success=False, error=str(e)))
-        
-        return results
-    
+
     # ========== ConfigurablePluginMixin Operations ==========
-    
+
     def get_config(self) -> Dict[str, Any]:
         """Get current plugin configuration."""
         return {
             "download_dir": self.download_dir,
-            "max_concurrent_downloads": self._max_concurrent_downloads,
             **self.config
         }
-    
+
     async def update_config(self, config: Dict[str, Any]) -> bool:
         """Update plugin configuration."""
         self.config.update(config)
-        
+
         if "download_dir" in config:
             self.download_dir = config["download_dir"]
             os.makedirs(self.download_dir, exist_ok=True)
-        
-        if "max_concurrent_downloads" in config:
-            self._max_concurrent_downloads = config["max_concurrent_downloads"]
-        
+
         logger.info(f"Configuration updated: {config}")
         return True
-    
+
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration."""
         return {
@@ -697,35 +638,35 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             "download_dir": self.download_dir,
             "max_videos_per_channel": 50,
         }
-    
+
     # ========== Private Helper Methods ==========
-    
-    async def _get_channel_videos(self, channel: YouTubeChannel) -> List[Dict[str, Any]]:
-        """Get videos from a YouTube channel using yt-dlp."""
+
+    async def _get_channel_videos_from_url(self, channel_url: str) -> List[Dict[str, Any]]:
+        """Get videos from a YouTube channel URL using yt-dlp."""
         try:
             cmd = [
                 "yt-dlp",
                 "--flat-playlist",
                 "--dump-json",
                 "--skip-download",
-                f"{channel.channel_url}"
+                channel_url
             ]
-            
+
             max_videos = self.config.get("max_videos_per_channel", 50)
             if max_videos:
                 cmd.extend(["--playlist-end", str(max_videos)])
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=300
             )
-            
+
             if result.returncode != 0:
-                logger.error(f"yt-dlp error for channel {channel.channel_name}: {result.stderr}")
+                logger.error(f"yt-dlp error for channel {channel_url}: {result.stderr}")
                 return []
-            
+
             videos = []
             for line in result.stdout.strip().split('\n'):
                 if not line:
@@ -735,36 +676,37 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                     videos.append(video_data)
                 except json.JSONDecodeError:
                     continue
-            
+
             return videos
-        
+
         except subprocess.TimeoutExpired:
-            logger.error(f"Timeout getting videos for channel {channel.channel_name}")
+            logger.error(f"Timeout getting videos for channel {channel_url}")
             return []
         except Exception as e:
             logger.error(f"Error getting channel videos: {e}")
             return []
-    
-    async def _download_video(self, source: MediaSource, channel: YouTubeChannel) -> Dict[str, Any]:
+
+    async def _download_video(self, source: MediaSource) -> Dict[str, Any]:
         """Download a YouTube video using yt-dlp."""
         try:
-            channel_dir = os.path.join(self.download_dir, channel.channel_name)
+            channel_name = source.metadata.get("channel_name", "Unknown")
+            channel_dir = os.path.join(self.download_dir, channel_name)
             os.makedirs(channel_dir, exist_ok=True)
-            
+
             safe_title = "".join(c for c in source.metadata.get("title", "video") if c.isalnum() or c in (' ', '-', '_'))
             output_template = os.path.join(channel_dir, f"{safe_title}.%(ext)s")
-            
+
             cmd = [
                 "yt-dlp",
-                "--format", channel.video_format if channel.video_format != "best" else "bestvideo+bestaudio/best",
+                "--format", source.metadata.get("video_format", "best") if source.metadata.get("video_format") != "best" else "bestvideo+bestaudio/best",
                 "--merge-output-format", "mp4",
                 "--output", output_template,
                 source.uri
             ]
-            
-            if channel.download_subtitles:
+
+            if source.metadata.get("download_subtitles"):
                 cmd.extend(["--write-subs", "--write-auto-subs", "--sub-lang", "en"])
-            
+
             logger.info(f"Downloading video: {source.uri}")
             result = subprocess.run(
                 cmd,
@@ -772,31 +714,31 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 text=True,
                 timeout=3600
             )
-            
+
             if result.returncode != 0:
                 logger.error(f"yt-dlp download error: {result.stderr}")
                 return {
                     "success": False,
                     "error": result.stderr,
                 }
-            
+
             output_path = None
             for line in result.stdout.split('\n'):
                 if "[download] Destination:" in line:
                     output_path = line.split("[download] Destination:")[1].strip()
-            
+
             file_size_bytes = None
             if output_path and os.path.exists(output_path):
                 file_size_bytes = os.path.getsize(output_path)
-            
+
             logger.info(f"Successfully downloaded video to: {output_path}")
-            
+
             return {
                 "success": True,
                 "output_path": output_path,
                 "file_size_bytes": file_size_bytes,
             }
-        
+
         except subprocess.TimeoutExpired:
             logger.error(f"Timeout downloading video {source.source_id}")
             return {
@@ -809,20 +751,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 "success": False,
                 "error": str(e),
             }
-    
-    def _parse_upload_date(self, upload_date_str: Optional[str]) -> Optional[datetime]:
-        """Parse upload date from yt-dlp format (YYYYMMDD)."""
-        if not upload_date_str or len(upload_date_str) != 8:
-            return None
-        
-        try:
-            year = int(upload_date_str[:4])
-            month = int(upload_date_str[4:6])
-            day = int(upload_date_str[6:8])
-            return datetime(year, month, day)
-        except:
-            return None
-    
+
     async def _extract_channel_id(self, channel_url: str) -> Optional[str]:
         """Extract channel ID from a YouTube channel URL."""
         try:
@@ -833,24 +762,24 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 "--skip-download",
                 channel_url
             ]
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=60
             )
-            
+
             if result.returncode != 0:
                 return None
-            
+
             data = json.loads(result.stdout.strip())
             return data.get("channel_id") or data.get("channel")
-        
+
         except Exception as e:
             logger.error(f"Error extracting channel ID: {e}")
             return None
-    
+
     async def _get_channel_name(self, channel_url: str) -> Optional[str]:
         """Get channel name from URL."""
         try:
@@ -861,20 +790,20 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 "--skip-download",
                 channel_url
             ]
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=60
             )
-            
+
             if result.returncode != 0:
                 return None
-            
+
             data = json.loads(result.stdout.strip())
             return data.get("channel") or data.get("uploader")
-        
+
         except Exception as e:
             logger.error(f"Error getting channel name: {e}")
             return None

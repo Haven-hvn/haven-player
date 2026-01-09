@@ -13,6 +13,9 @@ import type {
   UploadQueueEntry,
 } from '../types/plugin';
 
+// Re-export types for use by other modules
+export type { UploadQueueStatus, UploadQueueEntry };
+
 export interface UploadWorkerStatus {
   isRunning: boolean;
   config: UploadCoordinatorConfig;

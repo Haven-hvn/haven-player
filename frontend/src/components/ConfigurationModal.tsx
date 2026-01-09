@@ -686,7 +686,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
               justifyContent: "center",
             }}
           >
-            <SmartDisplay sx={{ color: "#FFFFFF", fontSize: 14 }} />
+            <PlaybackIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
           </Box>
           <Typography
             variant="h6"

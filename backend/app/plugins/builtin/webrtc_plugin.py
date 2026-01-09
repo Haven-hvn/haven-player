@@ -9,6 +9,8 @@ from typing import Dict, Any, List
 import logging
 import asyncio
 
+from sqlalchemy import select
+
 from app.plugins.plugin_interface import (
     ArchiverPlugin,
     PluginMetadata,

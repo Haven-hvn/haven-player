@@ -401,10 +401,11 @@ async def update_plugin_config(
 @router.get("/{plugin_name}/config")
 async def get_plugin_config(
     plugin_name: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    plugin_mgr: PluginManager = Depends(get_plugin_manager)
 ):
     """
-    Get plugin configuration from database.
+    Get plugin configuration from database or from plugin defaults.
     
     Args:
         plugin_name: Name of the plugin
@@ -414,13 +415,29 @@ async def get_plugin_config(
             PluginModel.name == plugin_name
         ).first()
         
-        if not db_plugin:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Plugin {plugin_name} configuration not found"
-            )
+        # If configuration exists in database, return it
+        if db_plugin:
+            return db_plugin.to_dict()
         
-        return db_plugin.to_dict()
+        # If no database configuration, check if plugin is loaded and has default config
+        plugin = plugin_mgr.get_plugin(plugin_name)
+        
+        if plugin and hasattr(plugin, 'get_default_config'):
+            # Return default configuration from plugin
+            default_config = plugin.get_default_config()
+            return {
+                "name": plugin_name,
+                "enabled": False,
+                "config": default_config,
+                "priority": 0,
+                "is_default": True
+            }
+        
+        # Plugin doesn't exist or doesn't support configuration
+        raise HTTPException(
+            status_code=404,
+            detail=f"Plugin {plugin_name} configuration not found and plugin does not support default configuration"
+        )
     
     except HTTPException:
         raise

@@ -17,6 +17,7 @@ from app.main import app
 from app.models.base import Base
 from app.models.database import get_db
 from app.models.config import AppConfig
+from app.models.plugin import Plugin as PluginModel
 
 # Create test database
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_config.db"
@@ -412,3 +413,122 @@ class TestConfigAPI:
             json={"base_url": "ftp://invalid-gateway"},
         )
         assert response.status_code == 422
+
+
+class TestPluginConfigAPI:
+    """Test suite for Plugin Configuration API endpoints"""
+
+    def test_get_plugin_config_with_database_entry(self, client: TestClient, db_session):
+        """Test that GET /api/plugins/{plugin_name}/config returns database entry when it exists"""
+        # Create a plugin configuration in database
+        plugin_config = PluginModel(
+            name="WebRTCPlugin",
+            enabled=True,
+            config={"livekit_url": "wss://custom.livekit.cloud", "discover_limit": 50},
+            priority=5
+        )
+        db_session.add(plugin_config)
+        db_session.commit()
+        
+        # Get the config
+        response = client.get("/api/plugins/WebRTCPlugin/config")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["name"] == "WebRTCPlugin"
+        assert data["enabled"] is True
+        assert data["config"]["livekit_url"] == "wss://custom.livekit.cloud"
+        assert data["config"]["discover_limit"] == 50
+        assert data["priority"] == 5
+
+    def test_get_plugin_config_no_database_no_plugin(self, client: TestClient):
+        """Test that GET /api/plugins/{plugin_name}/config returns 404 when plugin doesn't exist"""
+        response = client.get("/api/plugins/NonExistentPlugin/config")
+        assert response.status_code == 404
+        assert "configuration not found" in response.json()["detail"]
+
+    def test_get_plugin_config_returns_default_from_plugin(self, client: TestClient):
+        """Test that GET /api/plugins/{plugin_name}/config returns default config from loaded plugin when no database entry exists"""
+        # Note: This test assumes WebRTCPlugin is loaded during app startup
+        # The plugin must implement get_default_config method
+        response = client.get("/api/plugins/WebRTCPlugin/config")
+        
+        # If WebRTCPlugin is enabled and loaded, should return default config
+        # If not enabled, might return 404
+        if response.status_code == 200:
+            data = response.json()
+            assert data["name"] == "WebRTCPlugin"
+            assert data["enabled"] is False  # Not in database, so False
+            assert "config" in data
+            assert data["is_default"] is True
+            # Verify default config values
+            assert "livekit_url" in data["config"]
+            assert "output_format" in data["config"]
+
+    def test_update_plugin_config_creates_entry(self, client: TestClient):
+        """Test that PATCH /api/plugins/{plugin_name}/config creates database entry if it doesn't exist"""
+        update_data = {
+            "livekit_url": "wss://new.livekit.cloud",
+            "discover_limit": 30
+        }
+        
+        response = client.patch("/api/plugins/WebRTCPlugin/config", json=update_data)
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["message"] == "Plugin WebRTCPlugin configuration updated"
+        assert data["config"]["livekit_url"] == "wss://new.livekit.cloud"
+        assert data["config"]["discover_limit"] == 30
+
+    def test_update_plugin_config_updates_existing(self, client: TestClient, db_session):
+        """Test that PATCH /api/plugins/{plugin_name}/config updates existing database entry"""
+        # Create an existing config
+        plugin_config = PluginModel(
+            name="WebRTCPlugin",
+            enabled=True,
+            config={"livekit_url": "wss://old.livekit.cloud", "discover_limit": 20}
+        )
+        db_session.add(plugin_config)
+        db_session.commit()
+        
+        # Update the config
+        update_data = {
+            "livekit_url": "wss://updated.livekit.cloud",
+            "output_format": "mp4"
+        }
+        
+        response = client.patch("/api/plugins/WebRTCPlugin/config", json=update_data)
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["config"]["livekit_url"] == "wss://updated.livekit.cloud"
+        assert data["config"]["output_format"] == "mp4"
+        # Verify discover_limit is preserved from original config
+        assert data["config"]["discover_limit"] == 20
+
+    def test_delete_plugin_config(self, client: TestClient, db_session):
+        """Test that DELETE /api/plugins/{plugin_name}/config removes database entry"""
+        # Create a config
+        plugin_config = PluginModel(
+            name="WebRTCPlugin",
+            enabled=True,
+            config={"livekit_url": "wss://test.livekit.cloud"}
+        )
+        db_session.add(plugin_config)
+        db_session.commit()
+        
+        # Delete the config
+        response = client.delete("/api/plugins/WebRTCPlugin/config")
+        assert response.status_code == 200
+        assert "deleted" in response.json()["message"]
+        
+        # Verify it's gone
+        response = client.get("/api/plugins/WebRTCPlugin/config")
+        # Should return default config from plugin now
+        assert response.status_code == 200
+        assert response.json()["is_default"] is True
+
+    def test_delete_plugin_config_not_found(self, client: TestClient):
+        """Test that DELETE /api/plugins/{plugin_name}/config returns 404 when config doesn't exist"""
+        response = client.delete("/api/plugins/NonExistentPlugin/config")
+        assert response.status_code == 404

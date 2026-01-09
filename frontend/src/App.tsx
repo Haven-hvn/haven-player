@@ -217,7 +217,6 @@ const MainApp: React.FC = () => {
   const [aiConfig, setAiConfig] = useState<typeof DEFAULT_AI_CONFIG | null>(
     null
   );
-  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
 
   // Filecoin upload hook
   const { uploadStatus, uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
@@ -347,6 +346,25 @@ const MainApp: React.FC = () => {
       console.error("Failed to save hidden videos to localStorage:", error);
     }
   }, [hiddenVideos]);
+
+  // Filecoin config for MainApp
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+
+  // Load Filecoin config on mount
+  useEffect(() => {
+    const loadFilecoinConfig = async () => {
+      try {
+        const { ipcRenderer } = require("electron");
+        const config = await ipcRenderer.invoke("get-filecoin-config");
+        if (config) {
+          setFilecoinConfig(config);
+        }
+      } catch (error) {
+        console.error("Failed to load Filecoin config:", error);
+      }
+    };
+    loadFilecoinConfig();
+  }, []);
 
   const isBitTorrentEnabled = useMemo(() => {
     const bittorrentPlugin = plugins.find((p) => p.name === "BitTorrentPlugin");
@@ -632,48 +650,6 @@ const MainApp: React.FC = () => {
     refreshVideos();
   }, [refreshVideos]);
 
-  const handleConfigSave = useCallback(
-    async (configToSave: typeof DEFAULT_AI_CONFIG) => {
-      try {
-        const response = await fetch("http://localhost:8000/api/config/", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(configToSave),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.detail || "Failed to save configuration");
-        }
-
-        setAiConfig(configToSave);
-        console.log("✅ Configuration saved successfully");
-      } catch (error) {
-        console.error("❌ Failed to save configuration:", error);
-        throw error;
-      }
-    },
-    []
-  );
-
-  // Load Filecoin config on mount
-  useEffect(() => {
-    const loadFilecoinConfig = async () => {
-      try {
-        const { ipcRenderer } = require("electron");
-        const config = await ipcRenderer.invoke("get-filecoin-config");
-        if (config) {
-          setFilecoinConfig(config);
-        }
-      } catch (error) {
-        console.error("Failed to load Filecoin config:", error);
-      }
-    };
-    loadFilecoinConfig();
-  }, []);
-
   // Handle Filecoin upload
   const handleUploadToFilecoin = useCallback(
     async (video: Video) => {
@@ -696,12 +672,6 @@ const MainApp: React.FC = () => {
     },
     [filecoinConfig, uploadVideoToFilecoin, refreshVideos, ensureFilecoinSettings]
   );
-
-  // Handle Filecoin config save
-  const handleFilecoinConfigSave = useCallback(async (config: FilecoinConfig) => {
-    setFilecoinConfig(config);
-    console.log("✅ Filecoin configuration saved");
-  }, []);
 
   // Initialize analysis statuses for videos with AI data
   useEffect(() => {
@@ -833,17 +803,6 @@ const MainApp: React.FC = () => {
         </Box>
       </Box>
 
-      {/* Configuration Modal */}
-      <ConfigurationModal
-        open={settingsOpen}
-        activeTab={settingsActiveTab}
-        onTabChange={setActiveTab}
-        onClose={closeSettings}
-        onSave={handleConfigSave}
-        onSaveFilecoin={handleFilecoinConfigSave}
-        initialFilecoinConfig={filecoinConfig}
-      />
-
       <AddVideoModal
         open={isAddVideoModalOpen}
         onClose={() => setAddVideoModalOpen(false)}
@@ -972,6 +931,75 @@ const MyVideosPage: React.FC = () => {
         </Box>
       </Box>
     </Box>
+  );
+};
+
+// Global Configuration Modal wrapper - provides all necessary state across the app
+const GlobalConfigurationModal: React.FC = () => {
+  const {
+    isOpen: settingsOpen,
+    activeTab: settingsActiveTab,
+    closeSettings,
+    setActiveTab,
+  } = useSettingsNavigation();
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+
+  // Load Filecoin config on mount
+  useEffect(() => {
+    const loadFilecoinConfig = async () => {
+      try {
+        const { ipcRenderer } = require("electron");
+        const config = await ipcRenderer.invoke("get-filecoin-config");
+        if (config) {
+          setFilecoinConfig(config);
+        }
+      } catch (error) {
+        console.error("Failed to load Filecoin config:", error);
+      }
+    };
+    loadFilecoinConfig();
+  }, []);
+
+  const handleConfigSave = useCallback(
+    async (configToSave: typeof DEFAULT_AI_CONFIG) => {
+      try {
+        const response = await fetch("http://localhost:8000/api/config/", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(configToSave),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || "Failed to save configuration");
+        }
+
+        console.log("✅ Configuration saved successfully");
+      } catch (error) {
+        console.error("❌ Failed to save configuration:", error);
+        throw error;
+      }
+    },
+    []
+  );
+
+  const handleFilecoinConfigSave = useCallback(async (config: FilecoinConfig) => {
+    setFilecoinConfig(config);
+    console.log("✅ Filecoin configuration saved");
+  }, []);
+
+  return (
+    <ConfigurationModal
+      open={settingsOpen}
+      activeTab={settingsActiveTab}
+      onTabChange={setActiveTab}
+      onClose={closeSettings}
+      onSave={handleConfigSave}
+      onSaveFilecoin={handleFilecoinConfigSave}
+      initialFilecoinConfig={filecoinConfig}
+    />
   );
 };
 
@@ -1154,6 +1182,8 @@ const App: React.FC = () => {
               <Route path="/player/:videoPath" element={<VideoPlayer />} />
             </Routes>
           </Router>
+          {/* Global Configuration Modal - available from all routes */}
+          <GlobalConfigurationModal />
           {/* Log Viewer - always available */}
           <LogViewer />
         </Box>

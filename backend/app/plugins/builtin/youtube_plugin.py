@@ -803,6 +803,10 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
             data = json.loads(result.stdout.strip())
             return data.get("channel") or data.get("uploader")
+        except Exception as e:
+            logger.error(f"Error getting channel name: {e}")
+            return None
+
 
     # ========== Additional Mixin Methods ==========
 

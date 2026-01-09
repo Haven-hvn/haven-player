@@ -13,7 +13,7 @@ import importlib
 import inspect
 import logging
 from pathlib import Path
-from typing import Dict, List, Type, Optional, Set
+from typing import Dict, List, Type, Optional, Set, Any
 
 from app.plugins.plugin_interface import (
     ArchiverPlugin,
@@ -224,17 +224,27 @@ class PluginManager:
             logger.info(f"Found {len(classes_found)} classes in module {module_name}")
 
             for name, obj in classes_found:
-                logger.debug(f"Examining class: {name}")
+                logger.info(f"Examining class: {name} from module {obj.__module__}")
                 # Check if class inherits from ArchiverPlugin
-                if (issubclass(obj, ArchiverPlugin) and
-                    obj is not ArchiverPlugin and
-                    obj.__module__ == module_name and
-                    not inspect.isabstract(obj)):
+                is_subclass = issubclass(obj, ArchiverPlugin) if hasattr(obj, '__mro__') else False
+                is_not_base = obj is not ArchiverPlugin
+                is_correct_module = obj.__module__ == module_name
+                is_not_abstract = not inspect.isabstract(obj)
+
+                logger.info(f"  - is_subclass of ArchiverPlugin: {is_subclass}")
+                logger.info(f"  - is not ArchiverPlugin: {is_not_base}")
+                logger.info(f"  - correct module: {is_correct_module}")
+                logger.info(f"  - not abstract: {is_not_abstract}")
+
+                if (is_subclass and
+                    is_not_base and
+                    is_correct_module and
+                    is_not_abstract):
 
                     # Register the plugin class
                     self.plugin_classes[name] = obj
                     logger.info(f"✓ Discovered plugin class: {name} from {module_name}")
-                    
+
                     # Get metadata for logging
                     try:
                         # Create temporary instance to get metadata

@@ -897,8 +897,3 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             return {"status": "error", "error": str(e)}
         finally:
             db.close()
-
-
-        except Exception as e:
-            logger.error(f"Error getting channel name: {e}")
-            return None

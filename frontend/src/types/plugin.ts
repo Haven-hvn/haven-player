@@ -193,3 +193,53 @@ export interface BitTorrentPluginConfig {
   max_concurrent_downloads: number;
   glitter_endpoint: string;
 }
+
+// ========== Recurring Job Types ==========
+
+export interface RecurringJob {
+  id: number;
+  plugin_name: string;
+  job_name: string;
+  schedule: string;  // cron format: "minute hour day month weekday"
+  method: string;  // e.g., "discover_sources"
+  on_success: string; // "log_only", "archive_all", "archive_new"
+  config: Record<string, any>;
+  enabled: boolean;
+  is_running: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  total_runs: number;
+  successful_runs: number;
+  failed_runs: number;
+  last_error: string | null;
+  last_error_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecurringJobCreate {
+  plugin_name: string;
+  job_name: string;
+  schedule: string;
+  method: string;
+  on_success: string;
+  config: Record<string, any>;
+}
+
+export interface RecurringJobUpdate {
+  enabled?: boolean;
+  schedule?: string;
+  method?: string;
+  on_success?: string;
+  config?: Record<string, any>;
+}
+
+export interface SchedulerStatus {
+  running: boolean;
+  total_jobs: number;
+  jobs: Array<{
+    id: string;
+    name: string;
+    next_run: string | null;
+  }>;
+}

@@ -9,6 +9,10 @@ import {
   ArchiveResult,
   PluginConfig,
   DiscoverResponse,
+  RecurringJob,
+  RecurringJobCreate,
+  RecurringJobUpdate,
+  SchedulerStatus,
 } from '@/types/plugin';
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -304,6 +308,68 @@ export const pluginService = {
       source_id: sourceId,
     });
     const response = await api.post<ArchiveResult>(`/archive?${params.toString()}`);
+    return response.data;
+  },
+
+  // ============================================
+  // Recurring Jobs
+  // ============================================
+
+  // Get all recurring jobs
+  getRecurringJobs: async (pluginName?: string): Promise<{ jobs: RecurringJob[]; count: number }> => {
+    const params = pluginName ? { plugin_name: pluginName } : {};
+    const response = await api.get<{ jobs: RecurringJob[]; count: number }>('/recurring-jobs/jobs/recurring', { params });
+    return response.data;
+  },
+
+  // Get a specific recurring job
+  getRecurringJob: async (jobId: number): Promise<RecurringJob> => {
+    const response = await api.get<RecurringJob>(`/recurring-jobs/jobs/recurring/${jobId}`);
+    return response.data;
+  },
+
+  // Create a recurring job
+  createRecurringJob: async (jobData: RecurringJobCreate): Promise<{ message: string; job: RecurringJob }> => {
+    const response = await api.post<{ message: string; job: RecurringJob }>('/recurring-jobs/jobs/recurring', jobData);
+    return response.data;
+  },
+
+  // Update a recurring job
+  updateRecurringJob: async (
+    jobId: number,
+    jobData: Partial<RecurringJobUpdate>
+  ): Promise<{ message: string }> => {
+    const response = await api.patch<{ message: string }>(`/recurring-jobs/jobs/recurring/${jobId}`, jobData);
+    return response.data;
+  },
+
+  // Delete a recurring job
+  deleteRecurringJob: async (jobId: number): Promise<{ message: string }> => {
+    const response = await api.delete<{ message: string }>(`/recurring-jobs/jobs/recurring/${jobId}`);
+    return response.data;
+  },
+
+  // Pause a recurring job
+  pauseRecurringJob: async (jobId: number): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(`/recurring-jobs/jobs/recurring/${jobId}/pause`);
+    return response.data;
+  },
+
+  // Resume a recurring job
+  resumeRecurringJob: async (jobId: number): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(`/recurring-jobs/jobs/recurring/${jobId}/resume`);
+    return response.data;
+  },
+
+  // Run a job manually
+  runJobNow: async (jobId: number): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(`/recurring-jobs/jobs/recurring/${jobId}/run`);
+    return response.data;
+  },
+
+  // Get scheduler status
+  getSchedulerStatus: async (): Promise<SchedulerStatus> => {
+    const response = await api.get<SchedulerStatus>('/recurring-jobs/jobs/recurring/scheduler');
     return response.data;
   },
 };

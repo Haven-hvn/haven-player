@@ -151,18 +151,7 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
               placeholder="https://gw.magnode.ru/v1/sql/query"
             />
           </Grid>
-          <Grid size={{ xs: 12, sm: 6 }}>
-            <TextField
-              fullWidth
-              size="small"
-              label="Download Directory"
-              value={config.download_dir}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ ...config, download_dir: e.target.value })}
-              helperText="Directory for downloaded torrents"
-              placeholder="downloads/bittorrent"
-            />
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6 }}>
+          <Grid size={{ xs: 12 }}>
             <TextField
               fullWidth
               size="small"

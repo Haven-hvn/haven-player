@@ -308,7 +308,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 new_video_entry = Video(
                     path=file_path,
                     title=source.metadata.get("title"),
-                    duration=source.estimated_duration_seconds,
+                    duration=source.estimated_duration_seconds or 0,  # Default to 0 if not available
                     thumbnail_path=source.metadata.get("thumbnail"),
                     file_size=file_size,
                     file_extension=file_extension,

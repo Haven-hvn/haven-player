@@ -19,8 +19,6 @@ class AppConfig(Base):
     recording_directory: Mapped[str] = mapped_column(String, default="~/.haven-player/recordings")
     # Global Plugin Configuration
     download_directory: Mapped[str] = mapped_column(String, default="downloads")
-    # Glitter Configuration
-    glitter_endpoint: Mapped[str] = mapped_column(String, default="https://gw.magnode.ru/v1/sql/query")
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -33,6 +31,5 @@ class AppConfig(Base):
             'max_batch_size': self.max_batch_size,
             'recording_directory': self.recording_directory,
             'download_directory': self.download_directory,
-            'glitter_endpoint': self.glitter_endpoint,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

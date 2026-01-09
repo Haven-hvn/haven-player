@@ -78,7 +78,6 @@ class ConfigUpdate(BaseModel):
     llm_base_url: str
     llm_model: str
     max_batch_size: int
-    glitter_endpoint: str
     download_directory: str
 
     @field_validator('analysis_tags')
@@ -111,15 +110,6 @@ class ConfigUpdate(BaseModel):
             raise ValueError('Max batch size must be between 1 and 10')
         return v
 
-    @field_validator('glitter_endpoint')
-    @classmethod
-    def validate_glitter_endpoint(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError('Glitter endpoint cannot be empty')
-        if not v.startswith(('http://', 'https://')):
-            raise ValueError('Glitter endpoint must start with http:// or https://')
-        return v.strip()
-
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
@@ -128,7 +118,6 @@ class ConfigResponse(BaseModel):
     llm_base_url: str
     llm_model: str
     max_batch_size: int
-    glitter_endpoint: str
     download_directory: str
     updated_at: datetime
 
@@ -161,7 +150,6 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     config.llm_base_url = config_update.llm_base_url
     config.llm_model = config_update.llm_model
     config.max_batch_size = config_update.max_batch_size
-    config.glitter_endpoint = config_update.glitter_endpoint
     config.download_directory = config_update.download_directory
     config.updated_at = datetime.now(timezone.utc)
     

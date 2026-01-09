@@ -1,16 +1,21 @@
 import requests
 import logging
 from typing import List, Dict, Any
-from sqlalchemy.orm import Session
 from app.models.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
-def query_glitter_protocol(search_term: str, db: Session) -> List[Dict[str, Any]]:
+def query_glitter_protocol(search_term: str, endpoint: str = "https://gw.magnode.ru/v1/sql/query") -> List[Dict[str, Any]]:
     """
     Queries the Glitter protocol for a given search term.
+
+    Args:
+        search_term: The search term to query
+        endpoint: The Glitter endpoint URL (defaults to public endpoint)
+
+    Returns:
+        List of torrent metadata dictionaries
     """
-    endpoint = "https://gw.magnode.ru/v1/sql/query"
     
     # Using a simplified query construction inspired by anybtsample.py
     queries = [f"file_name:'{search_term}'^1.0"]

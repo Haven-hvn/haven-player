@@ -65,12 +65,12 @@ class StreamManager:
 
             StreamManager._initialized = True
             logger.info("✅ StreamManager singleton initialized")
-        
+
     async def initialize(self) -> None:
         """Initialize the stream manager with configuration."""
         if self.config:
             return
-            
+
         db = next(get_db())
         try:
             config = db.query(AppConfig).first()
@@ -81,7 +81,7 @@ class StreamManager:
         finally:
             db.close()
 
-async def start_stream(self, mint_id: str, livekit_url: str = "wss://pump-prod-tg2x8veh.livekit.cloud") -> Dict[str, Any]:
+    async def start_stream(self, mint_id: str, livekit_url: str = "wss://pump-prod-tg2x8veh.livekit.cloud") -> Dict[str, Any]:
         """
         Start a new stream connection for the given mint_id.
         Returns stream information for both streaming and recording.

@@ -25,6 +25,7 @@ from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 from app.models.config import AppConfig
 from app.models.database import get_db as get_db_session
 from app.models.bittorrent_plugin import BitTorrentSubscription, BitTorrentTorrent
+from app.models.plugin import Plugin
 from app.models.video import Video, Timestamp
 from app.models.analysis_job import AnalysisJob
 from app.lib.glitter_client import query_glitter_protocol
@@ -42,6 +43,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
         self.config = {}
         self.initialized = False
         self.download_dir = "downloads/bittorrent"  # Default, will be overwritten by global config
+        self.glitter_endpoint = "https://gw.magnode.ru/v1/sql/query"  # Default Glitter endpoint
 
     def get_metadata(self) -> PluginMetadata:
         """Return plugin metadata."""
@@ -57,6 +59,22 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
         """Initialize plugin with configuration."""
         self.config = config
         db = next(get_db_session())
+        
+        # Load plugin config from Plugin table
+        plugin_config = {}
+        try:
+            plugin_record = db.query(Plugin).filter(Plugin.name == "BitTorrentPlugin").first()
+            if plugin_record and plugin_record.config:
+                plugin_config = plugin_record.config
+                if "glitter_endpoint" in plugin_config:
+                    self.glitter_endpoint = plugin_config["glitter_endpoint"]
+                    logger.info(f"Loaded glitter_endpoint from plugin config: {self.glitter_endpoint}")
+        except Exception as e:
+            logger.warning(f"Could not load plugin config: {e}")
+        finally:
+            pass  # Keep db open for next query
+        
+        # Load download directory from global config or fall back to plugin config
         app_config = db.query(AppConfig).first()
         if app_config and app_config.download_directory:
             self.download_dir = app_config.download_directory
@@ -90,10 +108,10 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
 
             logger.info(f"Polling {len(subscriptions)} BitTorrent subscriptions.")
             new_sources = []
-            for sub in subscriptions:
-                logger.info(f"Searching for '{sub.search_term}'")
-                torrents = query_glitter_protocol(sub.search_term)
-                logger.info(f"Found {len(torrents)} torrents for '{sub.search_term}'.")
+                for sub in subscriptions:
+                    logger.info(f"Searching for '{sub.search_term}'")
+                    torrents = query_glitter_protocol(sub.search_term, self.glitter_endpoint)
+                    logger.info(f"Found {len(torrents)} torrents for '{sub.search_term}'.")
 
                 for torrent_data in torrents:
                     existing_stmt = select(BitTorrentTorrent).where(BitTorrentTorrent.infohash == torrent_data["infohash"])
@@ -369,3 +387,62 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             return None
         finally:
             db.close()
+
+    # ========== ConfigurablePluginMixin Operations ==========
+    
+    def get_config(self) -> Dict[str, Any]:
+        """Get current plugin configuration."""
+        return {
+            "download_dir": self.download_dir,
+            "glitter_endpoint": self.glitter_endpoint,
+            **self.config
+        }
+    
+    async def update_config(self, config: Dict[str, Any]) -> bool:
+        """Update plugin configuration."""
+        self.config.update(config)
+        
+        if "glitter_endpoint" in config:
+            self.glitter_endpoint = config["glitter_endpoint"]
+            logger.info(f"Updated glitter_endpoint to: {self.glitter_endpoint}")
+        
+        if "download_dir" in config:
+            self.download_dir = config["download_dir"]
+            os.makedirs(self.download_dir, exist_ok=True)
+        
+        # Also update the Plugin model in database
+        db = next(get_db_session())
+        try:
+            plugin_record = db.query(Plugin).filter(Plugin.name == "BitTorrentPlugin").first()
+            if plugin_record:
+                if not plugin_record.config:
+                    plugin_record.config = {}
+                plugin_record.config.update({"glitter_endpoint": self.glitter_endpoint})
+                db.commit()
+                logger.info("Updated plugin config in database")
+            else:
+                # Create plugin record if it doesn't exist
+                new_plugin = Plugin(
+                    name="BitTorrentPlugin",
+                    enabled=True,
+                    config={"glitter_endpoint": self.glitter_endpoint},
+                    priority=0
+                )
+                db.add(new_plugin)
+                db.commit()
+                logger.info("Created plugin record in database")
+        except Exception as e:
+            logger.error(f"Failed to update plugin config in database: {e}")
+            db.rollback()
+        finally:
+            db.close()
+        
+        logger.info(f"Configuration updated: {config}")
+        return True
+    
+    def get_default_config(self) -> Dict[str, Any]:
+        """Get default configuration."""
+        return {
+            "download_dir": "downloads/bittorrent",
+            "glitter_endpoint": "https://gw.magnode.ru/v1/sql/query",
+        }

@@ -28,11 +28,8 @@ class WebRTCSubscription(Base):
     # Unique identifier for the stream (could be mint_id for PumpFun streams or external reference)
     stream_id = Column(String(255), nullable=False, unique=True, index=True)
     stream_name = Column(String(500), nullable=True)
-    # LiveKit URL for this specific stream
+    # LiveKit URL for this specific stream (inherited from plugin-level configuration)
     livekit_url = Column(String(500), nullable=False, default="wss://pump-prod-tg2x8veh.livekit.cloud")
-    # LiveKit token or API credentials (encrypted)
-    livekit_api_key = Column(String(255), nullable=True)
-    livekit_api_secret = Column(String(255), nullable=True)
     enabled = Column(Boolean, default=True, nullable=False)
     auto_record = Column(Boolean, default=True, nullable=False)
     # Stream-specific configuration (quality settings, etc.)

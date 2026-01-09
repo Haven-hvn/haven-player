@@ -67,7 +67,6 @@ interface AppConfig {
   llm_base_url: string;
   llm_model: string;
   max_batch_size: number;
-  glitter_endpoint: string;
   download_directory: string; /* Added global download directory */
   updated_at: string;
 }
@@ -103,7 +102,6 @@ const defaultAppConfig: EditableAppConfig = {
   llm_base_url: "http://localhost:1234",
   llm_model: "HuggingFaceTB/SmolVLM-Instruct",
   max_batch_size: 1,
-  glitter_endpoint: "https://gw.magnode.ru/v1/sql/query",
   download_directory: "downloads", /* Added default download directory */
 };
 
@@ -189,7 +187,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         llm_base_url: data.llm_base_url,
         llm_model: data.llm_model,
         max_batch_size: data.max_batch_size,
-        glitter_endpoint: data.glitter_endpoint,
         download_directory: data.download_directory, /* Added global download directory */
       });
     } catch (err) {
@@ -1455,35 +1452,12 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         return renderEncryptionContent();
       case "arkiv":
         return renderArkivContent();
-      case "glitter":
-        return renderGlitterContent();
       default:
         return null;
     }
   };
 
-  const renderGlitterContent = (): JSX.Element => (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        Glitter Configuration
-      </Typography>
-      <TextField
-        fullWidth
-        label="Glitter Endpoint URL"
-        value={config.glitter_endpoint}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-          setConfig((prev: EditableAppConfig) => ({
-            ...prev,
-            glitter_endpoint: e.target.value,
-          }))
-        }
-        placeholder="https://gw.magnode.ru/v1/sql/query"
-        helperText="URL for the Glitter protocol endpoint"
-      />
-    </Box>
-  );
-
-  return (
+  const renderEncryptionContent = (): JSX.Element => (
     <Dialog
       open={open}
       onClose={onClose}

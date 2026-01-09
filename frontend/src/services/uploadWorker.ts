@@ -96,7 +96,14 @@ export class UploadWorker {
         return;
       }
 
-      const queueEntry: UploadQueueEntry = await response.json();
+      const queueEntry: UploadQueueEntry | null = await response.json();
+
+      // Validate the queue entry
+      if (!queueEntry || !queueEntry.video_path || !queueEntry.id) {
+        console.error('[UploadWorker] Invalid queue entry received:', queueEntry);
+        return;
+      }
+
       this.isProcessing = true;
 
       console.log(`[UploadWorker] Processing upload: ${queueEntry.video_path} (id=${queueEntry.id})`);

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 import logging
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.plugins.plugin_manager import PluginManager
@@ -329,16 +330,27 @@ async def archive_source(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/health")
+@router.get("/health", response_model=List[Dict[str, Any]])
 async def plugin_health(plugin_mgr: PluginManager = Depends(get_plugin_manager)):
     """
     Health check all loaded plugins.
-    
+
     Returns the health status of all loaded plugins.
     """
     try:
-        health_status = await plugin_mgr.health_check_all()
-        return health_status
+        health_status_dict = await plugin_mgr.health_check_all()
+
+        # Convert dict to array format expected by frontend
+        health_status_array = []
+        for plugin_name, is_healthy in health_status_dict.items():
+            health_status_array.append({
+                "plugin_name": plugin_name,
+                "healthy": is_healthy,
+                "last_check": datetime.utcnow().isoformat() + "Z",
+                "error": None if is_healthy else "Plugin health check failed"
+            })
+
+        return health_status_array
     except Exception as e:
         logger.error(f"Error checking plugin health: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -121,16 +121,82 @@ class PluginManager:
                 if py_file.name.startswith("__") or py_file.name.startswith("test_"):
                     continue
                 
-                # Convert file path to module name
-                relative_path = py_file.relative_to(plugin_path.parent.parent)
-                module_name = str(relative_path.with_suffix("")).replace("/", ".")
+                # Convert file path to module name relative to plugin directory
+                relative_path = py_file.relative_to(plugin_path)
+                module_name = str(relative_path.with_suffix("")).replace("/", ".").replace("\\", ".")
+                
+                # Build full module path by prepending base package to module name
+                # For backend/app/plugins/builtin/bittorrent_plugin.py:
+                # - plugin_dir is backend/app/plugins/builtin
+                # - plugin_path is backend/app/plugins/builtin
+                # - relative_path is bittorrent_plugin.py
+                # - module_name becomes bittorrent_plugin
+                # - Need to prepend 'app.plugins.builtin'
+                
+                # Get the absolute path of plugin_dir and find its Python package name
+                plugin_abs_path = Path(plugin_dir).resolve()
+                
+                # Try to determine the Python package path from the project structure
+                # The plugin files are typically under backend/app/plugins/
+                # So we need to find where the Python source root is
+                module_path_parts = []
+                
+                # Walk up from plugin file to find the Python source root
+                # and build the full module import path
+                current_path = py_file.resolve()
+                
+                # Find the 'backend' directory or 'app' directory to start the module path
+                parts = current_path.parts
+                app_index = -1
+                backend_index = -1
+                
+                for i, part in enumerate(parts):
+                    if part == "app" and i + 1 < len(parts) and parts[i + 1] == "plugins":
+                        app_index = i
+                        break
+                    elif part == "backend":
+                        backend_index = i
+                        break
+                
+                if app_index != -1:
+                    # Use backend/app as the project root for imports
+                    # backend/app/plugins/builtin/bittorrent_plugin.py
+                    # -> app.plugins.builtin.bittorrent_plugin
+                    module_path_parts = list(parts[app_index:-1])  # ['app', 'plugins', 'builtin']
+                    module_path_parts.append(py_file.stem)  # ['app', 'plugins', 'builtin', 'bittorrent_plugin']
+                elif backend_index != -1:
+                    # Find app directory under backend
+                    for i in range(backend_index, len(parts)):
+                        if parts[i] == "app":
+                            module_path_parts = list(parts[i:-1])
+                            module_path_parts.append(py_file.stem)
+                            break
+                else:
+                    # Fallback: Use plugin_dir to construct module path
+                    # Extract 'plugins' and everything after it
+                    plugin_dir_parts = plugin_abs_path.parts
+                    plugins_index = -1
+                    for i, part in enumerate(plugin_dir_parts):
+                        if part == "plugins":
+                            plugins_index = i
+                            break
+                    
+                    if plugins_index != -1 and plugins_index > 0:
+                        # Include 'app' and everything after 'plugins'
+                        module_path_parts = list(plugin_dir_parts[plugins_index - 1:])
+                        module_path_parts.append(module_name)
+                    else:
+                        # Last resort: use just the module_name (might not work for complex structures)
+                        module_path_parts = [module_name]
+                
+                import_path = ".".join(module_path_parts)
                 
                 # Import module dynamically
                 try:
-                    self._load_module_plugins(module_name, py_file)
+                    self._load_module_plugins(import_path, py_file)
                     discovered += 1
                 except Exception as e:
-                    logger.error(f"Failed to load plugins from {module_name}: {e}")
+                    logger.error(f"Failed to import module {import_path}: {e}")
         
         logger.info(f"Discovered {discovered} plugins")
         return discovered

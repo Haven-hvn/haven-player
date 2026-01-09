@@ -45,7 +45,7 @@ def get_plugin_manager() -> PluginManager:
     return plugin_manager
 
 
-@router.get("/plugins", response_model=List[Dict[str, Any]])
+@router.get("", response_model=List[Dict[str, Any]])
 async def list_plugins(
     plugin_mgr: PluginManager = Depends(get_plugin_manager),
     db: Session = Depends(get_db)
@@ -88,7 +88,7 @@ async def list_plugins(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/plugins/discover")
+@router.post("/discover")
 async def discover_plugins(plugin_mgr: PluginManager = Depends(get_plugin_manager)):
     """
     Scan plugin directories and discover new plugins.
@@ -107,7 +107,7 @@ async def discover_plugins(plugin_mgr: PluginManager = Depends(get_plugin_manage
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/plugins/{plugin_name}/load")
+@router.post("/{plugin_name}/load")
 async def load_plugin(
     plugin_name: str,
     config: Dict[str, Any] = {},
@@ -150,7 +150,7 @@ async def load_plugin(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/plugins/{plugin_name}/unload")
+@router.post("/{plugin_name}/unload")
 async def unload_plugin(
     plugin_name: str,
     plugin_mgr: PluginManager = Depends(get_plugin_manager)
@@ -179,7 +179,7 @@ async def unload_plugin(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/plugins/{plugin_name}/restart")
+@router.post("/{plugin_name}/restart")
 async def restart_plugin(
     plugin_name: str,
     plugin_mgr: PluginManager = Depends(get_plugin_manager)
@@ -208,7 +208,7 @@ async def restart_plugin(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/plugins/sources")
+@router.get("/sources")
 async def discover_sources(plugin_mgr: PluginManager = Depends(get_plugin_manager)):
     """
     Discover sources from all loaded plugins.
@@ -238,7 +238,7 @@ async def discover_sources(plugin_mgr: PluginManager = Depends(get_plugin_manage
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/plugins/{plugin_name}/sources")
+@router.get("/{plugin_name}/sources")
 async def discover_plugin_sources(
     plugin_name: str,
     plugin_mgr: PluginManager = Depends(get_plugin_manager)
@@ -329,7 +329,7 @@ async def archive_source(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/plugins/health")
+@router.get("/health")
 async def plugin_health(plugin_mgr: PluginManager = Depends(get_plugin_manager)):
     """
     Health check all loaded plugins.
@@ -344,7 +344,7 @@ async def plugin_health(plugin_mgr: PluginManager = Depends(get_plugin_manager))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("/plugins/{plugin_name}/config")
+@router.patch("/{plugin_name}/config")
 async def update_plugin_config(
     plugin_name: str,
     config: Dict[str, Any],
@@ -386,7 +386,7 @@ async def update_plugin_config(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/plugins/{plugin_name}/config")
+@router.get("/{plugin_name}/config")
 async def get_plugin_config(
     plugin_name: str,
     db: Session = Depends(get_db)
@@ -417,7 +417,7 @@ async def get_plugin_config(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/plugins/{plugin_name}/config")
+@router.delete("/{plugin_name}/config")
 async def delete_plugin_config(
     plugin_name: str,
     db: Session = Depends(get_db)
@@ -454,7 +454,7 @@ async def delete_plugin_config(
 
 # ========== Generic Plugin Operation Endpoints ==========
 
-@router.get("/plugins/{plugin_name}/operations")
+@router.get("/{plugin_name}/operations")
 async def list_plugin_operations(plugin_name: str, plugin_mgr: PluginManager = Depends(get_plugin_manager)):
     """
     List all available operations for a plugin.
@@ -631,7 +631,7 @@ async def list_plugin_operations(plugin_name: str, plugin_mgr: PluginManager = D
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/plugins/execute")
+@router.post("/execute")
 async def execute_plugin_operation(request: PluginOperationRequest, plugin_mgr: PluginManager = Depends(get_plugin_manager)):
     """
     Execute any plugin operation dynamically.

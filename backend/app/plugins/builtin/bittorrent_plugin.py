@@ -25,7 +25,8 @@ from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 from app.models.config import AppConfig
 from app.models.database import get_db as get_db_session
 from app.models.bittorrent_plugin import BitTorrentSubscription, BitTorrentTorrent
-from app.models.video import Video
+from app.models.video import Video, Timestamp
+from app.models.analysis_job import AnalysisJob
 from app.lib.glitter_client import query_glitter_protocol
 import libtorrent as lt
 

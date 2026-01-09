@@ -44,6 +44,7 @@ class WebRTCPlugin(ArchiverPlugin):
             description="Archives WebRTC streams from pump.fun via LiveKit",
             media_types=[MediaType.WEBRTC],
             author="Haven Team",
+            capabilities=["discover_sources", "archive", "health_check", "stop_archiving", "get_archiving_status"],
         )
     
     async def initialize(self, config: Dict[str, Any]) -> bool:

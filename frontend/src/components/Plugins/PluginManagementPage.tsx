@@ -100,10 +100,10 @@ const PluginCard: React.FC<{
         </Typography>
 
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2 }}>
-          {plugin.media_types.map((type) => (
+          {(plugin.media_types || []).map((type) => (
             <Chip
               key={type}
-              label={type.toUpperCase()}
+              label={type?.toUpperCase() || 'UNKNOWN'}
               size="small"
               sx={{
                 backgroundColor: '#F5F5F5',
@@ -124,14 +124,14 @@ const PluginCard: React.FC<{
             borderTop: '1px solid #F0F0F0',
           }}
         >
-          <Typography variant="caption" color="text.secondary">
-            Priority: {plugin.priority || 0}
-          </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Priority: {plugin.priority ?? 0}
+              </Typography>
           <Typography variant="caption" color="text.secondary">
             •
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {plugin.enabled ? 'Enabled' : 'Disabled'}
+            {plugin.enabled ?? true ? 'Enabled' : 'Disabled'}
           </Typography>
         </Box>
       </CardContent>
@@ -210,8 +210,8 @@ const PluginManagementPage: React.FC = () => {
   });
 
   const filteredPlugins = plugins.filter((plugin) =>
-    plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    plugin.description.toLowerCase().includes(searchQuery.toLowerCase())
+    (plugin.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+    (plugin.description?.toLowerCase() || '').includes(searchQuery.toLowerCase())
   );
 
   const getHealthForPlugin = (pluginName: string) => {

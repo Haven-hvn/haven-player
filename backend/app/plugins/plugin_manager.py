@@ -98,13 +98,16 @@ class PluginManager:
     def discover_plugins(self) -> int:
         """
         Scan plugin directories and discover plugin classes.
-        
+
         This method recursively scans all configured plugin directories
         for Python files containing classes that inherit from ArchiverPlugin.
-        
+
         Returns:
             Number of plugins discovered
         """
+        logger.info("Starting plugin discovery process")
+        logger.info(f"Configured plugin directories: {self.plugin_dirs}")
+        
         discovered = 0
         
         for plugin_dir in self.plugin_dirs:
@@ -193,10 +196,12 @@ class PluginManager:
                 
                 # Import module dynamically
                 try:
+                    logger.info(f"Attempting to import module: {import_path} from file: {py_file}")
                     self._load_module_plugins(import_path, py_file)
                     discovered += 1
+                    logger.info(f"Successfully processed module: {import_path}")
                 except Exception as e:
-                    logger.error(f"Failed to import module {import_path}: {e}")
+                    logger.error(f"Failed to import module {import_path} from {py_file}", exc_info=True)
         
         logger.info(f"Discovered {discovered} plugins")
         return discovered
@@ -204,25 +209,31 @@ class PluginManager:
     def _load_module_plugins(self, module_name: str, py_file: Path) -> None:
         """
         Load plugins from a module.
-        
+
         Args:
             module_name: Name of the module to import
             py_file: Path to the Python file (for error reporting)
         """
+        logger.info(f"Loading plugins from module: {module_name}")
         try:
             module = importlib.import_module(module_name)
-            
+            logger.info(f"Successfully imported module: {module_name}")
+
             # Find all classes that inherit from ArchiverPlugin
-            for name, obj in inspect.getmembers(module, inspect.isclass):
+            classes_found = inspect.getmembers(module, inspect.isclass)
+            logger.info(f"Found {len(classes_found)} classes in module {module_name}")
+
+            for name, obj in classes_found:
+                logger.debug(f"Examining class: {name}")
                 # Check if class inherits from ArchiverPlugin
-                if (issubclass(obj, ArchiverPlugin) and 
+                if (issubclass(obj, ArchiverPlugin) and
                     obj is not ArchiverPlugin and
                     obj.__module__ == module_name and
                     not inspect.isabstract(obj)):
-                    
+
                     # Register the plugin class
                     self.plugin_classes[name] = obj
-                    logger.info(f"Discovered plugin: {name} from {module_name}")
+                    logger.info(f"✓ Discovered plugin class: {name} from {module_name}")
                     
                     # Get metadata for logging
                     try:
@@ -262,21 +273,33 @@ class PluginManager:
 
         # First try direct class name lookup
         if plugin_name not in self.plugin_classes:
+            logger.info(f"Plugin '{plugin_name}' not found by class name, searching by metadata name")
             # Try to find plugin by metadata name
             found = False
+            logger.info(f"Checking metadata for {len(self.plugin_classes)} discovered plugin classes")
             for cls_name, cls in self.plugin_classes.items():
                 temp_plugin = cls()
                 metadata = temp_plugin.get_metadata()
+                logger.debug(f"Checking class '{cls_name}' with metadata.name '{metadata.name}'")
                 if metadata.name == plugin_name:
                     plugin_name = cls_name  # Use class name for actual loading
                     found = True
-                    logger.info(f"Found plugin class '{cls_name}' for metadata name '{plugin_name}'")
+                    logger.info(f"✓ Found plugin class '{cls_name}' for metadata name '{metadata.name}'")
                     break
 
             if not found:
-                logger.error(f"Plugin {plugin_name} not found in discovered plugins")
+                logger.error(f"✗ Plugin '{plugin_name}' not found in discovered plugins")
                 if self.plugin_classes:
-                    logger.error(f"Available plugins: {list(self.plugin_classes.keys())}")
+                    logger.error(f"Available plugin classes: {list(self.plugin_classes.keys())}")
+                    # Also show metadata names for better debugging
+                    logger.info("Available plugin metadata names:")
+                    for cls_name, cls in self.plugin_classes.items():
+                        try:
+                            temp_plugin = cls()
+                            metadata = temp_plugin.get_metadata()
+                            logger.info(f"  - {metadata.name} (class: {cls_name})")
+                        except Exception as e:
+                            logger.error(f"  - {cls_name} (failed to get metadata: {e})")
                 return False
         
         config = config or {}
@@ -332,16 +355,19 @@ class PluginManager:
     async def _load_plugin_worker(self, plugin_name: str, config: Dict) -> bool:
         """
         Load plugin in worker process (data plane).
-        
+
         Args:
             plugin_name: Name of the plugin
             config: Plugin configuration
-            
+
         Returns:
             True if loaded successfully, False otherwise
         """
+        logger.info(f"Loading plugin '{plugin_name}' in worker process (data plane)")
+        logger.info(f"Plugin configuration: {config}")
         try:
             # Start worker process
+            logger.info(f"Starting worker process for plugin: {plugin_name}")
             success = await self.worker_manager.start_worker(plugin_name, config)
             
             if not success:

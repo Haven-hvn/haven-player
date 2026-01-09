@@ -203,22 +203,19 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
               fullWidth
               size="small"
               type="number"
-              label="Poll Interval (minutes)"
-              value={config.poll_interval_minutes}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ ...config, poll_interval_minutes: Number(e.target.value) })}
-              helperText="How often to check for new videos"
-            />
-          </Grid>
-          <Grid size={{ xs: 12, sm: 4 }}>
-            <TextField
-              fullWidth
-              size="small"
-              type="number"
               label="Max Concurrent Downloads"
               value={config.max_concurrent_downloads}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ ...config, max_concurrent_downloads: Number(e.target.value) })}
               helperText="Maximum simultaneous downloads"
             />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 8 }}>
+            <Alert severity="info" sx={{ height: '100%' }}>
+              <Typography variant="body2">
+                <strong>Automatic Polling:</strong> Configure recurring jobs in the <strong>"Recurring Jobs"</strong> tab
+                to automatically check for new videos on a schedule (e.g., every 15 minutes).
+              </Typography>
+            </Alert>
           </Grid>
         </Grid>
       </Box>

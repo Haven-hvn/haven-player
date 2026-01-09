@@ -112,26 +112,35 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     async def discover_sources(self) -> List[MediaSource]:
         """
         Discover new videos from all subscribed channels.
-        
+
         This is the standard operation used by the job scheduler.
         It polls ALL enabled channels and returns new videos.
         """
         if not self.initialized:
             logger.error("YouTubePlugin not initialized")
             return []
-        
+
         try:
             db = next(get_db_session())
-            
+
             # Get all enabled channels
             stmt = select(YouTubeChannel).where(YouTubeChannel.enabled == True)
             result = db.execute(stmt)
             channels = result.scalars().all()
-            
+
+            # Debug logging
+            # First, check ALL channels (not just enabled)
+            all_channels_stmt = select(YouTubeChannel)
+            all_channels_result = db.execute(all_channels_stmt)
+            all_channels = all_channels_result.scalars().all()
+            logger.info(f"DEBUG: Total channels in database: {len(all_channels)}")
+            for ch in all_channels:
+                logger.info(f"DEBUG: Channel '{ch.channel_name}' (ID: {ch.channel_id}) - enabled={ch.enabled}, url={ch.channel_url}")
+
             if not channels:
                 logger.info("No enabled channels to poll")
                 return []
-            
+
             logger.info(f"Polling {len(channels)} channels for new videos")
             
             new_sources = []
@@ -684,7 +693,6 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """Get default configuration."""
         return {
             "channels": [],
-            "poll_interval_minutes": 60,
             "max_concurrent_downloads": 3,
             "download_dir": self.download_dir,
             "max_videos_per_channel": 50,

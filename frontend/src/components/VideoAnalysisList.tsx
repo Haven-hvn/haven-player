@@ -239,6 +239,14 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
           label: "Downloading",
           chipColor: "info" as const,
         };
+      default:
+        return {
+          icon: <ScheduleIcon />,
+          color: "#6B6B6B",
+          bgColor: "#F7F7F7",
+          label: "Unknown",
+          chipColor: "default" as const,
+        };
     }
   };
 
@@ -1046,6 +1054,13 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
             color: "#FF4D4D",
             bgColor: "#FFEBEE",
             label: "Error",
+          };
+        default:
+          return {
+            icon: <ScheduleIcon />,
+            color: "#6B6B6B",
+            bgColor: "#F7F7F7",
+            label: "Unknown",
           };
       }
     };

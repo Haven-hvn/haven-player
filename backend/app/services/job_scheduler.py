@@ -20,6 +20,7 @@ from app.models.database import SessionLocal
 from app.models.recurring_job import RecurringJob
 from app.models.plugin import Plugin as PluginModel
 from app.plugins.plugin_manager import PluginManager
+from app.services.upload_coordinator import UploadCoordinator
 
 
 def sanitize_config_for_storage(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,22 +119,25 @@ class JobScheduler:
     def __init__(self, plugin_manager: PluginManager, db_url: str = "sqlite:///haven_player.db"):
         """
         Initialize job scheduler.
-        
+
         Args:
             plugin_manager: PluginManager instance
             db_url: Database URL for job store
         """
         self.plugin_manager = plugin_manager
         self.db_url = db_url
-        
+
+        # Initialize upload coordinator for auto-upload functionality
+        self.upload_coordinator = UploadCoordinator()
+
         # Configure APScheduler with SQLAlchemy job store
         jobstore = SQLAlchemyJobStore(url=db_url, tablename='apscheduler_jobs')
-        
+
         self.scheduler = AsyncIOScheduler(
             jobstores={'default': jobstore},
             timezone='UTC'
         )
-        
+
         self.running = False
     
     async def start(self) -> None:
@@ -345,6 +349,7 @@ class JobScheduler:
             # Archive all discovered sources
             logger.info(f"Job {job.job_name}: on_success='archive_all', processing {len(sources)} sources")
             archived = 0
+            enqueued = 0
             for i, source in enumerate(sources, 1):
                 try:
                     logger.info(f"Archiving source {i}/{len(sources)}: {source.source_id}")
@@ -357,19 +362,29 @@ class JobScheduler:
                         logger.info(f"✅ Successfully archived {source.source_id}")
                         if archive_result.output_path:
                             logger.info(f"   → Saved to: {archive_result.output_path}")
+
+                            # Enqueue for auto-upload
+                            enqueued_result = await self.upload_coordinator.enqueue_video_after_download(
+                                archive_result.output_path,
+                                job.plugin_name
+                            )
+                            if enqueued_result:
+                                enqueued += 1
                     else:
                         logger.warning(f"❌ Failed to archive {source.source_id}: {archive_result.error}")
                 except Exception as e:
                     logger.error(f"❌ Error archiving {source.source_id}: {e}")
 
             result["archived"] = archived
-            logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources")
+            result["enqueued"] = enqueued
+            logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources, enqueued {enqueued} for upload")
 
         elif job.on_success == "archive_new":
             # Archive all discovered sources (plugin should handle filtering of seen sources)
             # For YouTubePlugin, discover_sources() already filters out seen videos via _seen_videos
             logger.info(f"Job {job.job_name}: on_success='archive_new', processing {len(sources)} sources")
             archived = 0
+            enqueued = 0
             for i, source in enumerate(sources, 1):
                 try:
                     logger.info(f"Archiving source {i}/{len(sources)}: {source.source_id}")
@@ -382,13 +397,22 @@ class JobScheduler:
                         logger.info(f"✅ Successfully archived {source.source_id}")
                         if archive_result.output_path:
                             logger.info(f"   → Saved to: {archive_result.output_path}")
+
+                            # Enqueue for auto-upload
+                            enqueued_result = await self.upload_coordinator.enqueue_video_after_download(
+                                archive_result.output_path,
+                                job.plugin_name
+                            )
+                            if enqueued_result:
+                                enqueued += 1
                     else:
                         logger.warning(f"❌ Failed to archive {source.source_id}: {archive_result.error}")
                 except Exception as e:
                     logger.error(f"❌ Error archiving {source.source_id}: {e}")
 
             result["archived"] = archived
-            logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources")
+            result["enqueued"] = enqueued
+            logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources, enqueued {enqueued} for upload")
 
         # log_only is default - just log results
         logger.info(f"Job {job.job_name}: discovered {len(sources)} sources")

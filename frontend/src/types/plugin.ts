@@ -240,3 +240,37 @@ export interface SchedulerStatus {
     next_run: string | null;
   }>;
 }
+
+// ========== Upload Coordinator Types ==========
+
+export interface UploadCoordinatorConfig {
+  enabled: boolean;
+  pollInterval: number;  // milliseconds
+  maxConcurrentUploads: number;
+  retryAttempts: number;
+  pluginOverrides: Record<string, boolean>;  // plugin_name -> enabled
+}
+
+export interface UploadQueueStatus {
+  total: number;
+  pending: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  retryable: number;
+}
+
+export interface UploadQueueEntry {
+  id: number;
+  video_path: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  priority: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  attempts: number;
+  max_attempts: number;
+  error_message?: string;
+  source: 'plugin' | 'manual' | 'depin';
+}

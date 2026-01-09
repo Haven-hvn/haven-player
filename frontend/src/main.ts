@@ -10,6 +10,7 @@ import type { IpfsGatewayConfig } from './types/playback';
 import { DEFAULT_IPFS_GATEWAY, normalizeGatewayBase } from './services/playbackResolver';
 import { decryptTextWithLit, deserializeEncryptionMetadata } from './services/litService';
 import type { LitEncryptionMetadata } from './services/litService';
+import { getUploadWorker, type UploadCoordinatorConfig } from './services/uploadWorker';
 
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
@@ -753,6 +754,16 @@ ipcMain.handle('start-backend', async () => {
     backendProcess = null;
   });
 
+  // Start upload worker after backend is ready
+  try {
+    const uploadWorker = getUploadWorker();
+    await uploadWorker.start({ enabled: true, pollInterval: 15000 });
+    console.log('✅ Upload worker started automatically with backend');
+  } catch (error) {
+    console.error('Failed to start upload worker automatically:', error);
+    // Don't fail backend startup if upload worker fails to start
+  }
+
   return { pid: backendProcess.pid, message: 'Backend started' };
 });
 
@@ -927,3 +938,86 @@ function writeIpfsGatewayConfig(config: IpfsGatewayConfig): IpfsGatewayConfig {
 
   return payload;
 }
+
+// IPC handlers for upload worker control
+ipcMain.handle('upload-worker:start', async (_event, config?: Partial<UploadCoordinatorConfig>) => {
+  try {
+    const worker = getUploadWorker();
+
+    // Load Filecoin config to check if it's available
+    const filecoinConfig = await loadDecryptedFilecoinConfig();
+    const isConfigured = !!filecoinConfig?.privateKey;
+
+    // Auto-enable if Filecoin is configured and no explicit config provided
+    const effectiveConfig: Partial<UploadCoordinatorConfig> = config || {};
+    if (isConfigured && effectiveConfig.enabled === undefined) {
+      effectiveConfig.enabled = true;
+    }
+
+    await worker.start(effectiveConfig);
+
+    return {
+      success: true,
+      isRunning: true,
+      config: worker.getConfig(),
+      filecoinConfigured: isConfigured,
+      message: isConfigured
+        ? 'Upload worker started with auto-upload enabled'
+        : 'Upload worker started (disabled - Filecoin not configured)',
+    };
+  } catch (error) {
+    console.error('Failed to start upload worker:', error);
+    throw new Error(`Failed to start upload worker: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+ipcMain.handle('upload-worker:stop', async () => {
+  try {
+    const worker = getUploadWorker();
+    worker.stop();
+
+    return {
+      success: true,
+      isRunning: false,
+      message: 'Upload worker stopped',
+    };
+  } catch (error) {
+    console.error('Failed to stop upload worker:', error);
+    throw new Error(`Failed to stop upload worker: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+ipcMain.handle('upload-worker:get-status', async () => {
+  try {
+    const worker = getUploadWorker();
+
+    return {
+      isRunning: worker.isWorkerRunning(),
+      config: worker.getConfig(),
+    };
+  } catch (error) {
+    console.error('Failed to get upload worker status:', error);
+    throw new Error(`Failed to get upload worker status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+ipcMain.handle('upload-worker:update-config', async (_event, newConfig: Partial<UploadCoordinatorConfig>) => {
+  try {
+    const worker = getUploadWorker();
+
+    if (!worker.isWorkerRunning()) {
+      throw new Error('Cannot update config: upload worker is not running');
+    }
+
+    worker.updateConfig(newConfig);
+
+    return {
+      success: true,
+      config: worker.getConfig(),
+      message: 'Upload worker config updated',
+    };
+  } catch (error) {
+    console.error('Failed to update upload worker config:', error);
+    throw new Error(`Failed to update upload worker config: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});

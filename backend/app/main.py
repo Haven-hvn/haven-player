@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin, restore, plugins, recurring_jobs
+from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin, restore, plugins, recurring_jobs, upload_queue
 from app.models.base import init_db
 from app.models.database import SessionLocal
 from app.models.config import AppConfig
@@ -206,6 +206,7 @@ app.include_router(depin.router, prefix="/api/depin", tags=["depin"])
 app.include_router(restore.router, prefix="/api/restore", tags=["restore"])
 app.include_router(plugins.router, prefix="/api/plugins", tags=["plugins"])
 app.include_router(recurring_jobs.router, prefix="/api/recurring-jobs", tags=["recurring-jobs"])
+app.include_router(upload_queue.router, prefix="/api", tags=["upload-queue"])
 
 
 @app.get("/")

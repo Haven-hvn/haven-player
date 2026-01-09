@@ -50,6 +50,7 @@ import { generateExplorerLinks } from '@/utils/explorerLinks';
 import { loadGatewayConfig } from '@/services/playbackConfig';
 import { useDePinDashboard } from '@/hooks/useDePinDashboard';
 import { PluginConfigurationModal } from '@/components/Plugins/PluginConfigurationModal';
+import UploadWorkerConfig from '@/components/UploadWorkerConfig';
 
 type PointTier = {
   name: string;
@@ -454,6 +455,9 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
           Filecoin configuration is missing. Please configure it in settings before starting the node.
         </Alert>
       )}
+
+      {/* Upload Worker Configuration */}
+      <UploadWorkerConfig filecoinConfigured={!!filecoinConfig} />
 
       {/* Active Operations Section */}
       <Typography variant="h6">Active Operations</Typography>

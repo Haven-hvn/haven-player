@@ -1,0 +1,368 @@
+"""
+Upload Queue API endpoints.
+
+This module provides REST API endpoints for managing the FileCoin upload queue,
+including adding, listing, and updating upload jobs.
+"""
+import logging
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy.orm import Session
+
+from app.models.database import get_db
+from app.models.upload_queue import UploadQueue
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+class UploadQueueCreate(BaseModel):
+    """Request to add video to upload queue."""
+    video_path: str
+    priority: Optional[int] = 0
+    source: str = 'plugin'
+
+
+class UploadQueueUpdate(BaseModel):
+    """Request to update upload queue status."""
+    status: str
+    filecoin_metadata: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class UploadQueueResponse(BaseModel):
+    """Response model for upload queue entry."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    video_path: str
+    status: str
+    priority: int
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    attempts: int
+    max_attempts: int
+    error_message: Optional[str] = None
+    source: str
+
+
+@router.post("/upload-queue", response_model=UploadQueueResponse, status_code=201)
+async def add_to_upload_queue(
+    queue_data: UploadQueueCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Add a video to the upload queue.
+
+    This endpoint is called after a plugin successfully downloads a video.
+    The video will be automatically uploaded to FileCoin when the UploadWorker
+    processes the queue.
+
+    Args:
+        queue_data: Upload queue creation request
+        db: Database session
+
+    Returns:
+        Created upload queue entry
+
+    Raises:
+        HTTPException: If video already in queue or database error occurs
+    """
+    try:
+        # Check if video already in queue
+        existing = db.query(UploadQueue).filter(
+            UploadQueue.video_path == queue_data.video_path
+        ).first()
+
+        if existing:
+            if existing.is_completed():
+                # Already uploaded, no need to queue again
+                return UploadQueueResponse.model_validate(existing)
+            elif existing.is_processing():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Video {queue_data.video_path} already being uploaded"
+                )
+            else:
+                # Update existing failed/pending entry
+                existing.status = 'pending'
+                existing.priority = queue_data.priority
+                existing.error_message = None
+                existing.attempts = 0
+                db.commit()
+                db.refresh(existing)
+                logger.info(f"Re-queued video: {queue_data.video_path}")
+                return UploadQueueResponse.model_validate(existing)
+
+        # Create new queue entry
+        queue_entry = UploadQueue(
+            video_path=queue_data.video_path,
+            priority=queue_data.priority,
+            source=queue_data.source,
+            status='pending'
+        )
+
+        db.add(queue_entry)
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Added video to upload queue: {queue_data.video_path} (priority={queue_data.priority})")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error adding to upload queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/upload-queue", response_model=List[UploadQueueResponse])
+async def list_upload_queue(
+    status: Optional[str] = Query(None, description="Filter by status"),
+    source: Optional[str] = Query(None, description="Filter by source"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
+    db: Session = Depends(get_db)
+):
+    """
+    List videos in the upload queue.
+
+    Args:
+        status: Optional filter by status (pending, processing, completed, failed)
+        source: Optional filter by source (plugin, manual, depin)
+        limit: Maximum number of results to return
+        db: Database session
+
+    Returns:
+        List of upload queue entries
+    """
+    try:
+        query = db.query(UploadQueue)
+
+        if status:
+            query = query.filter(UploadQueue.status == status)
+
+        if source:
+            query = query.filter(UploadQueue.source == source)
+
+        # Order by priority (desc) then created_at (asc)
+        query = query.order_by(
+            UploadQueue.priority.desc(),
+            UploadQueue.created_at.asc()
+        )
+
+        queue_entries = query.limit(limit).all()
+        return [UploadQueueResponse.model_validate(entry) for entry in queue_entries]
+
+    except Exception as e:
+        logger.error(f"Error listing upload queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/upload-queue/pop", response_model=Optional[UploadQueueResponse])
+async def get_next_pending_upload(db: Session = Depends(get_db)):
+    """
+    Get the next pending video to upload.
+
+    This endpoint is called by the UploadWorker to get the next job to process.
+    Returns a pending entry and updates its status to 'processing' atomically.
+
+    Returns:
+        Next pending upload queue entry, or null if no pending uploads
+
+    Raises:
+        HTTPException: If database error occurs
+    """
+    try:
+        # Find next pending upload
+        queue_entry = db.query(UploadQueue).filter(
+            UploadQueue.status == 'pending',
+            UploadQueue.attempts < UploadQueue.max_attempts
+        ).order_by(
+            UploadQueue.priority.desc(),
+            UploadQueue.created_at.asc()
+        ).first()
+
+        if not queue_entry:
+            # No pending uploads
+            return None
+
+        # Update status to processing atomically
+        queue_entry.status = 'processing'
+        queue_entry.started_at = queue_entry.started_at or UploadQueue.__table__.c.started_at.default.arg()
+        queue_entry.attempts += 1
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Popped video for upload: {queue_entry.video_path} (attempt {queue_entry.attempts})")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error getting next pending upload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/upload-queue/{queue_id}/status", response_model=UploadQueueResponse)
+async def update_upload_status(
+    queue_id: int,
+    update_data: UploadQueueUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update the status of an upload queue entry.
+
+    Called by the UploadWorker to update progress or mark as completed/failed.
+
+    Args:
+        queue_id: Upload queue entry ID
+        update_data: Update request with status, optional metadata/error
+        db: Database session
+
+    Returns:
+        Updated upload queue entry
+
+    Raises:
+        HTTPException: If queue entry not found or database error occurs
+    """
+    try:
+        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+
+        if not queue_entry:
+            raise HTTPException(status_code=404, detail=f"Upload queue entry {queue_id} not found")
+
+        # Validate status
+        valid_statuses = ['pending', 'processing', 'completed', 'failed', 'cancelled']
+        if update_data.status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status: {update_data.status}. Must be one of: {', '.join(valid_statuses)}"
+            )
+
+        # Update status and timestamps
+        queue_entry.status = update_data.status
+
+        if update_data.status == 'processing':
+            # Processing state
+            from datetime import datetime, timezone
+            if not queue_entry.started_at:
+                queue_entry.started_at = datetime.now(timezone.utc)
+            # Increment attempts
+            queue_entry.attempts += 1
+
+        elif update_data.status in ['completed', 'failed', 'cancelled']:
+            # Terminal states
+            from datetime import datetime, timezone
+            queue_entry.completed_at = datetime.now(timezone.utc)
+
+        # Update error message if provided
+        if update_data.error:
+            queue_entry.error_message = update_data.error
+
+        # If completed and filecoin metadata provided, update video table
+        if update_data.status == 'completed' and update_data.filecoin_metadata:
+            from app.models.video import Video
+            from datetime import datetime, timezone
+
+            video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
+            if video:
+                video.filecoin_root_cid = update_data.filecoin_metadata.get('root_cid')
+                video.filecoin_piece_cid = update_data.filecoin_metadata.get('piece_cid')
+                video.filecoin_piece_id = update_data.filecoin_metadata.get('piece_id')
+                video.filecoin_data_set_id = update_data.filecoin_metadata.get('data_set_id')
+                video.filecoin_uploaded_at = datetime.now(timezone.utc)
+                video.is_encrypted = update_data.filecoin_metadata.get('is_encrypted', False)
+                video.lit_encryption_metadata = update_data.filecoin_metadata.get('lit_encryption_metadata')
+                video.encrypted_filecoin_cid = update_data.filecoin_metadata.get('encrypted_root_cid')
+                video.cid_encryption_metadata = update_data.filecoin_metadata.get('cid_encryption_metadata')
+
+                logger.info(f"Updated FileCoin metadata for video: {queue_entry.video_path}")
+
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Updated upload queue entry {queue_id} to status: {update_data.status}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating upload status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/upload-queue/{queue_id}", status_code=204)
+async def remove_from_upload_queue(
+    queue_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Remove a video from the upload queue.
+
+    Args:
+        queue_id: Upload queue entry ID
+        db: Database session
+
+    Raises:
+        HTTPException: If queue entry not found or database error occurs
+    """
+    try:
+        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+
+        if not queue_entry:
+            raise HTTPException(status_code=404, detail=f"Upload queue entry {queue_id} not found")
+
+        video_path = queue_entry.video_path
+        db.delete(queue_entry)
+        db.commit()
+
+        logger.info(f"Removed video from upload queue: {video_path}")
+        return Response(status_code=204)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error removing from upload queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/upload-queue/stats")
+async def get_upload_queue_stats(db: Session = Depends(get_db)):
+    """
+    Get statistics about the upload queue.
+
+    Returns:
+        Dictionary with queue statistics (counts by status, totals)
+    """
+    try:
+        # Get counts by status
+        stats = {
+            'total': 0,
+            'pending': 0,
+            'processing': 0,
+            'completed': 0,
+            'failed': 0,
+            'cancelled': 0,
+        }
+
+        for status in ['pending', 'processing', 'completed', 'failed', 'cancelled']:
+            count = db.query(UploadQueue).filter(UploadQueue.status == status).count()
+            stats[status] = count
+            stats['total'] += count
+
+        # Get retryable failed uploads
+        retryable = db.query(UploadQueue).filter(
+            UploadQueue.status == 'failed',
+            UploadQueue.attempts < UploadQueue.max_attempts
+        ).count()
+        stats['retryable'] = retryable
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting upload queue stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

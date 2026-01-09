@@ -14,6 +14,7 @@ def init_db():
     from app.models.live_session import LiveSession
     from app.models.pumpfun_coin import PumpFunCoin
     from app.models.plugin import Plugin
+    from app.models.upload_queue import UploadQueue
 
     # Create all tables using the imported engine
     Base.metadata.create_all(bind=engine)

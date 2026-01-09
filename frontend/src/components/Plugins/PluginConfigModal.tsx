@@ -186,7 +186,7 @@ const PluginConfigModal: React.FC<{
             Configure {plugin.name}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {plugin.version} • {plugin.media_types.join(', ').toUpperCase()}
+            {plugin.version} • {Array.isArray(plugin.media_types) ? plugin.media_types.join(', ').toUpperCase() : 'N/A'}
           </Typography>
         </Box>
         <IconButton onClick={handleClose} size="small">

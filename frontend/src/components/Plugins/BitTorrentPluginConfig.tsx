@@ -13,12 +13,15 @@ interface BitTorrentPluginConfigProps {
 }
 
 export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginConfigProps) {
+  // Ensure subscriptions array exists
+  const subscriptions = config.subscriptions || [];
+
   // Add a new subscription
   const addSubscription = () => {
     onChange({
       ...config,
       subscriptions: [
-        ...config.subscriptions,
+        ...subscriptions,
         {
           search_term: '',
           enabled: true,
@@ -32,13 +35,13 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
   const removeSubscription = (index: number) => {
     onChange({
       ...config,
-      subscriptions: config.subscriptions.filter((_, i) => i !== index),
+      subscriptions: subscriptions.filter((_, i) => i !== index),
     });
   };
 
   // Update subscription field
   const updateSubscription = (index: number, field: string, value: any) => {
-    const updatedSubscriptions = [...config.subscriptions];
+    const updatedSubscriptions = [...subscriptions];
     updatedSubscriptions[index] = { ...updatedSubscriptions[index], [field]: value };
     onChange({ ...config, subscriptions: updatedSubscriptions });
   };
@@ -62,13 +65,13 @@ export function BitTorrentPluginConfig({ config, onChange }: BitTorrentPluginCon
           </Button>
         </Box>
 
-        {config.subscriptions.length === 0 ? (
+        {subscriptions.length === 0 ? (
           <Alert severity="info" sx={{ mt: 2 }}>
             No subscriptions configured. Add search terms to start discovering torrents via Glitter Protocol.
           </Alert>
         ) : (
           <Grid container spacing={2}>
-            {config.subscriptions.map((subscription, index) => (
+            {subscriptions.map((subscription, index) => (
               <Grid size={{ xs: 12, md: 6 }} key={index}>
                 <Card>
                   <CardContent>

@@ -12,12 +12,15 @@ interface YouTubePluginConfigProps {
 }
 
 export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigProps) {
+  // Ensure channels array exists
+  const channels = config.channels || [];
+
   // Add a new channel
   const addChannel = () => {
     onChange({
       ...config,
       channels: [
-        ...config.channels,
+        ...channels,
         {
           name: '',
           channel_url: '',
@@ -35,13 +38,13 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
   const removeChannel = (index: number) => {
     onChange({
       ...config,
-      channels: config.channels.filter((_, i) => i !== index),
+      channels: channels.filter((_, i) => i !== index),
     });
   };
 
   // Update channel field
   const updateChannel = (index: number, field: string, value: any) => {
-    const updatedChannels = [...config.channels];
+    const updatedChannels = [...channels];
     updatedChannels[index] = { ...updatedChannels[index], [field]: value };
     onChange({ ...config, channels: updatedChannels });
   };
@@ -65,13 +68,13 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
           </Button>
         </Box>
 
-        {config.channels.length === 0 ? (
+        {channels.length === 0 ? (
           <Alert severity="info" sx={{ mt: 2 }}>
             No channels configured. Add channels to start archiving.
           </Alert>
         ) : (
           <Grid container spacing={2}>
-            {config.channels.map((channel, index) => (
+            {channels.map((channel, index) => (
               <Grid size={{ xs: 12, md: 6 }} key={index}>
                 <Card>
                   <CardContent>

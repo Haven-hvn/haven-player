@@ -64,7 +64,6 @@ async def lifespan(app: FastAPI):
     global plugin_manager
     plugin_dirs = [
         str(Path(__file__).parent / "plugins" / "builtin"),
-        "/opt/haven/plugins",  # External plugins directory
     ]
     
     print(f"🔌 Initializing plugin manager with directories: {plugin_dirs}")

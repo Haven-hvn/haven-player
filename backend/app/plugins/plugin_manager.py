@@ -231,11 +231,6 @@ class PluginManager:
                 is_correct_module = obj.__module__ == module_name
                 is_not_abstract = not inspect.isabstract(obj)
 
-                logger.info(f"  - is_subclass of ArchiverPlugin: {is_subclass}")
-                logger.info(f"  - is not ArchiverPlugin: {is_not_base}")
-                logger.info(f"  - correct module: {is_correct_module}")
-                logger.info(f"  - not abstract: {is_not_abstract}")
-
                 if (is_subclass and
                     is_not_base and
                     is_correct_module and

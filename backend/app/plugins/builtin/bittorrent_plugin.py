@@ -600,3 +600,83 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             "glitter_endpoint": "https://gw.magnode.ru/v1/sql/query",
             "download_dir": "downloads/bittorrent",
         }
+
+    # ========== Additional Mixin Methods ==========
+
+    async def discover_from_subscription(self, collection_id: str) -> List[MediaSource]:
+        """
+        Discover torrents from a specific subscription.
+
+        This is a stub implementation required by CollectionPluginMixin.
+        """
+        # Torrent discovery is handled in discover_sources() which reads all enabled subscriptions
+        return []
+
+    async def archive_from_subscription(
+        self, collection_id: str
+    ) -> List[ArchiveResult]:
+        """
+        Archive all torrents from a subscription.
+
+        This is a stub implementation required by CollectionPluginMixin.
+        """
+        return []
+
+    async def list_sources(self) -> List[Dict[str, Any]]:
+        """
+        List all known torrents.
+
+        This is a stub implementation required by ConfigurablePluginMixin.
+        """
+        try:
+            db = next(get_db_session())
+
+            videos = db.query(Video).where(
+                Video.plugin_name == "BitTorrentPlugin"
+            ).all()
+
+            return [
+                {
+                    "source_id": video.plugin_source_id,
+                    "title": video.title,
+                    "path": video.path,
+                    "created_at": video.created_at.isoformat() if video.created_at else None,
+                }
+                for video in videos
+            ]
+        except Exception as e:
+            logger.error(f"Error listing BitTorrent sources: {e}")
+            return []
+        finally:
+            db.close()
+
+    async def get_source_status(self, source_id: str) -> Dict[str, Any]:
+        """
+        Get status of a specific torrent.
+
+        This is a stub implementation required by ConfigurablePluginMixin.
+        """
+        try:
+            db = next(get_db_session())
+
+            video = db.query(Video).where(
+                Video.plugin_name == "BitTorrentPlugin",
+                Video.plugin_source_id == source_id
+            ).first()
+
+            if not video:
+                return {"status": "not_found", "source_id": source_id}
+
+            return {
+                "status": "archived",
+                "source_id": source_id,
+                "title": video.title,
+                "path": video.path,
+                "created_at": video.created_at.isoformat() if video.created_at else None,
+            }
+        except Exception as e:
+            logger.error(f"Error getting source status: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            db.close()
+

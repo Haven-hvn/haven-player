@@ -804,6 +804,97 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             data = json.loads(result.stdout.strip())
             return data.get("channel") or data.get("uploader")
 
+    # ========== Additional Mixin Methods ==========
+
+    async def discover_from_subscription(
+        self, collection_id: str
+    ) -> List[MediaSource]:
+        """
+        Discover videos from a specific channel.
+
+        This is a stub implementation required by CollectionPluginMixin.
+        The actual polling happens in discover_sources() which reads from plugins.config.
+        """
+        # Channel discovery is handled in discover_sources() which reads all enabled channels
+        # This method exists for API compatibility but doesn't do anything in this implementation
+        return []
+
+    async def archive_from_subscription(
+        self, collection_id: str
+    ) -> List[ArchiveResult]:
+        """
+        Archive all videos from a channel.
+
+        This is a stub implementation required by CollectionPluginMixin.
+        """
+        # Channel archiving is handled via discover_sources + archive
+        # This method exists for API compatibility
+        return []
+
+    async def list_sources(self) -> List[Dict[str, Any]]:
+        """
+        List all known videos.
+
+        This is a stub implementation required by ConfigurablePluginMixin.
+        Returns videos from the Video table that were archived by this plugin.
+        """
+        try:
+            db = next(get_db_session())
+            from sqlalchemy import select
+
+            videos = db.query(Video).where(
+                Video.plugin_name == "YouTubePlugin"
+            ).all()
+
+            return [
+                {
+                    "source_id": video.plugin_source_id,
+                    "title": video.title,
+                    "path": video.path,
+                    "created_at": video.created_at.isoformat() if video.created_at else None,
+                }
+                for video in videos
+            ]
+        except Exception as e:
+            logger.error(f"Error listing YouTube sources: {e}")
+            return []
+        finally:
+            db.close()
+
+    async def get_source_status(
+        self, source_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get status of a specific video.
+
+        This is a stub implementation required by ConfigurablePluginMixin.
+        """
+        try:
+            db = next(get_db_session())
+            from sqlalchemy import select
+
+            video = db.query(Video).where(
+                Video.plugin_name == "YouTubePlugin",
+                Video.plugin_source_id == source_id
+            ).first()
+
+            if not video:
+                return {"status": "not_found", "source_id": source_id}
+
+            return {
+                "status": "archived",
+                "source_id": source_id,
+                "title": video.title,
+                "path": video.path,
+                "created_at": video.created_at.isoformat() if video.created_at else None,
+            }
+        except Exception as e:
+            logger.error(f"Error getting source status: {e}")
+            return {"status": "error", "error": str(e)}
+        finally:
+            db.close()
+
+
         except Exception as e:
             logger.error(f"Error getting channel name: {e}")
             return None

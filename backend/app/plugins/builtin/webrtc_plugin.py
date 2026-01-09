@@ -16,7 +16,7 @@ from app.plugins.plugin_interface import (
     MediaType,
 )
 from app.services.pumpfun_service import PumpFunService
-from app.services.webrtc_recording_service import recording_service
+from app.services.webrtc_recording_service import WebRTCRecordingService
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class WebRTCPlugin(ArchiverPlugin):
     
     def __init__(self):
         self.pumpfun_service = PumpFunService()
+        self.recording_service = WebRTCRecordingService()
         self.config = {}
         self._initialized = False
     
@@ -132,7 +133,7 @@ class WebRTCPlugin(ArchiverPlugin):
             video_quality = self.config.get("video_quality", "best")
             
             # Start recording using existing service
-            result = await recording_service.start_recording(
+            result = await self.recording_service.start_recording(
                 mint_id=mint_id,
                 output_format=output_format,
                 video_quality=video_quality,
@@ -144,7 +145,7 @@ class WebRTCPlugin(ArchiverPlugin):
                 await asyncio.sleep(2)
                 
                 # Get recording status
-                status = await recording_service.get_recording_status(mint_id)
+                status = await self.recording_service.get_recording_status(mint_id)
                 
                 output_path = result.get("output_path")
                 
@@ -203,7 +204,7 @@ class WebRTCPlugin(ArchiverPlugin):
         """
         try:
             logger.info(f"Stopping archiving for {source_id}")
-            result = await recording_service.stop_recording(source_id)
+            result = await self.recording_service.stop_recording(source_id)
             return result
         except Exception as e:
             logger.error(f"Error stopping archiving for {source_id}: {e}")
@@ -220,7 +221,7 @@ class WebRTCPlugin(ArchiverPlugin):
             Status dictionary
         """
         try:
-            return await recording_service.get_recording_status(source_id)
+            return await self.recording_service.get_recording_status(source_id)
         except Exception as e:
             logger.error(f"Error getting archiving status for {source_id}: {e}")
             return {"success": False, "error": str(e)}
@@ -233,7 +234,7 @@ class WebRTCPlugin(ArchiverPlugin):
             Dictionary with all active recordings
         """
         try:
-            return await recording_service.get_all_recordings()
+            return await self.recording_service.get_all_recordings()
         except Exception as e:
             logger.error(f"Error getting all archiving status: {e}")
             return {"success": False, "error": str(e)}

@@ -29,7 +29,6 @@ from app.models.config import AppConfig
 from app.models.database import get_db as get_db_session
 from app.models.youtube_plugin import YouTubeChannel, YouTubeVideo
 from app.models.video import Video # Import Video model
-from app.models.base import get_db
 
 
 logger = logging.getLogger(__name__)

@@ -683,8 +683,10 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration."""
         return {
-            "download_dir": "downloads/youtube",
+            "channels": [],
+            "poll_interval_minutes": 60,
             "max_concurrent_downloads": 3,
+            "download_dir": self.download_dir,
             "max_videos_per_channel": 50,
         }
     

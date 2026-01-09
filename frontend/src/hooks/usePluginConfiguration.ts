@@ -9,6 +9,18 @@ const defaultWebRTCConfig: WebRTCPluginConfig = {
   discover_limit: 20,
 };
 
+const defaultYouTubeConfig: YouTubePluginConfig = {
+  channels: [],
+  poll_interval_minutes: 60,
+  max_concurrent_downloads: 3,
+};
+
+const defaultBitTorrentConfig: BitTorrentPluginConfig = {
+  subscriptions: [],
+  max_concurrent_downloads: 3,
+  glitter_endpoint: 'https://gw.magnode.ru/v1/sql/query',
+};
+
 export function usePluginConfiguration(pluginName: string) {
   const [configSchema, setConfigSchema] = useState<PluginConfigSchema | null>(null);
   const [config, setConfig] = useState<PluginConfig | Record<string, any>>({});
@@ -17,10 +29,23 @@ export function usePluginConfiguration(pluginName: string) {
   const [saving, setSaving] = useState(false);
 
   const getConfigWithDefaults = (currentConfig: Record<string, any>): PluginConfig => {
+    // Extract the actual config object from the response
+    // The backend returns { name, enabled, config, priority, ... } where 'config' is the actual plugin config
+    const actualConfig = currentConfig.config || currentConfig;
+
     if (pluginName.toLowerCase().includes('webrtc')) {
-      return { ...defaultWebRTCConfig, ...currentConfig } as WebRTCPluginConfig;
+      return { ...defaultWebRTCConfig, ...actualConfig } as WebRTCPluginConfig;
     }
-    return currentConfig as PluginConfig;
+
+    if (pluginName.toLowerCase().includes('youtube')) {
+      return { ...defaultYouTubeConfig, ...actualConfig } as YouTubePluginConfig;
+    }
+
+    if (pluginName.toLowerCase().includes('bittorrent')) {
+      return { ...defaultBitTorrentConfig, ...actualConfig } as BitTorrentPluginConfig;
+    }
+
+    return actualConfig as PluginConfig;
   };
 
   // Load plugin configuration schema
@@ -51,12 +76,20 @@ export function usePluginConfiguration(pluginName: string) {
   // Helper function to build config schema from current config
   const buildConfigSchema = (currentConfig: PluginConfig | Record<string, any> | null) => {
     const schema: any[] = [];
-    
+
+    // Fields to skip as they are metadata, not actual config
+    const skipFields = ['name', 'enabled', 'priority', 'created_at', 'updated_at', 'is_default'];
+
     if (!currentConfig) {
       return schema;
     }
-    
+
     for (const [key, value] of Object.entries(currentConfig)) {
+      // Skip metadata fields
+      if (skipFields.includes(key)) {
+        continue;
+      }
+
       // Infer field type based on value
       let type = 'text';
       if (typeof value === 'boolean') {
@@ -64,13 +97,14 @@ export function usePluginConfiguration(pluginName: string) {
       } else if (typeof value === 'number') {
         type = 'number';
       } else if (Array.isArray(value)) {
-        type = 'select';
+        // Skip arrays (like channels/subscriptions) as they're handled by custom components
+        continue;
       } else if (typeof value === 'string' && value.startsWith('http')) {
         type = 'url';
       } else if (key.includes('channel') && typeof value === 'string') {
         type = 'channel-url';
       }
-      
+
       schema.push({
         name: key,
         type: type as any,
@@ -80,7 +114,7 @@ export function usePluginConfiguration(pluginName: string) {
         required: false,
       });
     }
-    
+
     return schema;
   };
 

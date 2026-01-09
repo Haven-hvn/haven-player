@@ -443,6 +443,8 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration."""
         return {
-            "download_dir": "downloads/bittorrent",
+            "subscriptions": [],
+            "max_concurrent_downloads": 3,
             "glitter_endpoint": "https://gw.magnode.ru/v1/sql/query",
+            "download_dir": "downloads/bittorrent",
         }

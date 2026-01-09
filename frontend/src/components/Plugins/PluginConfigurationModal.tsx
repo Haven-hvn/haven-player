@@ -1,16 +1,36 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, FormControlLabel, Switch,
   Select, MenuItem, FormControl, InputLabel,
   Box, Typography, Alert, Divider, Grid,
-  CircularProgress, IconButton, Tooltip
+  CircularProgress, IconButton, Tooltip,
+  Tabs, Tab,
 } from '@mui/material';
-import { Settings as SettingsIcon } from '@mui/icons-material';
+import {
+  Settings as SettingsIcon,
+  Schedule as ScheduleIcon,
+  Build as BuildIcon,
+} from '@mui/icons-material';
 import { PluginConfigSchema, PluginConfigField, YouTubePluginConfig, BitTorrentPluginConfig } from '@/types/plugin';
 import { usePluginConfiguration } from '@/hooks/usePluginConfiguration';
 import { YouTubePluginConfig as YouTubeConfig } from './YouTubePluginConfig';
 import { BitTorrentPluginConfig as BitTorrentConfig } from './BitTorrentPluginConfig';
+import { RecurringJobsTab } from './RecurringJobsTab';
+
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+const TabPanel: React.FC<TabPanelProps> = ({ children, value, index }) => {
+  return (
+    <div role="tabpanel" hidden={value !== index}>
+      {value === index && <Box sx={{ py: 2 }}>{children}</Box>}
+    </div>
+  );
+};
 
 interface PluginConfigurationModalProps {
   open: boolean;
@@ -27,6 +47,13 @@ export function PluginConfigurationModal({
   onClose,
   onSave,
 }: PluginConfigurationModalProps) {
+  const [tabValue, setTabValue] = useState(0);
+  const [notification, setNotification] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'warning' | 'info' }>({
+    open: false,
+    message: '',
+    severity: 'info',
+  });
+
   const {
     configSchema,
     config,
@@ -43,6 +70,7 @@ export function PluginConfigurationModal({
   useEffect(() => {
     if (open) {
       loadConfigSchema();
+      setTabValue(0);
     }
   }, [open, loadConfigSchema]);
 
@@ -56,6 +84,15 @@ export function PluginConfigurationModal({
 
   const handleReset = async () => {
     await resetToDefaults();
+  };
+
+  const handleNotification = (severity: 'success' | 'error' | 'warning' | 'info', message: string) => {
+    setNotification({ open: true, message, severity });
+  };
+
+  const handleClose = () => {
+    onClose();
+    setNotification({ open: false, message: '', severity: 'info' });
   };
 
   const renderConfigField = (field: PluginConfigField) => {
@@ -190,63 +227,96 @@ export function PluginConfigurationModal({
           </Box>
         ) : error ? (
           <Alert severity="error">{error}</Alert>
-        ) : configSchema ? (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <Typography variant="body2" color="text.secondary">
-            {configSchema.description}
-          </Typography>
-
-            {error && <Alert severity="error">{error}</Alert>}
-
-            {/* Render custom configuration components based on pluginName */}
-            {pluginName === 'YouTubePlugin' && (
-              <YouTubeConfig
-                config={config as YouTubePluginConfig}
-                onChange={handleConfigChange}
-              />
-            )}
-            {pluginName === 'BitTorrentPlugin' && (
-              <BitTorrentConfig
-                config={config as BitTorrentPluginConfig}
-                onChange={handleConfigChange}
-              />
-            )}
-
-            {/* Fallback to schema-driven rendering for other plugins */}
-            {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin') && (
-              <Grid container spacing={2}>
-                {configSchema.config_schema.map((field) => (
-                  <Grid size={{ xs: 12, sm: 6 }} key={field.name}>
-                    {renderConfigField(field)}
-                  </Grid>
-                ))}
-              </Grid>
-            )}
-          </Box>
         ) : (
-          <Typography variant="body2" color="text.secondary">
-            No configuration available for this plugin.
-          </Typography>
+          <>
+            {/* Tabs */}
+            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+              <Tabs value={tabValue} onChange={(_, newValue) => setTabValue(newValue)}>
+                <Tab icon={<BuildIcon />} label="Configuration" />
+                <Tab icon={<ScheduleIcon />} label="Recurring Jobs" />
+              </Tabs>
+            </Box>
+
+            {/* Configuration Tab */}
+            <TabPanel value={tabValue} index={0}>
+              {configSchema ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {configSchema.description}
+                  </Typography>
+
+                  {error && <Alert severity="error">{error}</Alert>}
+
+                  {/* Render custom configuration components based on pluginName */}
+                  {pluginName === 'YouTubePlugin' && (
+                    <YouTubeConfig
+                      config={config as YouTubePluginConfig}
+                      onChange={handleConfigChange}
+                    />
+                  )}
+                  {pluginName === 'BitTorrentPlugin' && (
+                    <BitTorrentConfig
+                      config={config as BitTorrentPluginConfig}
+                      onChange={handleConfigChange}
+                    />
+                  )}
+
+                  {/* Fallback to schema-driven rendering for other plugins */}
+                  {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin') && (
+                    <Grid container spacing={2}>
+                      {configSchema.config_schema.map((field) => (
+                        <Grid size={{ xs: 12, sm: 6 }} key={field.name}>
+                          {renderConfigField(field)}
+                        </Grid>
+                      ))}
+                    </Grid>
+                  )}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No configuration available for this plugin.
+                </Typography>
+              )}
+            </TabPanel>
+
+            {/* Recurring Jobs Tab */}
+            <TabPanel value={tabValue} index={1}>
+              <RecurringJobsTab pluginName={pluginName} onNotification={handleNotification} />
+            </TabPanel>
+          </>
         )}
       </DialogContent>
 
       <DialogActions>
-        {configSchema && (
+        {tabValue === 0 && configSchema ? (
           <>
             <Button onClick={handleReset} color="info">
               Reset to Defaults
             </Button>
-            <Button onClick={onClose}>Cancel</Button>
-            <Button 
-              onClick={handleSave} 
-              variant="contained" 
+            <Button onClick={handleClose}>Cancel</Button>
+            <Button
+              onClick={handleSave}
+              variant="contained"
               disabled={saving}
             >
               {saving ? <CircularProgress size={20} /> : 'Save Configuration'}
             </Button>
           </>
+        ) : (
+          <Button onClick={handleClose}>Close</Button>
         )}
       </DialogActions>
+
+      {/* Notification */}
+      {notification.open && (
+        <Alert
+          severity={notification.severity}
+          onClose={() => setNotification({ ...notification, open: false })}
+          sx={{ position: 'absolute', bottom: 16, left: 16, right: 16, zIndex: 1 }}
+        >
+          {notification.message}
+        </Alert>
+      )}
     </Dialog>
   );
 }

@@ -35,6 +35,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { usePlugins, usePluginHealth } from '@/hooks/usePlugins';
 import { PluginMetadata, PluginHealth } from '@/types/plugin';
+import { PluginConfigurationModal } from './PluginConfigurationModal';
 
 const PluginCard: React.FC<{
   plugin: PluginMetadata;
@@ -459,6 +460,17 @@ const PluginManagementPage: React.FC = () => {
           )}
         </DialogActions>
       </Dialog>
+
+      {/* Configuration Modal */}
+      {selectedPlugin && (
+        <PluginConfigurationModal
+          open={configDialogOpen}
+          pluginName={selectedPlugin.name}
+          pluginDisplayName={selectedPlugin.name}
+          onClose={() => setConfigDialogOpen(false)}
+          onSave={refreshPlugins}
+        />
+      )}
 
       {/* Notification */}
       {notification.open && (

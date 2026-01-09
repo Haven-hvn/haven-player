@@ -15,10 +15,7 @@ class AppConfig(Base):
     llm_model: Mapped[str] = mapped_column(String, default="HuggingFaceTB/SmolVLM-Instruct")
     # Processing Configuration
     max_batch_size: Mapped[int] = mapped_column(Integer, default=1)
-    # LiveKit Configuration
-    livekit_url: Mapped[str] = mapped_column(String, default="wss://pump-prod-tg2x8veh.livekit.cloud")
-    livekit_api_key: Mapped[str] = mapped_column(String, default="")
-    livekit_api_secret: Mapped[str] = mapped_column(String, default="")
+    # Recording Configuration
     recording_directory: Mapped[str] = mapped_column(String, default="~/.haven-player/recordings")
     # Global Plugin Configuration
     download_directory: Mapped[str] = mapped_column(String, default="downloads")
@@ -34,9 +31,6 @@ class AppConfig(Base):
             'llm_base_url': self.llm_base_url,
             'llm_model': self.llm_model,
             'max_batch_size': self.max_batch_size,
-            'livekit_url': self.livekit_url,
-            'livekit_api_key': self.livekit_api_key,
-            'livekit_api_secret': self.livekit_api_secret,
             'recording_directory': self.recording_directory,
             'download_directory': self.download_directory,
             'glitter_endpoint': self.glitter_endpoint,

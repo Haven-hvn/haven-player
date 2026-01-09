@@ -235,7 +235,6 @@ const MainApp: React.FC = () => {
         llm_base_url: data.llm_base_url,
         llm_model: data.llm_model,
         max_batch_size: data.max_batch_size,
-        livekit_url: data.livekit_url,
       });
     } catch (error) {
       console.error("Failed to fetch backend config:", error);
@@ -633,10 +632,6 @@ const MainApp: React.FC = () => {
     refreshVideos();
   }, [refreshVideos]);
 
-  const handleSettings = useCallback(() => {
-    openSettings("ai");
-  }, [openSettings]);
-
   const handleConfigSave = useCallback(
     async (configToSave: typeof DEFAULT_AI_CONFIG) => {
       try {
@@ -745,7 +740,7 @@ const MainApp: React.FC = () => {
           borderRight: "1px solid #E8E8E8",
         }}
       >
-        <Sidebar onRefresh={handleRefresh} onSettings={handleSettings} />
+        <Sidebar onRefresh={handleRefresh} />
       </Box>
 
       {/* Main content area */}

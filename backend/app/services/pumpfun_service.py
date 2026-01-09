@@ -15,9 +15,9 @@ class PumpFunService:
     """
     
     # Constants from pump.fun
-    LIVEKIT_URL = "wss://pump-prod-tg2x8veh.livekit.cloud"
     JOIN_API_URL = "https://livestream-api.pump.fun/livestream/join"
     LIVE_STREAMS_API_URL = "https://frontend-api-v3.pump.fun/coins/currently-live"
+    DEFAULT_LIVEKIT_URL = "wss://pump-prod-tg2x8veh.livekit.cloud"  # Default for backward compatibility
     
     def __init__(self):
         self.http_client = httpx.AsyncClient(
@@ -29,13 +29,14 @@ class PumpFunService:
             }
         )
 
-    async def get_livestream_token(self, mint_id: str, role: str = "viewer") -> Optional[str]:
+    async def get_livestream_token(self, mint_id: str, role: str = "viewer", livekit_url: Optional[str] = None) -> Optional[str]:
         """
         Get LiveKit token for a specific mint_id from pump.fun.
         
         Args:
             mint_id: The mint ID of the coin/stream
             role: Role to join as (default: "viewer")
+            livekit_url: LiveKit server URL (optional, defaults to pump.fun server)
             
         Returns:
             LiveKit token string or None if failed
@@ -46,7 +47,12 @@ class PumpFunService:
                 "role": role
             }
             
-            logger.info(f"Requesting token for mint_id: {mint_id}")
+            # Use provided livekit_url or default for specific server
+            effective_livekit_url = livekit_url or self.DEFAULT_LIVEKIT_URL
+            
+            # Log which LiveKit URL is being used
+            logger.info(f"Requesting token for mint_id: {mint_id} using LiveKit URL: {effective_livekit_url}")
+            
             response = await self.http_client.post(
                 self.JOIN_API_URL,
                 json=payload
@@ -193,10 +199,6 @@ class PumpFunService:
             logger.error(f"Error getting stream info for {mint_id}: {e}")
             
         return None
-
-    def get_livekit_url(self) -> str:
-        """Get the constant LiveKit URL for pump.fun."""
-        return self.LIVEKIT_URL
 
     async def validate_mint_id(self, mint_id: str) -> bool:
         """

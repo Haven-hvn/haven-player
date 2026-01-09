@@ -78,7 +78,6 @@ class ConfigUpdate(BaseModel):
     llm_base_url: str
     llm_model: str
     max_batch_size: int
-    livekit_url: str
     glitter_endpoint: str
     download_directory: str
 
@@ -111,15 +110,6 @@ class ConfigUpdate(BaseModel):
         if v < 1 or v > 10:
             raise ValueError('Max batch size must be between 1 and 10')
         return v
-    
-    @field_validator('livekit_url')
-    @classmethod
-    def validate_livekit_url(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError('LiveKit URL cannot be empty')
-        if not v.startswith(('ws://', 'wss://')):
-            raise ValueError('LiveKit URL must start with ws:// or wss://')
-        return v.strip()
 
     @field_validator('glitter_endpoint')
     @classmethod
@@ -138,7 +128,6 @@ class ConfigResponse(BaseModel):
     llm_base_url: str
     llm_model: str
     max_batch_size: int
-    livekit_url: str
     glitter_endpoint: str
     download_directory: str
     updated_at: datetime
@@ -172,7 +161,6 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     config.llm_base_url = config_update.llm_base_url
     config.llm_model = config_update.llm_model
     config.max_batch_size = config_update.max_batch_size
-    config.livekit_url = config_update.livekit_url
     config.glitter_endpoint = config_update.glitter_endpoint
     config.download_directory = config_update.download_directory
     config.updated_at = datetime.now(timezone.utc)

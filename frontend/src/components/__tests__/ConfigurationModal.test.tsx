@@ -26,7 +26,6 @@ const mockConfigResponse = {
   llm_base_url: "http://localhost:1234",
   llm_model: "HuggingFaceTB/SmolVLM-Instruct",
   max_batch_size: 2,
-  livekit_url: "wss://example.livekit",
   updated_at: "2024-01-15T10:30:00Z",
 };
 
@@ -134,7 +133,6 @@ describe("ConfigurationModal", () => {
           llm_base_url: mockConfigResponse.llm_base_url,
           llm_model: mockConfigResponse.llm_model,
           max_batch_size: mockConfigResponse.max_batch_size,
-          livekit_url: mockConfigResponse.livekit_url,
         });
       });
     });

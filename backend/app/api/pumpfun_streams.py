@@ -126,7 +126,7 @@ async def validate_stream(mint_id: str):
 
 
 @router.get("/token/{mint_id}")
-async def get_stream_token(mint_id: str):
+async def get_stream_token(mint_id: str, livekit_url: str = "wss://pump-prod-tg2x8veh.livekit.cloud"):
     """
     Get a LiveKit token for a specific mint_id stream.
     
@@ -134,6 +134,7 @@ async def get_stream_token(mint_id: str):
     tokens are obtained automatically when starting a session.
     
     - **mint_id**: The mint ID of the coin/stream
+    - **livekit_url**: LiveKit server URL (optional, defaults to pump.fun)
     """
     try:
         # Validate the mint_id first
@@ -142,7 +143,7 @@ async def get_stream_token(mint_id: str):
             raise HTTPException(status_code=404, detail=f"Stream not found or not live for mint_id: {mint_id}")
         
         # Get token
-        token = await pumpfun_service.get_livestream_token(mint_id, role="viewer")
+        token = await pumpfun_service.get_livestream_token(mint_id, role="viewer", livekit_url=livekit_url)
         
         if not token:
             raise HTTPException(status_code=500, detail=f"Failed to get token for mint_id: {mint_id}")
@@ -150,7 +151,7 @@ async def get_stream_token(mint_id: str):
         return {
             "mint_id": mint_id,
             "token": token,
-            "livekit_url": pumpfun_service.get_livekit_url(),
+            "livekit_url": livekit_url,
             "role": "viewer"
         }
         

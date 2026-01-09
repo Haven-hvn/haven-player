@@ -68,7 +68,6 @@ interface AppConfig {
   llm_base_url: string;
   llm_model: string;
   max_batch_size: number;
-  livekit_url: string;
   glitter_endpoint: string;
   download_directory: string; /* Added global download directory */
   updated_at: string;
@@ -105,7 +104,6 @@ const defaultAppConfig: EditableAppConfig = {
   llm_base_url: "http://localhost:1234",
   llm_model: "HuggingFaceTB/SmolVLM-Instruct",
   max_batch_size: 1,
-  livekit_url: "wss://pump-prod-tg2x8veh.livekit.cloud",
   glitter_endpoint: "https://gw.magnode.ru/v1/sql/query",
   download_directory: "downloads", /* Added default download directory */
 };
@@ -192,7 +190,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         llm_base_url: data.llm_base_url,
         llm_model: data.llm_model,
         max_batch_size: data.max_batch_size,
-        livekit_url: data.livekit_url,
         glitter_endpoint: data.glitter_endpoint,
         download_directory: data.download_directory, /* Added global download directory */
       });
@@ -747,21 +744,6 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
         LiveKit Configuration
       </Typography>
-      <TextField
-        fullWidth
-        label="LiveKit URL"
-        value={config.livekit_url}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-          setConfig((prev: EditableAppConfig) => ({
-            ...prev,
-            livekit_url: e.target.value,
-          }))
-        }
-        placeholder="wss://pump-prod-tg2x8veh.livekit.cloud"
-        helperText="WebSocket URL for LiveKit server connection"
-      />
-    </Box>
-  );
 
   const renderPlaybackContent = (): JSX.Element => {
     const statusSeverity =

@@ -17,6 +17,7 @@ import {
   Extension as PluginsIcon,
 } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useSettingsNavigation } from "@/context/SettingsNavigationContext";
 
 interface SidebarProps {
   onRefresh?: () => void;
@@ -31,6 +32,7 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
   const { onRefresh, onSettings, onHelp } = props;
   const location = useLocation();
   const navigate = useNavigate();
+  const { openSettings } = useSettingsNavigation();
   const [sectionsExpanded, setSectionsExpanded] = useState<SectionsState>({
     main: true,
     personal: true,
@@ -41,6 +43,15 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
       ...prev,
       [section]: !prev[section],
     }));
+  };
+
+  // Handle settings click - use prop if provided, otherwise use hook
+  const handleSettingsClick = () => {
+    if (onSettings) {
+      onSettings();
+    } else {
+      openSettings(); // Opens with default tab from SettingsNavigationProvider
+    }
   };
 
   const navigationItems: NavItem[] = useMemo(
@@ -317,7 +328,7 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
         </Box>
 
         <Box
-          onClick={onSettings}
+          onClick={handleSettingsClick}
           sx={{
             display: "flex",
             alignItems: "center",

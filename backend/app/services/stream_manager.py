@@ -81,22 +81,23 @@ class StreamManager:
         finally:
             db.close()
 
-    async def start_stream(self, mint_id: str) -> Dict[str, Any]:
+async def start_stream(self, mint_id: str, livekit_url: str = "wss://pump-prod-tg2x8veh.livekit.cloud") -> Dict[str, Any]:
         """
         Start a new stream connection for the given mint_id.
         Returns stream information for both streaming and recording.
         """
+        # Initialize config if needed (fallback for non-collection calls)
         if not self.config:
             await self.initialize()
-
+            
         try:
             # Validate mint_id and get stream info
             stream_info = await self.pumpfun_service.get_stream_info(mint_id)
             if not stream_info:
                 return {"success": False, "error": f"No stream found for mint_id: {mint_id}"}
 
-            # Get LiveKit token
-            token = await self.pumpfun_service.get_livestream_token(mint_id)
+            # Get LiveKit token with specific URL
+            token = await self.pumpfun_service.get_livestream_token(mint_id, livekit_url=livekit_url)
             if not token:
                 return {"success": False, "error": "Failed to get LiveKit token"}
 
@@ -163,7 +164,7 @@ class StreamManager:
                                     mint_id=mint_id,
                                     room_name=existing_room.name,
                                     participant_sid=p.sid,
-                                    stream_url=self.config.livekit_url,
+                                    stream_url=livekit_url,  # Use the provided LiveKit URL
                                     token=token, # Reuse the fresh token we just got
                                     stream_data=base_stream_data
                                 )
@@ -198,7 +199,6 @@ class StreamManager:
             # Connect to room with DISABLED auto-subscribe to prevent buffering
             # CRITICAL: auto_subscribe=True causes UNLIMITED buffering in rtc.Room → 9GB memory!
             # We'll manually subscribe with buffer limits after connection
-            livekit_url = self.config.livekit_url
             connect_options = rtc.RoomOptions(
                 auto_subscribe=False,  # DISABLED: Prevents unlimited internal buffering
             )

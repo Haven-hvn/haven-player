@@ -17,8 +17,8 @@ from app.services.arkiv_sync import ArkivSyncClient, ArkivSyncConfig, build_arki
 from app.services.evm_utils import InsufficientGasError
 from collections import defaultdict
 from pydantic import BaseModel, ConfigDict
-from app.lib.phash_generator.phash_calculator import calculate_phash
-from app.lib.phash_generator.phash_calculator import get_video_duration
+from app.utils.phash import calculate_phash
+from app.utils.video import get_video_duration
 from app.lib.thumbnail_generator import generate_video_thumbnail
 from imagehash import hex_to_hash
 import asyncio

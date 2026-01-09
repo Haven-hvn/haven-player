@@ -33,7 +33,7 @@ from app.models.database import get_db as get_db_session
 from app.models.plugin import Plugin as PluginModel
 from app.models.video import Video, Timestamp
 from app.models.analysis_job import AnalysisJob
-from app.lib.phash_generator.phash_calculator import get_video_duration
+from app.utils.video import get_video_duration
 
 
 logger = logging.getLogger(__name__)
@@ -706,7 +706,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             os.makedirs(channel_dir, exist_ok=True)
 
             safe_title = "".join(c for c in source.metadata.get("title", "video") if c.isalnum() or c in (' ', '-', '_'))
-            output_template = os.path.join(channel_dir, f"{safe_title}.%(ext)s")
+            # Include video ID to ensure unique filenames
+            output_template = os.path.join(channel_dir, f"{safe_title}_{source.source_id}.%(ext)s")
 
             # Get requested format and quality settings
             video_format = source.metadata.get("video_format", "mp4")  # Container: mp4, webm, mkv

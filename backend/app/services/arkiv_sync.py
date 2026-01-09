@@ -29,7 +29,8 @@ from requests.exceptions import HTTPError
 from sqlalchemy.orm import Session
 from web3.exceptions import Web3RPCError
 
-from app.lib.phash_generator.phash_calculator import calculate_phash, get_video_duration
+from app.utils.phash import calculate_phash
+from app.utils.video import get_video_duration
 from app.models.video import Timestamp, Video
 from app.services.evm_utils import (
     InsufficientGasError,

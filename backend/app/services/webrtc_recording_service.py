@@ -19,7 +19,7 @@ from app.services.stream_manager import StreamManager
 from app.models.video import Video
 from app.models.live_session import LiveSession
 from app.models.database import get_db
-from app.lib.phash_generator.phash_calculator import get_video_duration
+from app.utils.video import get_video_duration
 from app.lib.thumbnail_generator import generate_video_thumbnail
 
 

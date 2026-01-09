@@ -189,7 +189,9 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                                 "duration": video.get("duration"),
                                 "thumbnail": video.get("thumbnail"),
                                 "upload_date": video.get("upload_date"),
-                                "video_format": channel_config.get("video_format", "best"),
+                                # Map frontend settings to yt-dlp parameters
+                                "video_format": channel_config.get("video_format", "mp4"),  # Container: mp4, webm, mkv
+                                "video_quality": channel_config.get("video_quality", "best"),  # Quality: best, 1080p, 720p, 480p
                                 "download_subtitles": channel_config.get("download_subtitles", False),
                             },
                             priority="normal",
@@ -318,7 +320,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                     plugin_source_id=video_id,
                     plugin_metadata={
                         "upload_date": source.metadata.get("upload_date"),
-                        "video_format": source.metadata.get("video_format"),
+                        "video_format": source.metadata.get("video_format"),  # Container
+                        "video_quality": source.metadata.get("video_quality"),  # Quality
                         "download_subtitles": source.metadata.get("download_subtitles"),
                     },
                     plugin_discovered_at=datetime.utcnow(),
@@ -446,7 +449,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 "channel_id": channel_id,
                 "channel_url": collection_uri,
                 "enabled": True,
-                "video_format": config.get("video_format", "best") if config else "best",
+                "video_format": config.get("video_format", "mp4") if config else "mp4",  # Container: mp4, webm, mkv
+                "video_quality": config.get("video_quality", "best") if config else "best",  # Quality: best, 1080p, 720p, 480p
                 "download_subtitles": config.get("download_subtitles", False) if config else False,
                 "auto_archive": config.get("auto_archive", True) if config else True,
                 "created_at": datetime.utcnow().isoformat(),
@@ -696,13 +700,37 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             safe_title = "".join(c for c in source.metadata.get("title", "video") if c.isalnum() or c in (' ', '-', '_'))
             output_template = os.path.join(channel_dir, f"{safe_title}.%(ext)s")
 
+            # Get requested format and quality settings
+            video_format = source.metadata.get("video_format", "mp4")  # Container: mp4, webm, mkv
+            video_quality = source.metadata.get("video_quality", "best")  # Quality: best, 1080p, 720p, 480p
+
+            logger.info(f"Video settings - Format (container): {video_format}, Quality: {video_quality}")
+
+            # Build format string based on quality setting
+            # Format syntax: quality[ext=container] for best match
+            if video_quality == "best":
+                # Best quality with requested container
+                format_str = f"best[ext={video_format}]/best"
+            else:
+                # Specific quality with requested container
+                # Convert "1080p" to height=1080 for yt-dlp
+                height = video_quality.replace("p", "")
+                format_str = f"bestvideo[height<={height}][ext={video_format}]+bestaudio/bestvideo[height<={height}]/best[height<={height}][ext={video_format}]/best[height<={height}]"
+
+            logger.info(f"Using yt-dlp format string: {format_str}")
+
             cmd = [
                 "yt-dlp",
-                "--format", source.metadata.get("video_format", "best") if source.metadata.get("video_format") != "best" else "bestvideo+bestaudio/best",
-                "--merge-output-format", "mp4",
+                "--format", format_str,
                 "--output", output_template,
                 source.uri
             ]
+
+            # Add merge format if container specified and not mp4
+            if video_format != "mp4":
+                cmd.extend(["-S", f"ext:{video_format}"])
+
+            logger.info(f"yt-dlp command: {' '.join(cmd)}")
 
             if source.metadata.get("download_subtitles"):
                 cmd.extend(["--write-subs", "--write-auto-subs", "--sub-lang", "en"])
@@ -716,11 +744,48 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             )
 
             if result.returncode != 0:
-                logger.error(f"yt-dlp download error: {result.stderr}")
-                return {
-                    "success": False,
-                    "error": result.stderr,
-                }
+                stderr_output = result.stderr
+
+                # Check if the error is related to JavaScript runtime
+                if "JavaScript runtime" in stderr_output or "Requested format is not available" in stderr_output:
+                    logger.warning(f"Initial format failed, trying simpler format without video+audio merge")
+                    # Try a much simpler format that doesn't require JS signature decoding
+                    simple_cmd = [
+                        "yt-dlp",
+                        "--format", "worst[ext=mp4]/best[ext=mp4]?/worst",
+                        "--output", output_template,
+                        source.uri
+                    ]
+
+                    logger.info(f"Retrying with simpler format: {' '.join(simple_cmd)}")
+                    fallback_result = subprocess.run(
+                        simple_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=3600
+                    )
+
+                    if fallback_result.returncode == 0:
+                        result = fallback_result
+                        logger.info("✓ Fallback format succeeded!")
+                    else:
+                        # Fallback failed, use original error
+                        logger.error(f"Fallback also failed: {fallback_result.stderr}")
+                        stderr_output = result.stderr + "\n\n" + fallback_result.stderr
+
+                        # Add helpful info about JavaScript runtime
+                        install_hint = """
+\n\n\tYouTube downloads may fail without a JavaScript runtime.
+\tTo fix this, install Deno or Node.js:
+\t\tbrew install deno  # or
+\t\tbrew install node
+
+\tThen specify it in yt-dlp config or add --js-runtimes deno to commands.
+\tFor more info: https://github.com/yt-dlp/yt-dlp/wiki/EJS"""
+                        stderr_output += install_hint
+
+            # Execution continues here only if we didn't hit an error above
+            # (either original succeeded, or fallback succeeded)
 
             output_path = None
             for line in result.stdout.split('\n'):

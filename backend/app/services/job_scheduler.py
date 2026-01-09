@@ -58,6 +58,41 @@ def sanitize_config_for_storage(config: Dict[str, Any]) -> Dict[str, Any]:
 
 logger = logging.getLogger(__name__)
 
+# Global reference for job execution function
+# This allows APScheduler to pickle the job function without capturing the JobScheduler instance
+_global_scheduler: Optional['JobScheduler'] = None
+
+def _execute_job_wrapper(job_id: int) -> None:
+    """
+    Module-level wrapper function for job execution.
+
+    This function is used by APScheduler instead of a bound method to avoid
+    pickling the JobScheduler instance. It uses a global reference to the
+    scheduler to execute jobs.
+
+    Args:
+        job_id: ID of the recurring job to execute
+    """
+    global _global_scheduler
+    if _global_scheduler is None:
+        logger.error("Job scheduler not initialized, cannot execute job")
+        return
+
+    # Import asyncio here since this is called by APScheduler in a thread
+    import asyncio
+    try:
+        # Get or create event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        # Run the async _execute_job method
+        loop.run_until_complete(_global_scheduler._execute_job(job_id))
+    except Exception as e:
+        logger.error(f"Error in job execution wrapper for job {job_id}: {e}")
+
 
 class JobScheduler:
     """
@@ -106,26 +141,35 @@ class JobScheduler:
         if self.running:
             logger.warning("Scheduler already running")
             return
-        
+
         logger.info("Starting job scheduler...")
-        
+
+        # Set global reference for job execution wrapper
+        global _global_scheduler
+        _global_scheduler = self
+
         # Start the scheduler
         self.scheduler.start()
         self.running = True
-        
+
         # Load all enabled jobs from database
         await self._load_jobs_from_db()
-        
+
         logger.info(f"✅ Job scheduler started with {len(self.scheduler.get_jobs())} jobs")
     
     async def stop(self) -> None:
         """Stop the scheduler."""
         if not self.running:
             return
-        
+
         logger.info("Stopping job scheduler...")
         self.scheduler.shutdown()
         self.running = False
+
+        # Clear global reference
+        global _global_scheduler
+        _global_scheduler = None
+
         logger.info("✅ Job scheduler stopped")
     
     async def _load_jobs_from_db(self) -> None:
@@ -169,9 +213,9 @@ class JobScheduler:
                 timezone='UTC'
             )
             
-            # Schedule the job
+            # Schedule the job using module-level function to avoid pickling issues
             self.scheduler.add_job(
-                func=self._execute_job,
+                func=_execute_job_wrapper,  # Use module-level function instead of bound method
                 trigger=trigger,
                 args=[job.id],
                 id=f"job_{job.id}",

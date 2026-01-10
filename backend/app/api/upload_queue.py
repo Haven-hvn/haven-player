@@ -5,9 +5,10 @@ This module provides REST API endpoints for managing the FileCoin upload queue,
 including adding, listing, and updating upload jobs.
 """
 import logging
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 from sqlalchemy.orm import Session
 
 from app.models.database import get_db
@@ -39,13 +40,19 @@ class UploadQueueResponse(BaseModel):
     video_path: str
     status: str
     priority: int
-    created_at: str
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     attempts: int
     max_attempts: int
     error_message: Optional[str] = None
     source: str
+
+    @field_serializer('created_at', 'started_at', 'completed_at')
+    @classmethod
+    def serialize_datetime(cls, dt: Optional[datetime]) -> Optional[str]:
+        """Convert datetime to ISO format string."""
+        return dt.isoformat() if dt else None
 
 
 @router.post("/upload-queue", response_model=UploadQueueResponse, status_code=201)

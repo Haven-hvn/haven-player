@@ -53,10 +53,11 @@ async def get_upload_coordinator_config(
     """
     try:
         config = coordinator.get_config()
-        logger.info(f"UploadCoordinator config requested: enabled={config.get('enabled')}, plugins={config.get('plugin_overrides', {})}")
+        plugin_overrides = config.get('plugin_overrides') or {}
+        logger.info(f"UploadCoordinator config requested: enabled={config.get('enabled')}, plugins={plugin_overrides}")
         return {
             'enabled': config.get('enabled', False),
-            'plugin_overrides': config.get('plugin_overrides', {}),
+            'plugin_overrides': plugin_overrides,
             'priority': config.get('priority', 0),
         }
     except Exception as e:
@@ -95,9 +96,10 @@ async def update_upload_coordinator_config(
 
         # Return updated config
         config = coordinator.get_config()
+        plugin_overrides = config.get('plugin_overrides') or {}
         return {
             'enabled': config.get('enabled', False),
-            'plugin_overrides': config.get('plugin_overrides', {}),
+            'plugin_overrides': plugin_overrides,
             'priority': config.get('priority', 0),
         }
     except Exception as e:

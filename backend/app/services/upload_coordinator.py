@@ -65,7 +65,7 @@ class UploadCoordinator:
             # Load from database
             db_config = {
                 'enabled': config.upload_coordinator_enabled,
-                'plugin_overrides': config.upload_coordinator_plugin_overrides,
+                'plugin_overrides': config.upload_coordinator_plugin_overrides or {},
                 'priority': config.upload_coordinator_priority,
             }
 
@@ -78,8 +78,8 @@ class UploadCoordinator:
                     db_config['enabled'] = False
                     logger.info("FileCoin not configured, upload coordinator remains disabled")
 
-                # Save the auto-detected value to database
-                self.save_config(db_config)
+                # Save the auto-detected value to database (only update enabled field)
+                self.save_config({'enabled': db_config['enabled']})
 
             logger.info(f"Loaded UploadCoordinator config from database")
             return db_config
@@ -102,10 +102,13 @@ class UploadCoordinator:
                 app_config = AppConfig()
                 db.add(app_config)
 
-            # Update config values
-            app_config.upload_coordinator_enabled = config.get('enabled')
-            app_config.upload_coordinator_plugin_overrides = config.get('plugin_overrides', {})
-            app_config.upload_coordinator_priority = config.get('priority', 0)
+            # Update config values only if provided (preserve existing values)
+            if 'enabled' in config:
+                app_config.upload_coordinator_enabled = config.get('enabled')
+            if 'plugin_overrides' in config:
+                app_config.upload_coordinator_plugin_overrides = config.get('plugin_overrides')
+            if 'priority' in config:
+                app_config.upload_coordinator_priority = config.get('priority', 0)
             app_config.updated_at = datetime.now(timezone.utc)
 
             db.commit()

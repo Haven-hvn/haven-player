@@ -94,7 +94,7 @@ def enable_youtube_plugin():
                 enabled=True,
                 version="1.0.0",
                 config={
-                    "download_dir": "downloads/youtube",
+                    "download_directory": "downloads/youtube",
                     "max_concurrent_downloads": 3,
                     "max_videos_per_channel": 50,
                 },

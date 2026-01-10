@@ -546,7 +546,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     def get_config(self) -> Dict[str, Any]:
         """Get current plugin configuration."""
         return {
-            "download_dir": self.download_dir,
+            "download_directory": self.download_dir,
             "glitter_endpoint": self.glitter_endpoint,
             **self.config
         }
@@ -559,8 +559,8 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             self.glitter_endpoint = config["glitter_endpoint"]
             logger.info(f"Updated glitter_endpoint to: {self.glitter_endpoint}")
 
-        if "download_dir" in config:
-            self.download_dir = config["download_dir"]
+        if "download_directory" in config:
+            self.download_dir = config["download_directory"]
             os.makedirs(self.download_dir, exist_ok=True)
 
         # Update the Plugin model in database
@@ -598,7 +598,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
         return {
             "subscriptions": [],
             "glitter_endpoint": "https://gw.magnode.ru/v1/sql/query",
-            "download_dir": "downloads/bittorrent",
+            "download_directory": "downloads/bittorrent",
         }
 
     # ========== Additional Mixin Methods ==========

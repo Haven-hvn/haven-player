@@ -22,7 +22,7 @@ def youtube_plugin():
     # Initialize with mock config
     plugin.config = {
         "max_videos_per_channel": 5,
-        "download_dir": "downloads/youtube",
+        "download_directory": "downloads/youtube",
     }
     plugin.initialized = True
     plugin.download_dir = "downloads/youtube"
@@ -270,5 +270,5 @@ class TestYouTubePluginDefaultConfig:
         assert "channels" in default_config
         assert isinstance(default_config["channels"], list)
         assert "max_concurrent_downloads" in default_config
-        assert "download_dir" in default_config
+        assert "download_directory" in default_config
         assert "max_videos_per_channel" in default_config

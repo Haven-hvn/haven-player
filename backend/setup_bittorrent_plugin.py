@@ -102,7 +102,7 @@ def enable_bittorrent_plugin():
                 enabled=True,
                 version="1.0.0",
                 config={
-                    "download_dir": "downloads/bittorrent",
+                    "download_directory": "downloads/bittorrent",
                     "max_concurrent_downloads": 3,
                 },
                 priority=0

@@ -80,7 +80,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         if app_config and app_config.download_directory:
             self.download_dir = app_config.download_directory
         else:
-            self.download_dir = config.get("download_dir", "downloads/youtube")
+            self.download_dir = config.get("download_directory", "downloads/youtube")
         db.close()
         os.makedirs(self.download_dir, exist_ok=True)
 
@@ -627,7 +627,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     def get_config(self) -> Dict[str, Any]:
         """Get current plugin configuration."""
         return {
-            "download_dir": self.download_dir,
+            "download_directory": self.download_dir,
             **self.config
         }
 
@@ -635,8 +635,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """Update plugin configuration."""
         self.config.update(config)
 
-        if "download_dir" in config:
-            self.download_dir = config["download_dir"]
+        if "download_directory" in config:
+            self.download_dir = config["download_directory"]
             os.makedirs(self.download_dir, exist_ok=True)
 
         logger.info(f"Configuration updated: {config}")
@@ -647,7 +647,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         return {
             "channels": [],
             "max_concurrent_downloads": 3,
-            "download_dir": self.download_dir,
+            "download_directory": self.download_dir,
             "max_videos_per_channel": 50,
         }
 

@@ -242,7 +242,7 @@ class TestBitTorrentPluginDefaultConfig:
         assert "subscriptions" in default_config
         assert isinstance(default_config["subscriptions"], list)
         assert "glitter_endpoint" in default_config
-        assert "download_dir" in default_config
+        assert "download_directory" in default_config
 
     def test_initialize_loads_glitter_endpoint_from_config(self, bittorrent_plugin):
         """Test that initialize loads glitter_endpoint from plugin config."""

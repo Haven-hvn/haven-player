@@ -12,8 +12,7 @@ import httpx
 
 from app.models.database import get_db
 from app.models.upload_queue import UploadQueue
-from app.models.video import Video
-from app.models.timestamp import Timestamp
+from app.models.video import Video, Timestamp
 
 logger = logging.getLogger(__name__)
 

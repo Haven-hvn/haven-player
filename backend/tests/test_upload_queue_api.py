@@ -13,8 +13,7 @@ from app.main import app
 from app.models.base import Base
 from app.models.database import get_db
 from app.models.upload_queue import UploadQueue
-from app.models.video import Video
-from app.models.timestamp import Timestamp
+from app.models.video import Video, Timestamp
 
 
 # Create test database
@@ -764,7 +763,7 @@ class TestArkivSyncEndoints:
 
     def test_update_status_auto_queues_arkiv_sync(self, client: TestClient, db_session):
         """Test that updating status to completed automatically queues Arkiv sync."""
-        from app.models.timestamp import Timestamp
+        from app.models.video import Timestamp
 
         # Add a video with timestamps and Arkiv enabled
         video = Video(
@@ -861,7 +860,7 @@ class TestArkivSyncEndoints:
 
     def test_update_status_skips_arkiv_sync_disabled(self, client: TestClient, db_session):
         """Test that Arkiv sync is skipped when share_to_arkiv is False."""
-        from app.models.timestamp import Timestamp
+        from app.models.video import Timestamp
 
         # Add a video with timestamps but Arkiv disabled
         video = Video(

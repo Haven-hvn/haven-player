@@ -562,14 +562,6 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
             color="info"
           />
         </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <MetricCard
-            title="VLM Processing"
-            value={queueStats?.vlm_analysis_pending ?? 0 + (queueStats?.vlm_analysis_processing ?? 0)}
-            icon={<TimelineIcon />}
-            color="secondary"
-          />
-        </Grid>
       </Grid>
 
       {/* Activity Log */}

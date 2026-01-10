@@ -265,6 +265,7 @@ export interface UploadWorkerConfig {
 }
 
 export interface UploadQueueStatus {
+  // FileCoin upload stats
   total: number;
   pending: number;
   processing: number;
@@ -272,6 +273,20 @@ export interface UploadQueueStatus {
   failed: number;
   cancelled: number;
   retryable: number;
+
+  // Arkiv sync stats
+  arkiv_sync_pending: number;
+  arkiv_sync_syncing: number;
+  arkiv_sync_completed: number;
+  arkiv_sync_failed: number;
+  arkiv_sync_skipped: number;
+
+  // VLM analysis stats
+  vlm_analysis_pending: number;
+  vlm_analysis_processing: number;
+  vlm_analysis_completed: number;
+  vlm_analysis_failed: number;
+  vlm_analysis_skipped: number;
 }
 
 export interface UploadQueueEntry {

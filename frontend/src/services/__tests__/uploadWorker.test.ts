@@ -5,12 +5,12 @@
 
 import {
   UploadWorker,
-  UploadCoordinatorConfig,
   UploadQueueEntry,
   getUploadWorker,
   startUploadWorker,
   stopUploadWorker,
 } from '../uploadWorker';
+import type { UploadWorkerConfig } from '../../types/plugin';
 
 // Mock dependencies
 jest.mock('fs');

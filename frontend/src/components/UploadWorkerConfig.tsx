@@ -24,8 +24,9 @@ import {
     Error as ErrorIcon,
     Info as InfoIcon,
   } from '@mui/icons-material';
-  import { useUploadWorker } from '@/hooks/useUploadWorker';
-  import { uploadCoordinatorConfigService, type UploadCoordinatorConfig } from '@/services/uploadCoordinatorConfigService';
+import { useUploadWorker } from '@/hooks/useUploadWorker';
+import { uploadCoordinatorConfigService } from '@/services/uploadCoordinatorConfigService';
+import type { UploadCoordinatorConfig } from '@/types/plugin';
 
 interface UploadWorkerConfigProps {
   filecoinConfigured: boolean;

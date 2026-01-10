@@ -10,7 +10,8 @@ import type { IpfsGatewayConfig } from './types/playback';
 import { DEFAULT_IPFS_GATEWAY, normalizeGatewayBase } from './services/playbackResolver';
 import { decryptTextWithLit, deserializeEncryptionMetadata } from './services/litService';
 import type { LitEncryptionMetadata } from './services/litService';
-import { getUploadWorker, type UploadWorkerConfig } from './services/uploadWorker';
+import { getUploadWorker } from './services/uploadWorker';
+import type { UploadWorkerConfig } from './types/plugin';
 
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));

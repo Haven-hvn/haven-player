@@ -173,7 +173,16 @@ describe('UploadWorker', () => {
         status: 'pending',
         priority: 0,
         created_at: new Date().toISOString(),
+        started_at: null,
+        completed_at: null,
+        attempts: 0,
+        max_attempts: 3,
+        error_message: null,
         source: 'plugin',
+        arkiv_sync_status: null,
+        arkiv_sync_started_at: null,
+        arkiv_sync_completed_at: null,
+        arkiv_sync_error: null,
       };
 
       mockFetch
@@ -348,7 +357,16 @@ describe('UploadWorker', () => {
         status: 'pending',
         priority: 0,
         created_at: new Date().toISOString(),
+        started_at: null,
+        completed_at: null,
+        attempts: 0,
+        max_attempts: 3,
+        error_message: null,
         source: 'plugin',
+        arkiv_sync_status: null,
+        arkiv_sync_started_at: null,
+        arkiv_sync_completed_at: null,
+        arkiv_sync_error: null,
       };
 
       mockFetch
@@ -396,7 +414,16 @@ describe('UploadWorker', () => {
       status: 'pending',
       priority: 0,
       created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+      attempts: 0,
+      max_attempts: 3,
+      error_message: null,
       source: 'plugin',
+      arkiv_sync_status: null,
+      arkiv_sync_started_at: null,
+      arkiv_sync_completed_at: null,
+      arkiv_sync_error: null,
     };
 
     it('should handle missing Filecoin config', async () => {

@@ -47,7 +47,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
     def __init__(self):
         self.config = {}
         self.initialized = False
-        self.download_dir = "downloads/bittorrent"  # Default, will be overwritten by global config
+        self.download_dir = None  # Will be set from global config on initialization
         self.glitter_endpoint = "https://gw.magnode.ru/v1/sql/query"  # Default Glitter endpoint
 
     def get_metadata(self) -> PluginMetadata:
@@ -64,13 +64,16 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
         """Initialize plugin with configuration."""
         self.config = config
 
-        # Download directory
+        # Download directory from global config only
         db = next(get_db_session())
         app_config = db.query(AppConfig).first()
         if app_config and app_config.download_directory:
             self.download_dir = app_config.download_directory
         else:
-            self.download_dir = config.get("download_directory", "downloads/bittorrent")
+            # No fallback - require global config
+            logger.error("Global download_directory not configured in AppConfig")
+            db.close()
+            return False
 
         # Load glitter_endpoint from plugin config
         plugin_stmt = select(PluginModel).where(PluginModel.name == "BitTorrentPlugin")
@@ -205,10 +208,23 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
                     metadata={"infohash": infohash}
                 )
 
+            # Get current global download directory
+            app_config = db.query(AppConfig).first()
+            if not app_config or not app_config.download_directory:
+                return ArchiveResult(
+                    success=False,
+                    error="Global download_directory not configured"
+                )
+            current_download_dir = app_config.download_directory
+
             ses = lt.session({'listen_interfaces': '0.0.0.0:6881'})
             params = {
-                'save_path': self.download_dir,
+                'save_path': current_download_dir,
             }
+            handle = lt.add_magnet_uri(ses, source.uri, params)
+            ses.start_dht()
+
+            logger.info(f"Downloading torrent {infohash} to {current_download_dir}")
             handle = lt.add_magnet_uri(ses, source.uri, params)
             ses.start_dht()
 
@@ -268,7 +284,7 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             logger.info("Download complete. Stopping torrent to prevent seeding...")
 
             # Get the output path for the downloaded file
-            output_path = os.path.join(self.download_dir, torrent_info.name(), files.file_path(largest_video_index))
+            output_path = os.path.join(current_download_dir, torrent_info.name(), files.file_path(largest_video_index))
 
             # Remove the torrent handle to stop seeding immediately
             ses.remove_torrent(handle)
@@ -332,9 +348,23 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
         """Check if plugin is healthy."""
         try:
             import libtorrent
+
+            # Check if global download directory exists
+            db = next(get_db_session())
+            app_config = db.query(AppConfig).first()
+            if not app_config or not app_config.download_directory:
+                db.close()
+                return False
+
+            download_dir = app_config.download_directory
+            db.close()
+
+            return os.path.exists(download_dir)
         except ImportError:
             return False
-        return os.path.exists(self.download_dir)
+        except Exception as e:
+            logger.error(f"BitTorrentPlugin health check failed: {e}")
+            return False
 
     async def subscribe(
         self,
@@ -545,11 +575,13 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
 
     def get_config(self) -> Dict[str, Any]:
         """Get current plugin configuration."""
-        return {
-            "download_directory": self.download_dir,
+        config_dict = {
             "glitter_endpoint": self.glitter_endpoint,
             **self.config
         }
+        # Note: download_directory is managed by global AppConfig, not plugin config
+        logger.info(f"Plugin config (download_dir uses global): {self.download_dir}")
+        return config_dict
 
     async def update_config(self, config: Dict[str, Any]) -> bool:
         """Update plugin configuration."""
@@ -559,9 +591,10 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             self.glitter_endpoint = config["glitter_endpoint"]
             logger.info(f"Updated glitter_endpoint to: {self.glitter_endpoint}")
 
+        # Note: download_directory cannot be overridden - uses global config only
         if "download_directory" in config:
-            self.download_dir = config["download_directory"]
-            os.makedirs(self.download_dir, exist_ok=True)
+            logger.warning("Ignoring download_directory in update_config - uses global AppConfig only")
+            del config["download_directory"]
 
         # Update the Plugin model in database
         db = next(get_db_session())
@@ -598,7 +631,6 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
         return {
             "subscriptions": [],
             "glitter_endpoint": "https://gw.magnode.ru/v1/sql/query",
-            "download_directory": "downloads/bittorrent",
         }
 
     # ========== Additional Mixin Methods ==========

@@ -18,12 +18,12 @@ from app.plugins.plugin_interface import MediaSource, MediaType
 def bittorrent_plugin():
     """Create a BitTorrentPlugin instance for testing."""
     plugin = BitTorrentPlugin()
-    # Initialize with mock config
+    # Initialize with mock config (no download_directory - uses global)
     plugin.config = {
-        "download_directory": "downloads/bittorrent",
+        "glitter_endpoint": "https://gw.magnode.ru/v1/sql/query",
     }
     plugin.initialized = True
-    plugin.download_dir = "downloads/bittorrent"
+    plugin.download_dir = "downloads"  # Global download directory
     return plugin
 
 
@@ -242,9 +242,11 @@ class TestBitTorrentPluginDefaultConfig:
         assert "subscriptions" in default_config
         assert isinstance(default_config["subscriptions"], list)
         assert "glitter_endpoint" in default_config
-        assert "download_directory" in default_config
+        # download_directory should NOT be in default config (uses global instead)
+        assert "download_directory" not in default_config
 
-    def test_initialize_loads_glitter_endpoint_from_config(self, bittorrent_plugin):
+    @pytest.mark.asyncio
+    async def test_loads_glitter_endpoint_from_config(self, bittorrent_plugin):
         """Test that initialize loads glitter_endpoint from plugin config."""
         mock_session = Mock()
         mock_plugin = Mock(spec=PluginModel)
@@ -252,6 +254,9 @@ class TestBitTorrentPluginDefaultConfig:
             "glitter_endpoint": "https://custom-endpoint.com/query",
         }
         mock_session.query.return_value.filter.return_value.first.return_value = mock_plugin
+        mock_app_config = Mock()
+        mock_app_config.download_directory = "/global/downloads"
+        mock_session.query.return_value.first.return_value = mock_app_config
 
         with patch('app.plugins.builtin.bittorrent_plugin.get_db_session') as mock_get_db:
             mock_get_db.return_value = mock_session
@@ -264,3 +269,66 @@ class TestBitTorrentPluginDefaultConfig:
 
                     assert result is True
                     assert bittorrent_plugin.glitter_endpoint == "https://custom-endpoint.com/query"
+
+
+class TestBitTorrentPluginDownloadDirectory:
+    """Test BitTorrent plugin's use of global download directory."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_uses_global_download_directory(self):
+        """Test that initialize uses global download_directory from AppConfig."""
+        plugin = BitTorrentPlugin()
+
+        mock_session = Mock()
+        mock_app_config = Mock()
+        mock_app_config.download_directory = "/global/downloads"
+        mock_plugin = Mock(spec=PluginModel)
+        mock_plugin.config = {}
+        mock_session.query.return_value.filter.return_value.first.return_value = mock_app_config
+
+        with patch('app.plugins.builtin.bittorrent_plugin.get_db_session') as mock_get_db:
+            mock_get_db.return_value = mock_session
+
+            with patch('os.makedirs'):
+                with patch('app.plugins.builtin.bittorrent_plugin.lt') as mock_lt:
+                    mock_lt.version = "1.0.0"
+
+                    result = await plugin.initialize({})
+
+                    assert result is True
+                    assert plugin.download_dir == "/global/downloads"
+
+    @pytest.mark.asyncio
+    async def test_initialize_fails_without_global_download_directory(self):
+        """Test that initialize fails when global download_directory is not configured."""
+        plugin = BitTorrentPlugin()
+
+        mock_session = Mock()
+        mock_session.query.return_value.first.return_value = None
+
+        with patch('app.plugins.builtin.bittorrent_plugin.get_db_session') as mock_get_db:
+            mock_get_db.return_value = mock_session
+
+            result = await plugin.initialize({})
+
+            assert result is False
+            assert plugin.download_dir is None
+
+    @pytest.mark.asyncio
+    async def test_initialize_fails_with_empty_global_download_directory(self):
+        """Test that initialize fails when global download_directory is empty."""
+        plugin = BitTorrentPlugin()
+
+        mock_session = Mock()
+        mock_app_config = Mock()
+        mock_app_config.download_directory = None
+        mock_session.query.return_value.first.return_value = mock_app_config
+
+        with patch('app.plugins.builtin.bittorrent_plugin.get_db_session') as mock_get_db:
+            mock_get_db.return_value = mock_session
+
+            result = await plugin.initialize({})
+
+            assert result is False
+            assert plugin.download_dir is None
+

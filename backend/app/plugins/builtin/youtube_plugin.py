@@ -57,7 +57,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     def __init__(self):
         self.config = {}
         self.initialized = False
-        self.download_dir = "downloads/youtube" # Default, will be overwritten by global config
+        self.download_dir = None  # Will be set from global config on initialization
 
     # ========== Core ArchiverPlugin Interface (Required) ==========
 
@@ -75,13 +75,16 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """Initialize plugin with configuration."""
         self.config = config
 
-        # Set download directory
+        # Set download directory from global config only
         db = next(get_db_session())
         app_config = db.query(AppConfig).first()
         if app_config and app_config.download_directory:
             self.download_dir = app_config.download_directory
         else:
-            self.download_dir = config.get("download_directory", "downloads/youtube")
+            # No fallback - require global config
+            logger.error("Global download_directory not configured in AppConfig")
+            db.close()
+            return False
         db.close()
         os.makedirs(self.download_dir, exist_ok=True)
 
@@ -384,6 +387,10 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             if result.returncode != 0:
                 return False
 
+            # Check if current global download directory exists
+            if not self.download_dir:
+                return False
+
             if not os.path.exists(self.download_dir):
                 return False
 
@@ -627,18 +634,21 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
     def get_config(self) -> Dict[str, Any]:
         """Get current plugin configuration."""
-        return {
-            "download_directory": self.download_dir,
+        config_dict = {
             **self.config
         }
+        # Note: download_directory is managed by global AppConfig, not plugin config
+        logger.info(f"Plugin config (download_dir uses global): {self.download_dir}")
+        return config_dict
 
     async def update_config(self, config: Dict[str, Any]) -> bool:
         """Update plugin configuration."""
         self.config.update(config)
 
+        # Note: download_directory cannot be overridden - uses global config only
         if "download_directory" in config:
-            self.download_dir = config["download_directory"]
-            os.makedirs(self.download_dir, exist_ok=True)
+            logger.warning("Ignoring download_directory in update_config - uses global AppConfig only")
+            del config["download_directory"]
 
         logger.info(f"Configuration updated: {config}")
         return True
@@ -648,7 +658,6 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         return {
             "channels": [],
             "max_concurrent_downloads": 3,
-            "download_directory": self.download_dir,
             "max_videos_per_channel": 50,
         }
 
@@ -702,8 +711,20 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     async def _download_video(self, source: MediaSource) -> Dict[str, Any]:
         """Download a YouTube video using yt-dlp."""
         try:
+            # Always get the latest global download directory
+            db = next(get_db_session())
+            app_config = db.query(AppConfig).first()
+            if not app_config or not app_config.download_directory:
+                db.close()
+                return {
+                    "success": False,
+                    "error": "Global download_directory not configured",
+                }
+            current_download_dir = app_config.download_directory
+            db.close()
+
             channel_name = source.metadata.get("channel_name", "Unknown")
-            channel_dir = os.path.join(self.download_dir, channel_name)
+            channel_dir = os.path.join(current_download_dir, channel_name)
             os.makedirs(channel_dir, exist_ok=True)
 
             # Transliterate Unicode to ASCII (preserves Japanese->romaji, Cyrillic->Latin, etc.)

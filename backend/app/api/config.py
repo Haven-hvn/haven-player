@@ -102,13 +102,21 @@ class ConfigUpdate(BaseModel):
         if not v.strip():
             raise ValueError('LLM model cannot be empty')
         return v.strip()
-    
+
     @field_validator('max_batch_size')
     @classmethod
     def validate_batch_size(cls, v: int) -> int:
         if v < 1 or v > 10:
             raise ValueError('Max batch size must be between 1 and 10')
         return v
+
+    @field_validator('download_directory')
+    @classmethod
+    def validate_download_directory(cls, v: str) -> str:
+        """Validate that download directory is not empty."""
+        if not v or not v.strip():
+            raise ValueError('Download directory cannot be empty')
+        return v.strip()
 
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

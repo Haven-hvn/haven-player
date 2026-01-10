@@ -19,13 +19,12 @@ from app.plugins.plugin_interface import MediaSource, MediaType
 def youtube_plugin():
     """Create a YouTubePlugin instance for testing."""
     plugin = YouTubePlugin()
-    # Initialize with mock config
+    # Initialize with mock config (no download_directory - uses global)
     plugin.config = {
         "max_videos_per_channel": 5,
-        "download_directory": "downloads/youtube",
     }
     plugin.initialized = True
-    plugin.download_dir = "downloads/youtube"
+    plugin.download_dir = "downloads"  # Global download directory
     return plugin
 
 
@@ -270,5 +269,62 @@ class TestYouTubePluginDefaultConfig:
         assert "channels" in default_config
         assert isinstance(default_config["channels"], list)
         assert "max_concurrent_downloads" in default_config
-        assert "download_directory" in default_config
         assert "max_videos_per_channel" in default_config
+        # download_directory should NOT be in default config (uses global instead)
+        assert "download_directory" not in default_config
+
+
+class TestYouTubePluginDownloadDirectory:
+    """Test YouTube plugin's use of global download directory."""
+
+    def test_initialize_uses_global_download_directory(self):
+        """Test that initialize uses global download_directory from AppConfig."""
+        plugin = YouTubePlugin()
+
+        mock_session = Mock()
+        mock_app_config = Mock()
+        mock_app_config.download_directory = "/global/downloads"
+        mock_session.query.return_value.first.return_value = mock_app_config
+
+        with patch('app.plugins.builtin.youtube_plugin.get_db_session') as mock_get_db:
+            mock_get_db.return_value = mock_session
+
+            with patch('subprocess.run', return_value=Mock(returncode=0, stdout="version")):
+                with patch('os.makedirs'):
+                    result = plugin.initialize({})
+
+                    assert result is True
+                    assert plugin.download_dir == "/global/downloads"
+
+    def test_initialize_fails_without_global_download_directory(self):
+        """Test that initialize fails when global download_directory is not configured."""
+        plugin = YouTubePlugin()
+
+        mock_session = Mock()
+        mock_session.query.return_value.first.return_value = None
+
+        with patch('app.plugins.builtin.youtube_plugin.get_db_session') as mock_get_db:
+            mock_get_db.return_value = mock_session
+
+            result = plugin.initialize({})
+
+            assert result is False
+            assert plugin.download_dir is None
+
+    def test_initialize_fails_with_empty_global_download_directory(self):
+        """Test that initialize fails when global download_directory is empty."""
+        plugin = YouTubePlugin()
+
+        mock_session = Mock()
+        mock_app_config = Mock()
+        mock_app_config.download_directory = None
+        mock_session.query.return_value.first.return_value = mock_app_config
+
+        with patch('app.plugins.builtin.youtube_plugin.get_db_session') as mock_get_db:
+            mock_get_db.return_value = mock_session
+
+            result = plugin.initialize({})
+
+            assert result is False
+            assert plugin.download_dir is None
+

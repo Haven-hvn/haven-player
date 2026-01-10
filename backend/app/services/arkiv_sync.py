@@ -767,6 +767,19 @@ class ArkivSyncClient:
                     is_encrypted=is_encrypted,  # Has default, but explicit is fine
                     lit_encryption_metadata=get_field("lit_encryption_metadata"),  # Optional
                 )
+
+                # Determine what data is in this Arkiv entity for arkiv_data_completeness
+                has_filecoin = bool(db_video.filecoin_root_cid) or bool(get_field("encrypted_cid", "encrypted_cid"))
+                has_timestamps = bool(ts_payloads)
+
+                if has_filecoin and has_timestamps:
+                    db_video.arkiv_data_completeness = "filecoin_and_vlm"
+                elif has_filecoin:
+                    db_video.arkiv_data_completeness = "filecoin_only"
+                elif has_timestamps:
+                    db_video.arkiv_data_completeness = "vlm_only"
+                else:
+                    db_video.arkiv_data_completeness = "none"
                 
                 # Clean up temporary file if created
                 if temp_file_path and os.path.exists(temp_file_path):

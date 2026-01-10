@@ -336,13 +336,30 @@ async def update_arkiv_sync_status(
         if update_data.arkiv_sync_error:
             queue_entry.arkiv_sync_error = update_data.arkiv_sync_error
 
-        # If completed successfully, update video's arkiv_entity_key
+        # If completed successfully, update video's arkiv_entity_key and arkiv_data_completeness
         if update_data.arkiv_sync_status == 'completed' and update_data.entity_key:
-            from app.models.video import Video
+            from app.models.video import Video, Timestamp
             video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
             if video:
                 video.arkiv_entity_key = update_data.entity_key
-                logger.info(f"Updated Arkiv entity_key for video: {queue_entry.video_path}")
+
+                # Determine what data was synced to Arkiv
+                has_filecoin = bool(video.filecoin_root_cid)
+                has_timestamps = db.query(Timestamp).filter(
+                    Timestamp.video_path == queue_entry.video_path
+                ).count() > 0
+
+                # Update arkiv_data_completeness
+                if has_filecoin and has_timestamps:
+                    video.arkiv_data_completeness = "filecoin_and_vlm"
+                elif has_filecoin:
+                    video.arkiv_data_completeness = "filecoin_only"
+                elif has_timestamps:
+                    video.arkiv_data_completeness = "vlm_only"
+                else:
+                    video.arkiv_data_completeness = "none"
+
+                logger.info(f"Updated Arkiv entity_key for video: {queue_entry.video_path} (completeness: {video.arkiv_data_completeness})")
 
         db.commit()
         db.refresh(queue_entry)
@@ -454,9 +471,26 @@ async def update_vlm_analysis_status(
             from app.models.video import Video, Timestamp
             video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
 
-            if video and video.share_to_arkiv and not video.arkiv_entity_key:
-                # Check if Arkiv sync is already pending or completed
-                if not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped':
+            if video and video.share_to_arkiv:
+                # Case 1: Arkiv entity exists but only has FileCoin data (not VLM) - incremental update
+                if (video.arkiv_entity_key and
+                    video.arkiv_data_completeness in ["filecoin_only", "none"] and
+                    not queue_entry.arkiv_sync_status):
+
+                    # Check if we now have timestamps to update
+                    has_timestamps = db.query(Timestamp).filter(
+                        Timestamp.video_path == queue_entry.video_path
+                    ).count() > 0
+
+                    if has_timestamps:
+                        # Queue Arkiv sync as UPDATE operation
+                        queue_entry.arkiv_sync_status = 'pending'
+                        logger.info(f"VLM completed, queuing Arkiv UPDATE to add timestamps for {queue_entry.video_path}")
+
+                # Case 2: Arkiv entity doesn't exist yet (original logic)
+                elif (not video.arkiv_entity_key and
+                      (not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped')):
+
                     # Check if we should queue Arkiv sync
                     has_filecoin = bool(video.filecoin_root_cid)
                     has_timestamps = db.query(Timestamp).filter(
@@ -558,9 +592,19 @@ async def update_upload_status(
                 logger.info(f"Updated FileCoin metadata for video: {queue_entry.video_path}")
 
                 # Check if video needs Arkiv sync
-                if video.share_to_arkiv and not video.arkiv_entity_key:
-                    # Check if Arkiv sync is already pending or completed (prevent duplicate queuing)
-                    if not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped':
+                if video.share_to_arkiv:
+                    # Case 1: Arkiv entity exists but only has VLM data (not FileCoin) - incremental update
+                    if (video.arkiv_entity_key and
+                        video.arkiv_data_completeness == "vlm_only" and
+                        not queue_entry.arkiv_sync_status):
+
+                        # Queue Arkiv sync as UPDATE operation
+                        queue_entry.arkiv_sync_status = 'pending'
+                        logger.info(f"FileCoin completed, queuing Arkiv UPDATE to add CID for {queue_entry.video_path}")
+
+                    # Case 2: Arkiv entity doesn't exist yet (original logic)
+                    elif (not video.arkiv_entity_key and
+                          (not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped')):
                         # CRITICAL: Arkiv sync can proceed if FileCoin completes (parallel execution)
                         # regardless of VLM analysis status
                         queue_entry.arkiv_sync_status = 'pending'

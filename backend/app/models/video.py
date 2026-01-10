@@ -33,6 +33,9 @@ class Video(Base):
     analysis_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     share_to_arkiv: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     arkiv_entity_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Track what data is stored in Arkiv (supports incremental updates)
+    # Values: "none", "filecoin_only", "vlm_only", "filecoin_and_vlm"
+    arkiv_data_completeness: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     enable_vlm_analysis: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     vlm_analysis_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
@@ -85,6 +88,7 @@ class Video(Base):
             'analysis_model': self.analysis_model,
             'share_to_arkiv': self.share_to_arkiv,
             'arkiv_entity_key': self.arkiv_entity_key,
+            'arkiv_data_completeness': self.arkiv_data_completeness,
             'enable_vlm_analysis': self.enable_vlm_analysis,
             'vlm_analysis_required': self.vlm_analysis_required,
             'created_at': self.created_at.isoformat() if self.created_at else None,

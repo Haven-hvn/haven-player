@@ -444,6 +444,7 @@ CREATE TABLE videos (
     -- Arkiv preference
     share_to_arkiv BOOLEAN DEFAULT TRUE,
     arkiv_entity_key VARCHAR,
+    arkiv_data_completeness VARCHAR,  -- "none", "filecoin_only", "vlm_only", "filecoin_and_vlm"
 
     -- FileCoin metadata
     filecoin_root_cid VARCHAR,
@@ -674,6 +675,185 @@ graph LR
     API -->|WebSocket| ArkivWorker
     API -->|Database| DB[(Database)]
 ```
+
+## Incremental Arkiv Updates
+
+The system supports incremental updates to Arkiv entities as new data becomes available. This ensures that users can restore complete state on any computer, even when FileCoin and VLM analysis complete at different times.
+
+### Problem
+
+Previously, Arkiv sync triggered only when EITHER FileCoin OR VLM completed the first time. Once `video.arkiv_entity_key` was set, subsequent completions would not trigger updates. This could lead to incomplete data on Arkiv:
+
+- FileCoin completes first → Arkiv entity created with CID only → VLM completes later → timestamps NOT synced to Arkiv
+- VLM completes first → Arkiv entity created with timestamps only → FileCoin completes later → CID NOT synced to Arkiv
+
+### Solution
+
+The system now tracks data completeness with the `arkiv_data_completeness` field:
+
+```python
+# Video table field
+arkiv_data_completeness: str | null  # Values: "none", "filecoin_only", "vlm_only", "filecoin_and_vlm"
+```
+
+This allows the system to determine if an update is needed:
+- If `arkiv_data_completeness == "filecoin_only"` and new timestamps appear → trigger UPDATE
+- If `arkiv_data_completeness == "vlm_only"` and new CID appears → trigger UPDATE
+
+### Update Triggers
+
+#### Initial Sync (First Event)
+
+Either event can trigger the first Arkiv sync:
+- FileCoin completes → Creates entity with `arkiv_data_completeness="filecoin_only"`
+- VLM completes → Creates entity with `arkiv_data_completeness="vlm_only"`
+
+#### Incremental Update (Second Event)
+
+When the second event completes, the system detects incompleteness:
+
+```python
+# VLM completion handler
+if (video.arkiv_entity_key and
+    video.arkiv_data_completeness in ["filecoin_only", "none"]):
+
+    # Check if we now have timestamps
+    has_timestamps = db.query(Timestamp).filter(...).count() > 0
+
+    if has_timestamps:
+        # Queue Arkiv UPDATE operation
+        queue_entry.arkiv_sync_status = 'pending'
+
+# FileCoin completion handler
+if (video.arkiv_entity_key and
+    video.arkiv_data_completeness == "vlm_only"):
+
+    # Queue Arkiv UPDATE operation
+    queue_entry.arkiv_sync_status = 'pending'
+```
+
+#### Completeness Tracking
+
+When Arkiv sync completes, the system updates the completeness field:
+
+```python
+# Determine what data was synced to Arkiv
+has_filecoin = bool(video.filecoin_root_cid)
+has_timestamps = db.query(Timestamp).filter(...).count() > 0
+
+# Update completeness
+if has_filecoin and has_timestamps:
+    video.arkiv_data_completeness = "filecoin_and_vlm"
+elif has_filecoin:
+    video.arkiv_data_completeness = "filecoin_only"
+elif has_timestamps:
+    video.arkiv_data_completeness = "vlm_only"
+else:
+    video.arkiv_data_completeness = "none"
+```
+
+### Scenarios
+
+#### Scenario 1: FileCoin First, Then VLM
+
+```mermaid
+sequenceDiagram
+    participant UW as UploadWorker
+    participant VW as VLMAnalysisWorker
+    participant AW as ArkivSyncWorker
+    participant DB as Database
+
+    Note over UW: 1. FileCoin completes
+    UW->>DB: Update status=completed<br/>(CID ready)
+    DB->>DB: Queue Arkiv sync
+
+    Note over AW: 2. Initial sync (files only)
+    AW->>AW: Sync CID to Arkiv
+    AW->>DB: Update arkiv_status=completed<br/>arkiv_data_completeness="filecoin_only"
+
+    Note over VW: 3. VLM completes later
+    VW->>DB: Update vlm_status=completed<br/>(timestamps saved)
+    DB->>DB: Queue Arkiv UPDATE<br/>(detected: filecoin_only)
+
+    Note over AW: 4. Incremental update
+    AW->>AW: Update entity on Arkiv<br/>(add timestamps)
+    AW->>DB: Update arkiv_status=completed<br/>arkiv_data_completeness="filecoin_and_vlm"
+```
+
+#### Scenario 2: VLM First, Then FileCoin
+
+```mermaid
+sequenceDiagram
+    participant VW as VLMAnalysisWorker
+    participant UW as UploadWorker
+    participant AW as ArkivSyncWorker
+    participant DB as Database
+
+    Note over VW: 1. VLM completes
+    VW->>DB: Update vlm_status=completed<br/>(timestamps saved)
+    DB->>DB: Queue Arkiv sync
+
+    Note over AW: 2. Initial sync (VLM only)
+    AW->>AW: Sync timestamps to Arkiv
+    AW->>DB: Update arkiv_status=completed<br/>arkiv_data_completeness="vlm_only"
+
+    Note over UW: 3. FileCoin completes later
+    UW->>DB: Update status=completed<br/>(CID ready)
+    DB->>DB: Queue Arkiv UPDATE<br/>(detected: vlm_only)
+
+    Note over AW: 4. Incremental update
+    AW->>AW: Update entity on Arkiv<br/>(add CID)
+    AW->>DB: Update arkiv_status=completed<br/>arkiv_data_completeness="filecoin_and_vlm"
+```
+
+#### Scenario 3: No Duplicate Updates
+
+```mermaid
+sequenceDiagram
+    participant VW as VLMAnalysisWorker
+    participant UW as UploadWorker
+    participant AW as ArkivSyncWorker
+    participant DB as Database
+
+    par Both complete
+        VW->>DB: Update vlm_status=completed
+        and UW->>DB: Update status=completed
+    end
+
+    Note over AW: 1. Initial sync (both)
+    AW->>AW: Sync CID + timestamps to Arkiv
+    AW->>DB: Update arkiv_status=completed<br/>arkiv_data_completeness="filecoin_and_vlm"
+
+    Note over VW: 2. VLM completes again (re-analysis)
+    VW->>DB: Update vlm_status=completed
+
+    Note over DB: No update triggered<br/>(completeness already full)
+```
+
+### Frontend Display
+
+The frontend displays Arkiv data completeness as a chip:
+
+```typescript
+// Video card shows Arkiv sync status
+if (video.arkiv_entity_key) {
+    const completeness = video.arkiv_data_completeness;
+    if (completeness === 'filecoin_and_vlm') {
+        <Chip icon={<CheckCircle />} label="Full Arkiv Sync" color="success" />;
+    } else if (completeness === 'filecoin_only') {
+        <Chip icon={<CloudUpload />} label="Arkiv CID Only" color="warning" />;
+    } else if (completeness === 'vlm_only') {
+        <Chip icon={<Timeline />} label="Arkiv Tags Only" color="warning" />;
+    }
+}
+```
+
+### Benefits
+
+- **Complete State Restoration**: Users can always restore complete video data on any computer
+- **No Duplicate Updates**: System checks `arkiv_data_completeness` before triggering updates
+- **Gas Efficient**: Only updates when new data is actually available
+- **Backward Compatible**: Existing videos without the field default to "none" and function normally
 
 ## Conclusion
 

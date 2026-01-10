@@ -17,6 +17,7 @@ export interface Video {
   analysis_model?: string | null;
   share_to_arkiv: boolean;
   arkiv_entity_key?: string | null;
+  arkiv_data_completeness?: 'none' | 'filecoin_only' | 'vlm_only' | 'filecoin_and_vlm' | null;
   mint_id?: string | null;
   filecoin_root_cid?: string | null;
   filecoin_piece_cid?: string | null;

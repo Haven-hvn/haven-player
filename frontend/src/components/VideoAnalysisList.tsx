@@ -663,6 +663,50 @@ const VideoAnalysisItem: React.FC<VideoAnalysisItemProps> = ({
             }}
           >
             <Box sx={{ display: "flex", gap: 1 }}>
+              {/* Arkiv Data Completeness Chip */}
+              {video.arkiv_entity_key && video.arkiv_data_completeness && (
+                <Chip
+                  icon={
+                    video.arkiv_data_completeness === "filecoin_and_vlm" ? (
+                      <CheckIcon />
+                    ) : video.arkiv_data_completeness === "filecoin_only" ? (
+                      <UploadIcon />
+                    ) : (
+                      <TimelineIcon />
+                    )
+                  }
+                  label={
+                    video.arkiv_data_completeness === "filecoin_and_vlm"
+                      ? "Full Arkiv Sync"
+                      : video.arkiv_data_completeness === "filecoin_only"
+                      ? "Arkiv CID Only"
+                      : "Arkiv Tags Only"
+                  }
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    fontSize: "10px",
+                    height: 24,
+                    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+                    fontWeight: 400,
+                    color:
+                      video.arkiv_data_completeness === "filecoin_and_vlm"
+                        ? "#4CAF50"
+                        : "#FF9800",
+                    borderColor:
+                      video.arkiv_data_completeness === "filecoin_and_vlm"
+                        ? "#4CAF50"
+                        : "#FF9800",
+                    "& .MuiChip-icon": {
+                      fontSize: 12,
+                      color:
+                        video.arkiv_data_completeness === "filecoin_and_vlm"
+                          ? "#4CAF50"
+                          : "#FF9800",
+                    },
+                  }}
+                />
+              )}
               {timestamps.length > 0 && (
                 <Chip
                   icon={<TimelineIcon />}

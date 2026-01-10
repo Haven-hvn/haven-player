@@ -30,6 +30,13 @@ The Upload Coordinator is a system that bridges the gap between backend plugin d
    - REST endpoints for queue management
    - Queue operations: add, list, pop, update, delete
    - Status monitoring and statistics
+   - Arkiv sync queue management
+
+5. **ArkivSyncWorker** (`backend/app/services/arkiv_sync_worker.py`)
+   - Background worker that processes Arkiv sync queue
+   - Automatically syncs timestamps to blockchain after FileCoin upload
+   - Runs as async task in backend process
+   - Handles failed sync tracking and retry logic
 
 ## Data Flow
 
@@ -43,6 +50,8 @@ sequenceDiagram
     participant Lit as Lit Encryption
     participant FC as FileCoin
     participant BAPI as Backend API
+    participant ASW as ArkivSyncWorker
+    participant Arkiv as Arkiv Blockchain
 
     JS->>Plugin: discover_sources()
     Plugin-->>JS: [sources]
@@ -63,7 +72,20 @@ sequenceDiagram
     FC-->>Worker: CIDs, pieceId
     Worker->>BAPI: PUT status=completed + metadata
     BAPI->>Queue: UPDATE status=completed
-    BAPI->>BAPI: UPDATE videos table
+    BAPI->>Queue: UPDATE arkiv_sync_status=pending
+    BAPI->>BAPI: UPDATE videos table (FileCoin metadata)
+
+    Note over ASW: Background Polling (30s)
+    ASW->>BAPI: GET /upload-queue/arkiv-sync/pop
+    BAPI-->>ASW: queue_entry
+    ASW->>BAPI: PUT arkiv_sync_status=syncing
+    ASW->>BAPI: GET video + timestamps
+    BAPI-->>ASW: video_data, timestamps
+    ASW->>Arkiv: Sync timestamps to blockchain
+    Arkiv-->>ASW: entity_key
+    ASW->>BAPI: PUT arkiv_sync_status=completed
+    BAPI->>Queue: UPDATE arkiv_sync_status=completed
+    BAPI->>BAPI: UPDATE videos table (arkiv_entity_key)
 ```
 
 ## Configuration
@@ -205,8 +227,82 @@ Get upload queue statistics.
   "completed": 5,
   "failed": 1,
   "cancelled": 0,
-  "retryable": 1
+  "retryable": 1,
+  "arkiv_sync_pending": 3,
+  "arkiv_sync_syncing": 1,
+  "arkiv_sync_completed": 5,
+  "arkiv_sync_failed": 1,
+  "arkiv_sync_skipped": 0
 }
+```
+
+#### GET `/upload-queue/arkiv-sync/pop`
+Get next pending video for Arkiv sync (for ArkivSyncWorker).
+
+**Response (200):**
+```json
+{
+  "id": 1,
+  "video_path": "/path/to/video.mp4",
+  "status": "completed",
+  "arkiv_sync_status": "syncing",
+  "arkiv_sync_started_at": "2024-01-09T12:05:00Z",
+  "priority": 0,
+  "created_at": "2024-01-09T12:00:00Z"
+}
+```
+
+**Response (204):** No pending Arkiv sync jobs
+
+#### PUT `/upload-queue/{id}/arkiv-sync`
+Update Arkiv sync status.
+
+**Request:**
+```json
+{
+  "arkiv_sync_status": "completed",
+  "entity_key": "arkiv-key-123",
+  "arkiv_sync_error": null
+}
+```
+
+**Response (200):** Updated queue entry
+
+**Status Values:**
+- `pending`: Waiting for Arkiv sync
+- `syncing`: Arkiv sync in progress
+- `completed`: Arkiv sync successful
+- `failed`: Arkiv sync failed
+- `skipped`: Arkiv sync was skipped (no timestamps or disabled)
+
+### Arkiv Sync Architecture
+
+The upload system now supports automatic Arkiv synchronization through a two-stage process:
+
+1. **Stage 1: FileCoin Upload** (UploadWorker - browser-based)
+   - Uploads encrypted video to FileCoin storage layer
+   - Updates `upload_queue` status to `completed`
+   - Backend automatically queues Arkiv sync if video needs it
+
+2. **Stage 2: Arkiv Sync** (ArkivSyncWorker - backend-based)
+   - Syncs video timestamps to Arkiv blockchain
+   - Runs every 30 seconds as background task
+   - Updates `upload_queue.arkiv_sync_status` through its lifecycle
+
+**Automatic Arkiv Sync Triggers:**
+
+Arkiv sync is automatically queued when ALL conditions are met:
+- `upload_queue.status = 'completed'` (FileCoin upload succeeded)
+- `video.share_to_arkiv = TRUE` (video flagged for Arkiv)
+- `video.arkiv_entity_key = NULL` (not yet synced)
+- Timestamp entries exist for the video (required for Arkiv)
+
+**Arkiv Sync State Machine:**
+
+```
+pending → syncing → completed (success)
+pending → syncing → failed (error with retry potential)
+pending → skipped (no timestamps or share_to_arkiv=false)
 ```
 
 ## Integration with JobScheduler
@@ -299,6 +395,16 @@ function MyComponent() {
 }
 ```
 
+## Benefits
+
+- **Control/Data Plane Separation:** UploadWorker (data plane) handles FileCoin uploads in browser, ArkivSyncWorker (control plane) handles blockchain sync in backend
+- **Database-Driven State:** All state tracked in database, no API coordination needed between workers
+- **Independent Retry Logic:** FileCoin and Arkiv sync have separate retry queues and failure handling
+- **Observable:** Complete visibility into both upload stages via database queries and API statistics
+- **Configurable:** Video-level `share_to_arkiv` flag respects user preferences
+- **Centralized Logging:** All operations logged in backend with consistent format
+- **Non-Blocking:** FileCoin uploads continue even if Arkiv sync is delayed or fails
+
 ## Troubleshooting
 
 ### Upload Worker Not Starting
@@ -341,6 +447,18 @@ function MyComponent() {
 3. Check network bandwidth
 4. Consider increasing poll interval if needed
 5. Check FileCoin network status
+
+### Arkiv Sync Failures
+
+**Symptom:** Videos uploaded successfully but Arkiv sync fails
+
+**Solution:**
+1. Check backend logs for Arkiv sync errors
+2. Verify Arkiv network connectivity
+3. Check if blockchain has sufficient gas
+4. Review Arkiv configuration in backend
+5. Check that timestamps exist for the video
+6. Verify `share_to_arkiv` flag is set correctly on video
 
 ## Performance Considerations
 

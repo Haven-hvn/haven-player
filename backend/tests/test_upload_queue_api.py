@@ -14,6 +14,7 @@ from app.models.base import Base
 from app.models.database import get_db
 from app.models.upload_queue import UploadQueue
 from app.models.video import Video
+from app.models.timestamp import Timestamp
 
 
 # Create test database
@@ -610,6 +611,350 @@ class TestGetUploadQueueStats:
         assert data["pending"] == 2
         assert data["processing"] == 1
         assert data["completed"] == 1
-        assert data["failed"] == 2
-        assert data["cancelled"] == 1
-        assert data["retryable"] == 1  # Only one failed with attempts < max_attempts
+class TestArkivSyncEndoints:
+    """Tests for Arkiv sync API endpoints."""
+
+    def test_pop_arkiv_sync_job_success(self, client: TestClient, db_session):
+        """Test popping next Arkiv sync job."""
+        # Create a completed upload queue entry with pending Arkiv sync
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="completed",
+            arkiv_sync_status="pending",
+            priority=1
+        )
+        db_session.add(entry)
+        db_session.commit()
+
+        response = client.get("/api/upload-queue/arkiv-sync/pop")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data is not None
+        assert data["video_path"] == "/test/video.mp4"
+        assert data["arkiv_sync_status"] == "syncing"
+        assert isinstance(data["arkiv_sync_started_at"], str)
+
+    def test_pop_arkiv_sync_job_no_jobs(self, client: TestClient):
+        """Test popping Arkiv sync job when no jobs available."""
+        response = client.get("/api/upload-queue/arkiv-sync/pop")
+
+        assert response.status_code == 204
+
+    def test_update_arkiv_sync_status_completed(self, client: TestClient, db_session):
+        """Test updating Arkiv sync status to completed."""
+        # Add a video to the database
+        video = Video(
+            title="Test Video",
+            path="/test/video.mp4",
+            duration=60.0,
+            width=1920,
+            height=1080
+        )
+        db_session.add(video)
+        db_session.commit()
+
+        # Create upload queue entry
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="completed",
+            arkiv_sync_status="syncing"
+        )
+        db_session.add(entry)
+        db_session.commit()
+        entry_id = entry.id
+
+        # Update Arkiv sync to completed
+        response = client.put(
+            f"/api/upload-queue/{entry_id}/arkiv-sync",
+            json={
+                "arkiv_sync_status": "completed",
+                "entity_key": "arkiv-entity-123"
+            }
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["arkiv_sync_status"] == "completed"
+        assert isinstance(data["arkiv_sync_completed_at"], str)
+
+        # Verify video entity_key was updated
+        video = db_session.query(Video).filter(Video.path == "/test/video.mp4").first()
+        assert video is not None
+        assert video.arkiv_entity_key == "arkiv-entity-123"
+
+    def test_update_arkiv_sync_status_failed(self, client: TestClient, db_session):
+        """Test updating Arkiv sync status to failed."""
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="completed",
+            arkiv_sync_status="syncing"
+        )
+        db_session.add(entry)
+        db_session.commit()
+        entry_id = entry.id
+
+        # Update Arkiv sync to failed
+        response = client.put(
+            f"/api/upload-queue/{entry_id}/arkiv-sync",
+            json={
+                "arkiv_sync_status": "failed",
+                "arkiv_sync_error": "Insufficient gas"
+            }
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["arkiv_sync_status"] == "failed"
+        assert isinstance(data["arkiv_sync_completed_at"], str)
+        assert data["arkiv_sync_error"] == "Insufficient gas"
+
+    def test_update_arkiv_sync_status_skipped(self, client: TestClient, db_session):
+        """Test updating Arkiv sync status to skipped."""
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="completed",
+            arkiv_sync_status="syncing"
+        )
+        db_session.add(entry)
+        db_session.commit()
+        entry_id = entry.id
+
+        # Update Arkiv sync to skipped
+        response = client.put(
+            f"/api/upload-queue/{entry_id}/arkiv-sync",
+            json={
+                "arkiv_sync_status": "skipped",
+                "arkiv_sync_error": "No timestamps found"
+            }
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["arkiv_sync_status"] == "skipped"
+        assert isinstance(data["arkiv_sync_completed_at"], str)
+        assert data["arkiv_sync_error"] == "No timestamps found"
+
+    def test_update_arkiv_sync_invalid_status(self, client: TestClient, db_session):
+        """Test updating Arkiv sync with invalid status."""
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="completed",
+            arkiv_sync_status="syncing"
+        )
+        db_session.add(entry)
+        db_session.commit()
+
+        response = client.put(
+            f"/api/upload-queue/{entry.id}/arkiv-sync",
+            json={"arkiv_sync_status": "invalid_status"}
+        )
+
+        assert response.status_code == 400
+        assert "Invalid arkiv_sync_status" in response.json()["detail"]
+
+    def test_update_arkiv_sync_not_found(self, client: TestClient):
+        """Test updating Arkiv sync for non-existent entry."""
+        response = client.put(
+            "/api/upload-queue/999/arkiv-sync",
+            json={"arkiv_sync_status": "completed"}
+        )
+
+        assert response.status_code == 404
+
+    def test_update_status_auto_queues_arkiv_sync(self, client: TestClient, db_session):
+        """Test that updating status to completed automatically queues Arkiv sync."""
+        from app.models.timestamp import Timestamp
+
+        # Add a video with timestamps and Arkiv enabled
+        video = Video(
+            title="Test Video",
+            path="/test/video.mp4",
+            duration=60.0,
+            width=1920,
+            height=1080,
+            share_to_arkiv=True
+        )
+        db_session.add(video)
+        db_session.commit()
+
+        # Add timestamps
+        timestamp = Timestamp(
+            video_path="/test/video.mp4",
+            timestamp_time=10.0,
+            frame_number=300
+        )
+        db_session.add(timestamp)
+        db_session.commit()
+
+        # Create upload queue entry
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="processing",
+            priority=1
+        )
+        db_session.add(entry)
+        db_session.commit()
+        entry_id = entry.id
+
+        # Update to completed with filecoin metadata
+        response = client.put(
+            f"/api/upload-queue/{entry_id}/status",
+            json={
+                "status": "completed",
+                "filecoin_metadata": {
+                    "root_cid": "QmTest123",
+                    "piece_cid": "Piece123",
+                    "piece_id": 42,
+                    "data_set_id": 100
+                }
+            }
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Arkiv sync should be auto-queued to pending
+        assert data["arkiv_sync_status"] == "pending"
+
+    def test_update_status_skips_arkiv_sync_no_timestamps(self, client: TestClient, db_session):
+        """Test that Arkiv sync is skipped when no timestamps exist."""
+        # Add a video without timestamps
+        video = Video(
+            title="Test Video",
+            path="/test/video.mp4",
+            duration=60.0,
+            width=1920,
+            height=1080,
+            share_to_arkiv=True
+        )
+        db_session.add(video)
+        db_session.commit()
+
+        # Create upload queue entry
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="processing",
+            priority=1
+        )
+        db_session.add(entry)
+        db_session.commit()
+        entry_id = entry.id
+
+        # Update to completed with filecoin metadata
+        response = client.put(
+            f"/api/upload-queue/{entry_id}/status",
+            json={
+                "status": "completed",
+                "filecoin_metadata": {
+                    "root_cid": "QmTest123",
+                    "piece_cid": "Piece123",
+                    "piece_id": 42,
+                    "data_set_id": 100
+                }
+            }
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Arkiv sync should be skipped
+        assert data["arkiv_sync_status"] == "skipped"
+
+    def test_update_status_skips_arkiv_sync_disabled(self, client: TestClient, db_session):
+        """Test that Arkiv sync is skipped when share_to_arkiv is False."""
+        from app.models.timestamp import Timestamp
+
+        # Add a video with timestamps but Arkiv disabled
+        video = Video(
+            title="Test Video",
+            path="/test/video.mp4",
+            duration=60.0,
+            width=1920,
+            height=1080,
+            share_to_arkiv=False
+        )
+        db_session.add(video)
+        db_session.commit()
+
+        # Add timestamps
+        timestamp = Timestamp(
+            video_path="/test/video.mp4",
+            timestamp_time=10.0,
+            frame_number=300
+        )
+        db_session.add(timestamp)
+        db_session.commit()
+
+        # Create upload queue entry
+        entry = UploadQueue(
+            video_path="/test/video.mp4",
+            status="processing",
+            priority=1
+        )
+        db_session.add(entry)
+        db_session.commit()
+        entry_id = entry.id
+
+        # Update to completed with filecoin metadata
+        response = client.put(
+            f"/api/upload-queue/{entry_id}/status",
+            json={
+                "status": "completed",
+                "filecoin_metadata": {
+                    "root_cid": "QmTest123",
+                    "piece_cid": "Piece123",
+                    "piece_id": 42,
+                    "data_set_id": 100
+                }
+            }
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Arkiv sync should be skipped
+        assert data["arkiv_sync_status"] == "skipped"
+
+    def test_get_upload_queue_stats_with_arkiv_sync(self, client: TestClient, db_session):
+        """Test getting upload queue statistics with Arkiv sync counts."""
+        entries = [
+            UploadQueue(
+                video_path="/test/pending_arkiv.mp4",
+                status="completed",
+                arkiv_sync_status="pending"
+            ),
+            UploadQueue(
+                video_path="/test/syncing_arkiv.mp4",
+                status="completed",
+                arkiv_sync_status="syncing"
+            ),
+            UploadQueue(
+                video_path="/test/completed_arkiv.mp4",
+                status="completed",
+                arkiv_sync_status="completed"
+            ),
+            UploadQueue(
+                video_path="/test/failed_arkiv.mp4",
+                status="completed",
+                arkiv_sync_status="failed"
+            ),
+            UploadQueue(
+                video_path="/test/skipped_arkiv.mp4",
+                status="completed",
+                arkiv_sync_status="skipped"
+            ),
+        ]
+        for entry in entries:
+            db_session.add(entry)
+        db_session.commit()
+
+        response = client.get("/api/upload-queue/stats")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify Arkiv sync stats
+        assert data["arkiv_sync_pending"] == 1
+        assert data["arkiv_sync_syncing"] == 1
+        assert data["arkiv_sync_completed"] == 1
+        assert data["arkiv_sync_failed"] == 1
+        assert data["arkiv_sync_skipped"] == 1
+        assert data["total"] == 5

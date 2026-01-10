@@ -32,6 +32,13 @@ class UploadQueueUpdate(BaseModel):
     error: Optional[str] = None
 
 
+class ArkivSyncUpdate(BaseModel):
+    """Request to update Arkiv sync status."""
+    arkiv_sync_status: str
+    arkiv_sync_error: Optional[str] = None
+    entity_key: Optional[str] = None
+
+
 class UploadQueueResponse(BaseModel):
     """Response model for upload queue entry."""
     model_config = ConfigDict(from_attributes=True)
@@ -47,8 +54,12 @@ class UploadQueueResponse(BaseModel):
     max_attempts: int
     error_message: Optional[str] = None
     source: str
+    arkiv_sync_status: Optional[str] = None
+    arkiv_sync_started_at: Optional[datetime] = None
+    arkiv_sync_completed_at: Optional[datetime] = None
+    arkiv_sync_error: Optional[str] = None
 
-    @field_serializer('created_at', 'started_at', 'completed_at')
+    @field_serializer('created_at', 'started_at', 'completed_at', 'arkiv_sync_started_at', 'arkiv_sync_completed_at')
     @classmethod
     def serialize_datetime(cls, dt: Optional[datetime]) -> Optional[str]:
         """Convert datetime to ISO format string."""
@@ -213,6 +224,119 @@ async def get_next_pending_upload(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/upload-queue/arkiv-sync/pop", response_model=Optional[UploadQueueResponse])
+async def pop_arkiv_sync_job(db: Session = Depends(get_db)):
+    """
+    Get next video for Arkiv sync processing.
+
+    This endpoint is called by the ArkivSyncWorker to get the next Arkiv sync job to process.
+    Returns a pending entry and updates its status to 'syncing' atomically.
+
+    Returns:
+        Next pending Arkiv sync queue entry, or null if no pending Arkiv sync jobs
+
+    Raises:
+        HTTPException: If database error occurs
+    """
+    try:
+        # Find next pending Arkiv sync job
+        queue_entry = db.query(UploadQueue).filter(
+            UploadQueue.arkiv_sync_status == 'pending',
+            UploadQueue.arkiv_sync_started_at.is_(None)
+        ).order_by(
+            UploadQueue.created_at.asc()
+        ).first()
+
+        if not queue_entry:
+            # No pending Arkiv sync jobs
+            return None
+
+        # Update status to syncing atomically
+        from datetime import datetime, timezone
+        queue_entry.arkiv_sync_status = 'syncing'
+        queue_entry.arkiv_sync_started_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Popped video for Arkiv sync: {queue_entry.video_path}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error getting next pending Arkiv sync job: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/upload-queue/{queue_id}/arkiv-sync", response_model=UploadQueueResponse)
+async def update_arkiv_sync_status(
+    queue_id: int,
+    update_data: ArkivSyncUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update Arkiv sync status after sync attempt.
+
+    Called by the ArkivSyncWorker to update the status of an Arkiv sync job.
+
+    Args:
+        queue_id: Upload queue entry ID
+        update_data: Update request with arkiv_sync_status, optional error and entity_key
+        db: Database session
+
+    Returns:
+        Updated upload queue entry
+
+    Raises:
+        HTTPException: If queue entry not found or database error occurs
+    """
+    try:
+        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+
+        if not queue_entry:
+            raise HTTPException(status_code=404, detail=f"Upload queue entry {queue_id} not found")
+
+        # Validate status
+        valid_statuses = ['pending', 'syncing', 'completed', 'failed', 'skipped']
+        if update_data.arkiv_sync_status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid arkiv_sync_status: {update_data.arkiv_sync_status}. Must be one of: {', '.join(valid_statuses)}"
+            )
+
+        # Update status
+        queue_entry.arkiv_sync_status = update_data.arkiv_sync_status
+
+        # Update timestamps for terminal states
+        if update_data.arkiv_sync_status in ['completed', 'failed', 'skipped']:
+            from datetime import datetime, timezone
+            queue_entry.arkiv_sync_completed_at = datetime.now(timezone.utc)
+
+        # Update error message if provided
+        if update_data.arkiv_sync_error:
+            queue_entry.arkiv_sync_error = update_data.arkiv_sync_error
+
+        # If completed successfully, update video's arkiv_entity_key
+        if update_data.arkiv_sync_status == 'completed' and update_data.entity_key:
+            from app.models.video import Video
+            video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
+            if video:
+                video.arkiv_entity_key = update_data.entity_key
+                logger.info(f"Updated Arkiv entity_key for video: {queue_entry.video_path}")
+
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Updated Arkiv sync status for entry {queue_id} to: {update_data.arkiv_sync_status}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating Arkiv sync status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/upload-queue/{queue_id}/status", response_model=UploadQueueResponse)
 async def update_upload_status(
     queue_id: int,
@@ -287,6 +411,25 @@ async def update_upload_status(
                 video.cid_encryption_metadata = update_data.filecoin_metadata.get('cid_encryption_metadata')
 
                 logger.info(f"Updated FileCoin metadata for video: {queue_entry.video_path}")
+
+                # Check if video needs Arkiv sync
+                if video.share_to_arkiv and not video.arkiv_entity_key:
+                    # Check if video has timestamps (required for Arkiv sync)
+                    from app.models.timestamp import Timestamp
+                    timestamps = db.query(Timestamp).filter(Timestamp.video_path == queue_entry.video_path).all()
+
+                    if timestamps:
+                        # Queue Arkiv sync as next step
+                        queue_entry.arkiv_sync_status = 'pending'
+                        logger.info(f"Queued Arkiv sync for {queue_entry.video_path} ({len(timestamps)} timestamps)")
+                    else:
+                        # No timestamps, skip Arkiv sync
+                        queue_entry.arkiv_sync_status = 'skipped'
+                        logger.info(f"Skipping Arkiv sync for {queue_entry.video_path} (no timestamps)")
+                elif not video.share_to_arkiv:
+                    # Arkiv sync disabled for this video
+                    queue_entry.arkiv_sync_status = 'skipped'
+                    logger.info(f"Skipping Arkiv sync for {queue_entry.video_path} (share_to_arkiv=False)")
 
         db.commit()
         db.refresh(queue_entry)
@@ -368,6 +511,27 @@ async def get_upload_queue_stats(db: Session = Depends(get_db)):
             UploadQueue.attempts < UploadQueue.max_attempts
         ).count()
         stats['retryable'] = retryable
+
+        # Get Arkiv sync stats
+        stats['arkiv_sync_pending'] = db.query(UploadQueue).filter(
+            UploadQueue.arkiv_sync_status == 'pending'
+        ).count()
+
+        stats['arkiv_sync_syncing'] = db.query(UploadQueue).filter(
+            UploadQueue.arkiv_sync_status == 'syncing'
+        ).count()
+
+        stats['arkiv_sync_completed'] = db.query(UploadQueue).filter(
+            UploadQueue.arkiv_sync_status == 'completed'
+        ).count()
+
+        stats['arkiv_sync_failed'] = db.query(UploadQueue).filter(
+            UploadQueue.arkiv_sync_status == 'failed'
+        ).count()
+
+        stats['arkiv_sync_skipped'] = db.query(UploadQueue).filter(
+            UploadQueue.arkiv_sync_status == 'skipped'
+        ).count()
 
         return stats
 

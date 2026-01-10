@@ -58,6 +58,17 @@ class UploadQueue(Base):
     # - depin: Queued by DePinDashboard
     source: Mapped[str] = mapped_column(String, default='plugin', nullable=False)
 
+    # Arkiv sync state tracking
+    # - pending: Waiting for Arkiv sync (FileCoin upload completed, video flagged for sync)
+    # - syncing: Arkiv sync in progress
+    # - completed: Arkiv sync successful
+    # - failed: Arkiv sync failed
+    # - skipped: Arkiv sync intentionally skipped (no timestamps or share_to_arkiv=false)
+    arkiv_sync_status: Mapped[str] = mapped_column(String, nullable=True)
+    arkiv_sync_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    arkiv_sync_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    arkiv_sync_error: Mapped[str] = mapped_column(Text, nullable=True)
+
     def to_dict(self) -> dict:
         """
         Convert UploadQueue to dictionary representation.
@@ -77,6 +88,10 @@ class UploadQueue(Base):
             'max_attempts': self.max_attempts,
             'error_message': self.error_message,
             'source': self.source,
+            'arkiv_sync_status': self.arkiv_sync_status,
+            'arkiv_sync_started_at': self.arkiv_sync_started_at.isoformat() if self.arkiv_sync_started_at else None,
+            'arkiv_sync_completed_at': self.arkiv_sync_completed_at.isoformat() if self.arkiv_sync_completed_at else None,
+            'arkiv_sync_error': self.arkiv_sync_error,
         }
 
     def can_retry(self) -> bool:
@@ -123,3 +138,60 @@ class UploadQueue(Base):
             True if status is 'failed', False otherwise
         """
         return self.status == 'failed'
+
+    def needs_arkiv_sync(self) -> bool:
+        """
+        Check if video needs Arkiv sync.
+
+        Returns:
+            True if arkiv_sync_status is 'pending', False otherwise
+        """
+        return self.arkiv_sync_status == 'pending'
+
+    def is_arkiv_pending(self) -> bool:
+        """
+        Check if Arkiv sync is pending.
+
+        Returns:
+            True if arkiv_sync_status is 'pending', False otherwise
+        """
+        return self.arkiv_sync_status == 'pending'
+
+    def is_arkiv_syncing(self) -> bool:
+        """
+        Check if Arkiv sync is in progress.
+
+        Returns:
+            True if arkiv_sync_status is 'syncing', False otherwise
+        """
+        return self.arkiv_sync_status == 'syncing'
+
+    def is_arkiv_completed(self) -> bool:
+        """
+        Check if Arkiv sync completed successfully.
+
+        Returns:
+            True if arkiv_sync_status is 'completed', False otherwise
+        """
+        return self.arkiv_sync_status == 'completed'
+
+    def is_arkiv_failed(self) -> bool:
+        """
+        Check if Arkiv sync failed.
+
+        Returns:
+            True if arkiv_sync_status is 'failed', False otherwise
+        """
+        return self.arkiv_sync_status == 'failed'
+
+    def can_retry_arkiv_sync(self) -> bool:
+        """
+        Check if Arkiv sync can be retried.
+
+        Currently returns False as we don't support automatic retries for Arkiv sync.
+        This can be extended later based on error type.
+
+        Returns:
+            False (no automatic retry supported yet)
+        """
+        return False

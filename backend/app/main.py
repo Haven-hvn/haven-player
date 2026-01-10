@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
+import asyncio
 
 from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin, restore, plugins, recurring_jobs, upload_queue, upload_coordinator_config
 from app.models.base import init_db
@@ -33,11 +34,13 @@ from app.services.webrtc_recording_service import WebRTCRecordingService
 from app.services.job_scheduler import JobScheduler
 from app.services.upload_coordinator import UploadCoordinator
 from app.plugins.plugin_manager import PluginManager
+from app.services.arkiv_sync_worker import run_arkiv_sync_worker
 
 # Global instances
 plugin_manager: Optional[PluginManager] = None
 job_scheduler: Optional[JobScheduler] = None
 upload_coordinator: Optional[UploadCoordinator] = None
+arkiv_sync_worker_task: Optional[asyncio.Task] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -147,12 +150,26 @@ async def lifespan(app: FastAPI):
 
     print(f"✅ Job scheduler initialized")
     print(f"✅ Upload coordinator initialized (enabled={upload_coordinator.config.get('enabled')})")
-    
+
+    # Initialize Arkiv sync worker
+    global arkiv_sync_worker_task
+    arkiv_sync_worker_task = asyncio.create_task(run_arkiv_sync_worker())
+    print("✅ Arkiv sync worker initialized")
+
     yield
     
     # Shutdown
     print("🛑 Shutting down Haven Player Backend...")
-    
+
+    # Cancel Arkiv sync worker task
+    if arkiv_sync_worker_task and not arkiv_sync_worker_task.done():
+        print("🛑 Stopping Arkiv sync worker...")
+        arkiv_sync_worker_task.cancel()
+        try:
+            await arkiv_sync_worker_task
+        except asyncio.CancelledError:
+            print("✅ Arkiv sync worker stopped")
+
     # Shut down job scheduler
     await job_scheduler.stop()
     print("✅ Job scheduler stopped")
@@ -233,12 +250,16 @@ async def root():
             "Live streaming with WebSocket",
             "FFmpeg-based recording with direct disk writes",
             "Pump.fun integration",
-            "Control/Data Plane Plugin System with worker processes"
+            "Control/Data Plane Plugin System with worker processes",
+            "Automatic Arkiv sync via upload queue"
         ],
         "plugin_system": {
             "loaded_plugins": len(plugin_manager.get_loaded_plugins()) if plugin_manager else 0,
             "active_workers": len(workers),
             "workers": [w["plugin_name"] for w in workers] if workers else []
+        },
+        "arkiv_sync_worker": {
+            "status": "running" if arkiv_sync_worker_task and not arkiv_sync_worker_task.done() else "stopped"
         }
     }
 
@@ -249,14 +270,19 @@ async def health_check():
         "status": "healthy",
         "version": "2.2.0",
     }
-    
+
     if plugin_manager:
         # Check plugin health
         plugin_health = await plugin_manager.health_check_all()
         health_status["plugins"] = plugin_health
-        
+
         # Check worker health
         worker_health = await plugin_manager.worker_manager.health_check_all_workers()
         health_status["workers"] = worker_health
-    
+
+    # Check Arkiv sync worker status
+    health_status["arkiv_sync_worker"] = {
+        "status": "running" if arkiv_sync_worker_task and not arkiv_sync_worker_task.done() else "stopped"
+    }
+
     return health_status

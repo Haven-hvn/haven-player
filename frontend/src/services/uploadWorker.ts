@@ -20,7 +20,16 @@ export interface UploadQueueEntry {
   status: string;
   priority: number;
   created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  attempts: number;
+  max_attempts: number;
+  error_message: string | null;
   source: string;
+  arkiv_sync_status: string | null;
+  arkiv_sync_started_at: string | null;
+  arkiv_sync_completed_at: string | null;
+  arkiv_sync_error: string | null;
 }
 
 export class UploadWorker {

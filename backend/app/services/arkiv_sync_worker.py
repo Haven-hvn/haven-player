@@ -64,10 +64,16 @@ class ArkivSyncWorker:
 
                 if response.status_code == 204:
                     # No pending jobs
-                    logger.debug("No pending Arkiv sync jobs")
+                    logger.debug("No pending Arkiv sync jobs (204)")
                     break
                 elif response.status_code == 200:
                     queue_data = response.json()
+
+                    # Check if queue_data is None (no jobs available)
+                    if queue_data is None:
+                        logger.debug("No pending Arkiv sync jobs (null response)")
+                        break
+
                     queue_id = queue_data['id']
                     logger.info(f"Processing Arkiv sync job {queue_id}: {queue_data['video_path']}")
 
@@ -81,7 +87,7 @@ class ArkivSyncWorker:
                     break
 
         except Exception as e:
-            logger.error(f"Error processing Arkiv sync queue: {e}")
+            logger.error(f"Error processing Arkiv sync queue: {e}", exc_info=True)
 
         return processed
 

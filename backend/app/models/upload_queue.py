@@ -69,6 +69,17 @@ class UploadQueue(Base):
     arkiv_sync_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     arkiv_sync_error: Mapped[str] = mapped_column(Text, nullable=True)
 
+    # VLM analysis state tracking
+    # - pending: Waiting for VLM analysis (if enabled)
+    # - processing: VLM analysis in progress
+    # - completed: VLM analysis successful
+    # - failed: VLM analysis failed
+    # - skipped: VLM analysis skipped (disabled or not needed)
+    vlm_analysis_status: Mapped[str] = mapped_column(String, nullable=True)
+    vlm_analysis_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    vlm_analysis_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    vlm_analysis_error: Mapped[str] = mapped_column(Text, nullable=True)
+
     def to_dict(self) -> dict:
         """
         Convert UploadQueue to dictionary representation.
@@ -92,6 +103,10 @@ class UploadQueue(Base):
             'arkiv_sync_started_at': self.arkiv_sync_started_at.isoformat() if self.arkiv_sync_started_at else None,
             'arkiv_sync_completed_at': self.arkiv_sync_completed_at.isoformat() if self.arkiv_sync_completed_at else None,
             'arkiv_sync_error': self.arkiv_sync_error,
+            'vlm_analysis_status': self.vlm_analysis_status,
+            'vlm_analysis_started_at': self.vlm_analysis_started_at.isoformat() if self.vlm_analysis_started_at else None,
+            'vlm_analysis_completed_at': self.vlm_analysis_completed_at.isoformat() if self.vlm_analysis_completed_at else None,
+            'vlm_analysis_error': self.vlm_analysis_error,
         }
 
     def can_retry(self) -> bool:
@@ -195,3 +210,48 @@ class UploadQueue(Base):
             False (no automatic retry supported yet)
         """
         return False
+
+    def is_vlm_pending(self) -> bool:
+        """
+        Check if VLM analysis is pending.
+
+        Returns:
+            True if vlm_analysis_status is 'pending', False otherwise
+        """
+        return self.vlm_analysis_status == 'pending'
+
+    def is_vlm_processing(self) -> bool:
+        """
+        Check if VLM analysis is in progress.
+
+        Returns:
+            True if vlm_analysis_status is 'processing', False otherwise
+        """
+        return self.vlm_analysis_status == 'processing'
+
+    def is_vlm_completed(self) -> bool:
+        """
+        Check if VLM analysis completed successfully.
+
+        Returns:
+            True if vlm_analysis_status is 'completed', False otherwise
+        """
+        return self.vlm_analysis_status == 'completed'
+
+    def is_vlm_failed(self) -> bool:
+        """
+        Check if VLM analysis failed.
+
+        Returns:
+            True if vlm_analysis_status is 'failed', False otherwise
+        """
+        return self.vlm_analysis_status == 'failed'
+
+    def is_vlm_skipped(self) -> bool:
+        """
+        Check if VLM analysis was skipped.
+
+        Returns:
+            True if vlm_analysis_status is 'skipped', False otherwise
+        """
+        return self.vlm_analysis_status == 'skipped'

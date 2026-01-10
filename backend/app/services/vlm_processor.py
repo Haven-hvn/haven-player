@@ -152,3 +152,65 @@ def save_results_to_file(video_path: str, results: Dict[str, Any]):
         logger.info(f"Saved results to file: {ai_file_path}")
     except Exception as e:
         logger.error(f"Error saving results to file: {str(e)}")
+
+
+async def process_video_for_queue(queue_id: int, video_path: str):
+    """
+    Process video as part of upload queue pipeline.
+    Similar to process_video_async but updates UploadQueue instead of AnalysisJob.
+    Uses existing save_results_to_db and save_results_to_file helper functions.
+
+    Args:
+        queue_id: Upload queue entry ID
+        video_path: Path to the video file
+    """
+    from app.models.upload_queue import UploadQueue
+    db = SessionLocal()
+    try:
+        # Get queue entry
+        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+        if not queue_entry:
+            logger.error(f"Queue entry {queue_id} not found")
+            return
+
+        # Update status to processing
+        queue_entry.vlm_analysis_status = 'processing'
+        queue_entry.vlm_analysis_started_at = datetime.now(timezone.utc)
+        db.commit()
+
+        # Load configuration from database
+        config = create_engine_config()
+
+        # Initialize VLM engine
+        engine = VLMEngine(config=config)
+        await engine.initialize()
+
+        # Process video without progress tracking (simpler for queue processing)
+        logger.info(f"Starting VLM processing for queue video: {video_path}")
+        results = await engine.process_video(
+            video_path,
+            frame_interval=2.0,
+            return_timestamps=True,
+            return_confidence=True,
+            threshold=0.5
+        )
+
+        # Save results to database
+        save_results_to_db(video_path, results, db)
+
+        # Save results to .AI.json file for compatibility
+        save_results_to_file(video_path, results)
+
+        # Update video has_ai_data flag
+        video = db.query(Video).filter(Video.path == video_path).first()
+        if video:
+            video.has_ai_data = True
+            db.commit()
+
+        logger.info(f"✅ Successfully completed VLM processing for queue video: {video_path}")
+
+    except Exception as e:
+        logger.error(f"Error processing video {video_path} in queue: {str(e)}", exc_info=True)
+        # Note: Error status is updated by the worker, not here
+    finally:
+        db.close()

@@ -35,12 +35,14 @@ from app.services.job_scheduler import JobScheduler
 from app.services.upload_coordinator import UploadCoordinator
 from app.plugins.plugin_manager import PluginManager
 from app.services.arkiv_sync_worker import run_arkiv_sync_worker
+from app.services.vlm_analysis_worker import run_vlm_analysis_worker
 
 # Global instances
 plugin_manager: Optional[PluginManager] = None
 job_scheduler: Optional[JobScheduler] = None
 upload_coordinator: Optional[UploadCoordinator] = None
 arkiv_sync_worker_task: Optional[asyncio.Task] = None
+vlm_analysis_worker_task: Optional[asyncio.Task] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -156,10 +158,24 @@ async def lifespan(app: FastAPI):
     arkiv_sync_worker_task = asyncio.create_task(run_arkiv_sync_worker())
     print("✅ Arkiv sync worker initialized")
 
+    # Initialize VLM analysis worker
+    global vlm_analysis_worker_task
+    vlm_analysis_worker_task = asyncio.create_task(run_vlm_analysis_worker())
+    print("✅ VLM analysis worker initialized")
+
     yield
     
     # Shutdown
     print("🛑 Shutting down Haven Player Backend...")
+
+    # Cancel VLM analysis worker task
+    if vlm_analysis_worker_task and not vlm_analysis_worker_task.done():
+        print("🛑 Stopping VLM analysis worker...")
+        vlm_analysis_worker_task.cancel()
+        try:
+            await vlm_analysis_worker_task
+        except asyncio.CancelledError:
+            print("✅ VLM analysis worker stopped")
 
     # Cancel Arkiv sync worker task
     if arkiv_sync_worker_task and not arkiv_sync_worker_task.done():
@@ -260,6 +276,9 @@ async def root():
         },
         "arkiv_sync_worker": {
             "status": "running" if arkiv_sync_worker_task and not arkiv_sync_worker_task.done() else "stopped"
+        },
+        "vlm_analysis_worker": {
+            "status": "running" if vlm_analysis_worker_task and not vlm_analysis_worker_task.done() else "stopped"
         }
     }
 
@@ -283,6 +302,11 @@ async def health_check():
     # Check Arkiv sync worker status
     health_status["arkiv_sync_worker"] = {
         "status": "running" if arkiv_sync_worker_task and not arkiv_sync_worker_task.done() else "stopped"
+    }
+
+    # Check VLM analysis worker status
+    health_status["vlm_analysis_worker"] = {
+        "status": "running" if vlm_analysis_worker_task and not vlm_analysis_worker_task.done() else "stopped"
     }
 
     return health_status

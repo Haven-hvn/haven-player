@@ -39,6 +39,12 @@ class ArkivSyncUpdate(BaseModel):
     entity_key: Optional[str] = None
 
 
+class VLMAnalysisUpdate(BaseModel):
+    """Request to update VLM analysis status."""
+    vlm_analysis_status: str
+    vlm_analysis_error: Optional[str] = None
+
+
 class UploadQueueResponse(BaseModel):
     """Response model for upload queue entry."""
     model_config = ConfigDict(from_attributes=True)
@@ -58,8 +64,12 @@ class UploadQueueResponse(BaseModel):
     arkiv_sync_started_at: Optional[datetime] = None
     arkiv_sync_completed_at: Optional[datetime] = None
     arkiv_sync_error: Optional[str] = None
+    vlm_analysis_status: Optional[str] = None
+    vlm_analysis_started_at: Optional[datetime] = None
+    vlm_analysis_completed_at: Optional[datetime] = None
+    vlm_analysis_error: Optional[str] = None
 
-    @field_serializer('created_at', 'started_at', 'completed_at', 'arkiv_sync_started_at', 'arkiv_sync_completed_at')
+    @field_serializer('created_at', 'started_at', 'completed_at', 'arkiv_sync_started_at', 'arkiv_sync_completed_at', 'vlm_analysis_started_at', 'vlm_analysis_completed_at')
     @classmethod
     def serialize_datetime(cls, dt: Optional[datetime]) -> Optional[str]:
         """Convert datetime to ISO format string."""
@@ -95,6 +105,10 @@ async def add_to_upload_queue(
         ).first()
 
         if existing:
+            # Get video to check VLM preference
+            video = db.query(Video).filter(Video.path == queue_data.video_path).first()
+            enable_vlm = video.enable_vlm_analysis if video else False
+
             if existing.is_completed():
                 # Already uploaded, no need to queue again
                 return UploadQueueResponse.model_validate(existing)
@@ -109,17 +123,24 @@ async def add_to_upload_queue(
                 existing.priority = queue_data.priority
                 existing.error_message = None
                 existing.attempts = 0
+                # Update VLM status based on video preference
+                existing.vlm_analysis_status = 'pending' if enable_vlm else 'skipped'
                 db.commit()
                 db.refresh(existing)
                 logger.info(f"Re-queued video: {queue_data.video_path}")
                 return UploadQueueResponse.model_validate(existing)
+
+        # Get video to check VLM preference
+        video = db.query(Video).filter(Video.path == queue_data.video_path).first()
+        enable_vlm = video.enable_vlm_analysis if video else False
 
         # Create new queue entry
         queue_entry = UploadQueue(
             video_path=queue_data.video_path,
             priority=queue_data.priority,
             source=queue_data.source,
-            status='pending'
+            status='pending',
+            vlm_analysis_status='pending' if enable_vlm else 'skipped'
         )
 
         db.add(queue_entry)
@@ -337,6 +358,130 @@ async def update_arkiv_sync_status(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/upload-queue/vlm/pop", response_model=Optional[UploadQueueResponse])
+async def pop_vlm_analysis_job(db: Session = Depends(get_db)):
+    """
+    Get next video for VLM analysis processing.
+
+    This endpoint is called by the VLMAnalysisWorker to get the next VLM analysis job to process.
+    Returns a pending entry and updates its status to 'processing' atomically.
+
+    Returns:
+        Next pending VLM analysis queue entry, or null if no pending VLM jobs
+
+    Raises:
+        HTTPException: If database error occurs
+    """
+    try:
+        # Find next pending VLM analysis job
+        queue_entry = db.query(UploadQueue).filter(
+            UploadQueue.vlm_analysis_status == 'pending',
+            UploadQueue.vlm_analysis_started_at.is_(None)
+        ).order_by(
+            UploadQueue.created_at.asc()
+        ).first()
+
+        if not queue_entry:
+            # No pending VLM analysis jobs
+            return None
+
+        # Update status to processing atomically
+        from datetime import datetime, timezone
+        queue_entry.vlm_analysis_status = 'processing'
+        queue_entry.vlm_analysis_started_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Popped video for VLM analysis: {queue_entry.video_path}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error getting next pending VLM analysis job: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/upload-queue/{queue_id}/vlm-analysis", response_model=UploadQueueResponse)
+async def update_vlm_analysis_status(
+    queue_id: int,
+    update_data: VLMAnalysisUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update VLM analysis status after analysis attempt.
+
+    Called by the VLMAnalysisWorker to update the status of a VLM analysis job.
+
+    Args:
+        queue_id: Upload queue entry ID
+        update_data: Update request with vlm_analysis_status, optional error
+        db: Database session
+
+    Returns:
+        Updated upload queue entry
+
+    Raises:
+        HTTPException: If queue entry not found or database error occurs
+    """
+    try:
+        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+
+        if not queue_entry:
+            raise HTTPException(status_code=404, detail=f"Upload queue entry {queue_id} not found")
+
+        # Validate status
+        valid_statuses = ['pending', 'processing', 'completed', 'failed', 'skipped']
+        if update_data.vlm_analysis_status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid vlm_analysis_status: {update_data.vlm_analysis_status}. Must be one of: {', '.join(valid_statuses)}"
+            )
+
+        # Update status
+        queue_entry.vlm_analysis_status = update_data.vlm_analysis_status
+
+        # Update timestamps for terminal states
+        if update_data.vlm_analysis_status in ['completed', 'failed', 'skipped']:
+            from datetime import datetime, timezone
+            queue_entry.vlm_analysis_completed_at = datetime.now(timezone.utc)
+
+        # Update error message if provided
+        if update_data.vlm_analysis_error:
+            queue_entry.vlm_analysis_error = update_data.vlm_analysis_error
+
+        # If VLM analysis completed, check if Arkiv sync should be queued
+        if update_data.vlm_analysis_status == 'completed':
+            from app.models.video import Video, Timestamp
+            video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
+
+            if video and video.share_to_arkiv and not video.arkiv_entity_key:
+                # Check if Arkiv sync is already pending or completed
+                if not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped':
+                    # Check if we should queue Arkiv sync
+                    has_filecoin = bool(video.filecoin_root_cid)
+                    has_timestamps = db.query(Timestamp).filter(
+                        Timestamp.video_path == queue_entry.video_path
+                    ).count() > 0
+
+                    if has_filecoin or has_timestamps:
+                        # Queue Arkiv sync as next step
+                        queue_entry.arkiv_sync_status = 'pending'
+                        logger.info(f"Queued Arkiv sync for {queue_entry.video_path} after VLM analysis")
+
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Updated VLM analysis status for entry {queue_id} to: {update_data.vlm_analysis_status}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating VLM analysis status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/upload-queue/{queue_id}/status", response_model=UploadQueueResponse)
 async def update_upload_status(
     queue_id: int,
@@ -414,18 +559,14 @@ async def update_upload_status(
 
                 # Check if video needs Arkiv sync
                 if video.share_to_arkiv and not video.arkiv_entity_key:
-                    # Check if video has timestamps (required for Arkiv sync)
-                    from app.models.video import Timestamp
-                    timestamps = db.query(Timestamp).filter(Timestamp.video_path == queue_entry.video_path).all()
-
-                    if timestamps:
-                        # Queue Arkiv sync as next step
+                    # Check if Arkiv sync is already pending or completed (prevent duplicate queuing)
+                    if not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped':
+                        # CRITICAL: Arkiv sync can proceed if FileCoin completes (parallel execution)
+                        # regardless of VLM analysis status
                         queue_entry.arkiv_sync_status = 'pending'
-                        logger.info(f"Queued Arkiv sync for {queue_entry.video_path} ({len(timestamps)} timestamps)")
+                        logger.info(f"Queued Arkiv sync for {queue_entry.video_path} (FileCoin completed)")
                     else:
-                        # No timestamps, skip Arkiv sync
-                        queue_entry.arkiv_sync_status = 'skipped'
-                        logger.info(f"Skipping Arkiv sync for {queue_entry.video_path} (no timestamps)")
+                        logger.debug(f"Arkiv sync already queued ({queue_entry.arkiv_sync_status}) for {queue_entry.video_path}")
                 elif not video.share_to_arkiv:
                     # Arkiv sync disabled for this video
                     queue_entry.arkiv_sync_status = 'skipped'
@@ -531,6 +672,27 @@ async def get_upload_queue_stats(db: Session = Depends(get_db)):
 
         stats['arkiv_sync_skipped'] = db.query(UploadQueue).filter(
             UploadQueue.arkiv_sync_status == 'skipped'
+        ).count()
+
+        # Get VLM analysis stats
+        stats['vlm_analysis_pending'] = db.query(UploadQueue).filter(
+            UploadQueue.vlm_analysis_status == 'pending'
+        ).count()
+
+        stats['vlm_analysis_processing'] = db.query(UploadQueue).filter(
+            UploadQueue.vlm_analysis_status == 'processing'
+        ).count()
+
+        stats['vlm_analysis_completed'] = db.query(UploadQueue).filter(
+            UploadQueue.vlm_analysis_status == 'completed'
+        ).count()
+
+        stats['vlm_analysis_failed'] = db.query(UploadQueue).filter(
+            UploadQueue.vlm_analysis_status == 'failed'
+        ).count()
+
+        stats['vlm_analysis_skipped'] = db.query(UploadQueue).filter(
+            UploadQueue.vlm_analysis_status == 'skipped'
         ).count()
 
         return stats

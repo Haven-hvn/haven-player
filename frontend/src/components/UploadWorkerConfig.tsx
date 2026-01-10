@@ -177,7 +177,7 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
           </Card>
         </Grid>
 
-        {/* Queue Stats Card */}
+        {/* Queue Stats Card - Shows VLM analysis status */}
         <Grid size={{ xs: 12, md: 6 }}>
           <Card>
             <CardContent>
@@ -186,35 +186,69 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
               </Typography>
 
               {queueStats && (
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  <Chip
-                    label={`Pending: ${queueStats.pending}`}
-                    size="small"
-                    color="warning"
-                  />
-                  <Chip
-                    label={`Processing: ${queueStats.processing}`}
-                    size="small"
-                    color="info"
-                  />
-                  <Chip
-                    label={`Completed: ${queueStats.completed}`}
-                    size="small"
-                    color="success"
-                  />
-                  <Chip
-                    label={`Failed: ${queueStats.failed}`}
-                    size="small"
-                    color="error"
-                  />
+                <>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                    <Chip
+                      label={`Pending: ${queueStats.pending}`}
+                      size="small"
+                      color="warning"
+                    />
+                    <Chip
+                      label={`Processing: ${queueStats.processing}`}
+                      size="small"
+                      color="info"
+                    />
+                    <Chip
+                      label={`Completed: ${queueStats.completed}`}
+                      size="small"
+                      color="success"
+                    />
+                    <Chip
+                      label={`Failed: ${queueStats.failed}`}
+                      size="small"
+                      color="error"
+                    />
+                  </Box>
+
+                  {/* VLM Analysis Sub-section */}
+                  <Typography variant="caption" sx={{ display: 'block', mt: 1, mb: 0.5, fontWeight: 600 }}>
+                    VLM Analysis
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    <Chip
+                      label={`Pending: ${queueStats.vlm_analysis_pending ?? 0}`}
+                      size="small"
+                      variant="outlined"
+                    />
+                    <Chip
+                      label={`Processing: ${queueStats.vlm_analysis_processing ?? 0}`}
+                      size="small"
+                      variant="outlined"
+                      color="info"
+                    />
+                    <Chip
+                      label={`Completed: ${queueStats.vlm_analysis_completed ?? 0}`}
+                      size="small"
+                      variant="outlined"
+                      color="success"
+                    />
+                    <Chip
+                      label={`Failed: ${queueStats.vlm_analysis_failed ?? 0}`}
+                      size="small"
+                      variant="outlined"
+                      color="error"
+                    />
+                  </Box>
+
                   {queueStats.retryable > 0 && (
                     <Chip
                       label={`Retryable: ${queueStats.retryable}`}
                       size="small"
                       color="secondary"
+                      sx={{ mt: 1 }}
                     />
                   )}
-                </Box>
+                </>
               )}
 
               {!queueStats && (

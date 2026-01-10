@@ -33,6 +33,8 @@ class Video(Base):
     analysis_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     share_to_arkiv: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     arkiv_entity_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    enable_vlm_analysis: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    vlm_analysis_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     # Pump.fun token association
     mint_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
@@ -83,6 +85,8 @@ class Video(Base):
             'analysis_model': self.analysis_model,
             'share_to_arkiv': self.share_to_arkiv,
             'arkiv_entity_key': self.arkiv_entity_key,
+            'enable_vlm_analysis': self.enable_vlm_analysis,
+            'vlm_analysis_required': self.vlm_analysis_required,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'mint_id': self.mint_id,
             'filecoin_root_cid': self.filecoin_root_cid,

@@ -141,12 +141,17 @@ class ArkivSyncWorker:
             from app.services.arkiv_sync import ArkivSyncClient, build_arkiv_config
 
             client = ArkivSyncClient(build_arkiv_config())
-            result = await client.sync_video_with_timestamps(video, timestamps)
+            entity_key = client.sync_video(db, video, timestamps)
+
+            if entity_key is None:
+                logger.info(f"Arkiv sync skipped for {queue_entry.video_path}")
+                await self.mark_arkiv_sync_skipped(queue_id, "Sync skipped (disabled or video marked local-only)")
+                return False
 
             # Update with success
-            await self.mark_arkiv_sync_completed(queue_id, result.entity_key)
+            await self.mark_arkiv_sync_completed(queue_id, str(entity_key))
 
-            logger.info(f"✅ Arkiv sync successful for {queue_entry.video_path}: entity={result.entity_key}")
+            logger.info(f"✅ Arkiv sync successful for {queue_entry.video_path}: entity={entity_key}")
             return True
 
         except Exception as e:

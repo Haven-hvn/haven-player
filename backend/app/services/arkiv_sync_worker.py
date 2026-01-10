@@ -138,9 +138,9 @@ class ArkivSyncWorker:
             logger.info(f"Starting Arkiv sync for {queue_entry.video_path} (filecoin={has_filecoin}, timestamps={len(timestamps)})")
 
             # Perform Arkiv sync via existing service
-            from app.services.arkiv_sync import build_arkiv_config
+            from app.services.arkiv_sync import ArkivSyncClient, build_arkiv_config
 
-            client = await build_arkiv_config(db)
+            client = ArkivSyncClient(build_arkiv_config())
             result = await client.sync_video_with_timestamps(video, timestamps)
 
             # Update with success

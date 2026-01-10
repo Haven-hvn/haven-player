@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.database import get_db
 from app.models.upload_queue import UploadQueue
+from app.models.video import Video
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

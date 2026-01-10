@@ -756,7 +756,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 stderr_output = result.stderr
 
                 # Check if the error is related to JavaScript runtime
-                if "JavaScript runtime" in stderr_output or "Requested format is not available" in stderr_output:
+                if "JavaScript runtime" in stderr_output or "Requested format is not available" in stderr_output or \
+                   "Sign in to confirm your age" in stderr_output:
                     logger.warning(f"Initial format failed, trying simpler format without video+audio merge")
                     # Try a much simpler format that doesn't require JS signature decoding
                     simple_cmd = [
@@ -778,9 +779,9 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                         result = fallback_result
                         logger.info("✓ Fallback format succeeded!")
                     else:
-                        # Fallback failed, use original error
+                        # Fallback failed, return error
                         logger.error(f"Fallback also failed: {fallback_result.stderr}")
-                        stderr_output = result.stderr + "\n\n" + fallback_result.stderr
+                        combined_error = result.stderr + "\n\n" + fallback_result.stderr
 
                         # Add helpful info about JavaScript runtime
                         install_hint = """
@@ -791,7 +792,19 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
 \tThen specify it in yt-dlp config or add --js-runtimes deno to commands.
 \tFor more info: https://github.com/yt-dlp/yt-dlp/wiki/EJS"""
-                        stderr_output += install_hint
+                        combined_error += install_hint
+
+                        return {
+                            "success": False,
+                            "error": combined_error,
+                        }
+                else:
+                    # Non-recoverable error, return immediately
+                    logger.error(f"Download failed: {stderr_output}")
+                    return {
+                        "success": False,
+                        "error": stderr_output,
+                    }
 
             # Execution continues here only if we didn't hit an error above
             # (either original succeeded, or fallback succeeded)
@@ -801,10 +814,16 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 if "[download] Destination:" in line:
                     output_path = line.split("[download] Destination:")[1].strip()
 
-            file_size_bytes = None
-            if output_path and os.path.exists(output_path):
-                file_size_bytes = os.path.getsize(output_path)
+            # Validate that we actually got an output path and the file exists
+            if not output_path or not os.path.exists(output_path):
+                error_msg = f"Download completed but no valid file found. Output path: {output_path}"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                }
 
+            file_size_bytes = os.path.getsize(output_path)
             logger.info(f"Successfully downloaded video to: {output_path}")
 
             return {

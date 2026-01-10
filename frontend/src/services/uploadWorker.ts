@@ -98,9 +98,14 @@ export class UploadWorker {
 
       const queueEntry: UploadQueueEntry | null = await response.json();
 
-      // Validate the queue entry
-      if (!queueEntry || !queueEntry.video_path || !queueEntry.id) {
-        console.error('[UploadWorker] Invalid queue entry received:', queueEntry);
+      // No queue entry available (queue is empty)
+      if (!queueEntry) {
+        return;
+      }
+
+      // Validate the queue entry has required fields
+      if (!queueEntry.video_path || !queueEntry.id) {
+        console.error('[UploadWorker] Invalid queue entry received (missing required fields):', queueEntry);
         return;
       }
 

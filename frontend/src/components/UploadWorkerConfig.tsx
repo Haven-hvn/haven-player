@@ -4,7 +4,7 @@
  * Simple component to display and control the upload worker status and configuration.
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -25,6 +25,7 @@ import {
   Info as InfoIcon,
 } from '@mui/icons-material';
 import { useUploadWorker } from '@/hooks/useUploadWorker';
+import { uploadCoordinatorConfigService } from '@/services/uploadCoordinatorConfigService';
 import type { UploadCoordinatorConfig } from '@/types/plugin';
 
 interface UploadWorkerConfigProps {
@@ -41,6 +42,15 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
     start,
     stop,
   } = useUploadWorker();
+  const [backendConfig, setBackendConfig] = useState<UploadCoordinatorConfig | null>(null);
+  const [backendLoading, setBackendLoading] = useState(false);
+
+  // Load backend config on mount
+  useEffect(() => {
+    uploadCoordinatorConfigService.getConfig()
+      .then(setBackendConfig)
+      .catch(console.error);
+  }, []);
 
   const handleToggleActive = async (enabled: boolean) => {
     try {
@@ -49,12 +59,45 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
           console.warn('Filecoin not configured, cannot start upload worker');
           return;
         }
+
+        // First, update backend configuration
+        setBackendLoading(true);
+        try {
+          await uploadCoordinatorConfigService.enable();
+          console.log('✅ Enabled backend upload coordinator (auto-upload for plugin downloads)');
+        } catch (err) {
+          console.error('Failed to enable backend upload coordinator:', err);
+          // Continue anyway - frontend worker can still run
+        }
+
+        // Then, start frontend upload worker
         await start({ enabled: true, pollInterval: 15000 });
+
+        // Refresh backend config
+        const updatedConfig = await uploadCoordinatorConfigService.getConfig();
+        setBackendConfig(updatedConfig);
       } else {
+        // First, update backend configuration
+        setBackendLoading(true);
+        try {
+          await uploadCoordinatorConfigService.disable();
+          console.log('✅ Disabled backend upload coordinator');
+        } catch (err) {
+          console.error('Failed to disable backend upload coordinator:', err);
+          // Continue anyway
+        }
+
+        // Then, stop frontend upload worker
         await stop();
+
+        // Refresh backend config
+        const updatedConfig = await uploadCoordinatorConfigService.getConfig();
+        setBackendConfig(updatedConfig);
       }
     } catch (err) {
       console.error('Failed to toggle upload worker:', err);
+    } finally {
+      setBackendLoading(false);
     }
   };
 
@@ -87,22 +130,35 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
                     <Switch
                       checked={status?.isRunning || false}
                       onChange={(e) => handleToggleActive(e.target.checked)}
-                      disabled={loading || !filecoinConfigured}
+                      disabled={loading || backendLoading || !filecoinConfigured}
                       color="success"
                     />
                   }
                   label={
                     <Typography sx={{ fontWeight: 600 }}>
-                      {status?.isRunning ? 'Upload Worker Active' : 'Upload Worker Inactive'}
+                      {backendLoading ? 'Updating...' : (status?.isRunning ? 'Upload Worker Active' : 'Upload Worker Inactive')}
                     </Typography>
                   }
                 />
               </Box>
 
+              {/* Backend UploadCoordinator Status */}
+              <Alert
+                severity={backendConfig?.enabled ? 'success' : 'warning'}
+                sx={{ mb: 1 }}
+                variant="outlined"
+                icon={<InfoIcon />}
+              >
+                <Typography variant="body2">
+                  <strong>Backend Upload Coordinator:</strong> {backendConfig?.enabled ? '✅ Enabled (videos auto-queued after download)' : '⚠️ Disabled (no auto-queueing)'}
+                  {backendConfig?.enabled && backendConfig?.plugin_overrides?.YouTubePlugin && ' | YouTube Plugin: ✅'}
+                </Typography>
+              </Alert>
+
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
                 <Chip
                   icon={<CloudUploadIcon />}
-                  label={status?.config.enabled ? 'Auto-Upload Enabled' : 'Auto-Upload Disabled'}
+                  label={`Frontend Worker: ${status?.config.enabled ? 'Enabled' : 'Disabled'}`}
                   size="small"
                   color={status?.config.enabled ? 'success' : 'default'}
                 />

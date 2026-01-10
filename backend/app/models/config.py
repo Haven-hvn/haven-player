@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import String, Integer, Text, Boolean
+from sqlalchemy import String, Integer, Text, Boolean, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
@@ -19,6 +19,10 @@ class AppConfig(Base):
     recording_directory: Mapped[str] = mapped_column(String, default="~/.haven-player/recordings")
     # Global Plugin Configuration
     download_directory: Mapped[str] = mapped_column(String, default="downloads")
+    # Upload Coordinator Configuration
+    upload_coordinator_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # None = auto-detect
+    upload_coordinator_plugin_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    upload_coordinator_priority: Mapped[int] = mapped_column(Integer, default=0)
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -31,5 +35,9 @@ class AppConfig(Base):
             'max_batch_size': self.max_batch_size,
             'recording_directory': self.recording_directory,
             'download_directory': self.download_directory,
+            'upload_coordinator_enabled': self.upload_coordinator_enabled,
+            'upload_coordinator_plugin_overrides': self.upload_coordinator_plugin_overrides,
+            'upload_coordinator_priority': self.upload_coordinator_priority,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+

@@ -22,15 +22,22 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 
-from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin, restore, plugins, recurring_jobs, upload_queue
+from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin, restore, plugins, recurring_jobs, upload_queue, upload_coordinator_config
 from app.models.base import init_db
 from app.models.database import SessionLocal
 from app.models.config import AppConfig
 from app.models.plugin import Plugin as PluginModel
 from app.services.webrtc_recording_service import WebRTCRecordingService
 from app.services.job_scheduler import JobScheduler
+from app.services.upload_coordinator import UploadCoordinator
 from app.plugins.plugin_manager import PluginManager
+
+# Global instances
+plugin_manager: Optional[PluginManager] = None
+job_scheduler: Optional[JobScheduler] = None
+upload_coordinator: Optional[UploadCoordinator] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -129,12 +136,17 @@ async def lifespan(app: FastAPI):
             print(f"  - {worker['plugin_name']}: PID={worker['pid']}, Alive={worker['is_alive']}")
     
     # Initialize job scheduler
-    global job_scheduler
+    global job_scheduler, upload_coordinator
     job_scheduler = JobScheduler(plugin_manager)
     await job_scheduler.start()
     recurring_jobs.job_scheduler = job_scheduler
-    
+
+    # Set upload coordinator reference in API module
+    upload_coordinator = job_scheduler.upload_coordinator
+    upload_coordinator_config.upload_coordinator = upload_coordinator
+
     print(f"✅ Job scheduler initialized")
+    print(f"✅ Upload coordinator initialized (enabled={upload_coordinator.config.get('enabled')})")
     
     yield
     
@@ -207,6 +219,7 @@ app.include_router(restore.router, prefix="/api/restore", tags=["restore"])
 app.include_router(plugins.router, prefix="/api/plugins", tags=["plugins"])
 app.include_router(recurring_jobs.router, prefix="/api/recurring-jobs", tags=["recurring-jobs"])
 app.include_router(upload_queue.router, prefix="/api", tags=["upload-queue"])
+app.include_router(upload_coordinator_config.router, prefix="/api", tags=["upload-coordinator-config"])
 
 
 @app.get("/")

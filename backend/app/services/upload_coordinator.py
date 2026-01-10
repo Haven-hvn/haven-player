@@ -5,13 +5,13 @@ This service coordinates the automatic upload pipeline, managing the upload queu
 checking configuration, and providing methods for plugin integration.
 """
 import logging
-import json
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
 from app.models.upload_queue import UploadQueue
 from app.models.video import Video
+from app.models.config import AppConfig
 from app.models.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -30,37 +30,92 @@ class UploadCoordinator:
 
     # Default configuration
     DEFAULT_CONFIG = {
-        'enabled': False,  # Auto-upload disabled by default
+        'enabled': None,  # None = auto-detect based on FileCoin config
         'plugin_overrides': {
-            'YouTubePlugin': True,  # YouTube plugin enabled by default if configured
+            'YouTubePlugin': True,  # YouTube plugin enabled by default
             'BitTorrentPlugin': True,
         },
         'priority': 0,  # Default priority for auto-uploads
     }
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self):
         """
-        Initialize UploadCoordinator.
-
-        Args:
-            config_path: Optional path to configuration file
+        Initialize UploadCoordinator (loads config from database).
         """
-        self.config = self.load_config(config_path)
+        self.config = self.load_config()
         logger.info(f"UploadCoordinator initialized (enabled={self.config['enabled']})")
 
-    def load_config(self, config_path: Optional[str] = None) -> Dict[str, Any]:
+    def load_config(self) -> Dict[str, Any]:
         """
-        Load upload coordinator configuration.
-
-        Args:
-            config_path: Optional path to configuration file
+        Load upload coordinator configuration from database.
 
         Returns:
             Configuration dictionary
         """
-        # For now, use default configuration
-        # In the future, load from file or database
-        return self.DEFAULT_CONFIG.copy()
+        db = SessionLocal()
+        try:
+            # Get app config
+            config = db.query(AppConfig).first()
+
+            if not config:
+                # No config exists yet, create default
+                logger.info("No app config found, creating default")
+                return self.DEFAULT_CONFIG.copy()
+
+            # Load from database
+            db_config = {
+                'enabled': config.upload_coordinator_enabled,
+                'plugin_overrides': config.upload_coordinator_plugin_overrides,
+                'priority': config.upload_coordinator_priority,
+            }
+
+            # Auto-detect if enabled is None
+            if db_config['enabled'] is None:
+                if self.is_filecoin_configured():
+                    db_config['enabled'] = True
+                    logger.info("FileCoin is configured, auto-enabled upload coordinator")
+                else:
+                    db_config['enabled'] = False
+                    logger.info("FileCoin not configured, upload coordinator remains disabled")
+
+                # Save the auto-detected value to database
+                self.save_config(db_config)
+
+            logger.info(f"Loaded UploadCoordinator config from database")
+            return db_config
+
+        finally:
+            db.close()
+
+    def save_config(self, config: Dict[str, Any]) -> None:
+        """
+        Save upload coordinator configuration to database.
+
+        Args:
+            config: Configuration dictionary to save
+        """
+        db = SessionLocal()
+        try:
+            # Get or create app config
+            app_config = db.query(AppConfig).first()
+            if not app_config:
+                app_config = AppConfig()
+                db.add(app_config)
+
+            # Update config values
+            app_config.upload_coordinator_enabled = config.get('enabled')
+            app_config.upload_coordinator_plugin_overrides = config.get('plugin_overrides', {})
+            app_config.upload_coordinator_priority = config.get('priority', 0)
+            app_config.updated_at = datetime.now(timezone.utc)
+
+            db.commit()
+            logger.debug("Saved UploadCoordinator config to database")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to save config to database: {e}")
+            raise
+        finally:
+            db.close()
 
     def is_auto_upload_enabled(self, plugin_name: str) -> bool:
         """
@@ -74,12 +129,13 @@ class UploadCoordinator:
         """
         # Check global enabled flag
         if not self.config['enabled']:
+            logger.info(f"Auto-upload check for {plugin_name}: DISABLED (global enabled={self.config['enabled']})")
             return False
 
         # Check per-plugin override
         plugin_enabled = self.config['plugin_overrides'].get(plugin_name, False)
 
-        logger.debug(f"Auto-upload check for {plugin_name}: enabled={plugin_enabled}")
+        logger.info(f"Auto-upload check for {plugin_name}: enabled={plugin_enabled} (global enabled={self.config['enabled']})")
         return plugin_enabled
 
     def get_plugin_priority(self, plugin_name: str) -> int:
@@ -277,3 +333,5 @@ class UploadCoordinator:
                     self.config['plugin_overrides'][plugin] = enabled
 
         logger.info(f"UploadCoordinator config updated: {self.config}")
+        # Save to file
+        self.save_config(self.config)

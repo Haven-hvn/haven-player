@@ -36,7 +36,7 @@ class Video(Base):
     # Track what data is stored in Arkiv (supports incremental updates)
     # Values: "none", "filecoin_only", "vlm_only", "filecoin_and_vlm"
     arkiv_data_completeness: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    enable_vlm_analysis: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enable_vlm_analysis: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     vlm_analysis_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     # Pump.fun token association

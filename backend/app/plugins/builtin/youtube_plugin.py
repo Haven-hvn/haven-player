@@ -740,23 +740,42 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
             logger.info(f"Video settings - Format (container): {video_format}, Quality: {video_quality}")
 
-            # Build format string based on quality setting
-            # Format syntax: multi-stage fallback that never falls back to audio-only
-            # Prefers ANY video quality over audio-only streams
+            # Check if FFmpeg is available for stream merging
+            ffmpeg_available = self._is_ffmpeg_available()
+            if not ffmpeg_available:
+                logger.warning("FFmpeg not detected. Using combined stream formats (no merging required).")
+                logger.warning("Install FFmpeg for better format quality and file size optimization:")
+                logger.warning("  - macOS: brew install ffmpeg")
+                logger.warning("  - Windows: Download from https://ffmpeg.org/download.html")
+
+            # Build format string based on quality setting and FFmpeg availability
             if video_quality == "best":
-                # Best quality with requested container, never audio-only
-                format_str = f"bestvideo[ext={video_format}]+bestaudio/bestvideo+bestaudio/best[acodec!=none]"
+                # Best quality with requested container
+                if ffmpeg_available:
+                    # Can merge separate streams for optimal quality
+                    format_str = f"bestvideo[ext={video_format}]+bestaudio/bestvideo+bestaudio/best[acodec!=none][ext={video_format}]/best[acodec!=none]"
+                else:
+                    # Use combined streams only (no merging)
+                    format_str = f"best[vcodec!=none][acodec!=none][ext={video_format}]/best[vcodec!=none][acodec!=none]"
             else:
                 # Specific quality with requested container
                 # Convert "1080p" to height=1080 for yt-dlp
                 height = video_quality.replace("p", "")
-                # Multi-stage fallback: try exact quality, then any quality, then combined streams
-                # Never falls back to audio-only - prefers ANY video quality over audio
-                format_str = (
-                    f"bestvideo[height<={height}][ext={video_format}]+bestaudio/bestvideo[height<={height}]+bestaudio/"
-                    f"bestvideo[ext={video_format}]+bestaudio/bestvideo+bestaudio/"
-                    f"best[acodec!=none]"
-                )
+
+                if ffmpeg_available:
+                    # Can merge separate streams for optimized quality
+                    format_str = (
+                        f"bestvideo[height<={height}][ext={video_format}]+bestaudio/"
+                        f"bestvideo[height<={height}]+bestaudio/"
+                        f"bestvideo+bestaudio"
+                    )
+                else:
+                    # Use combined streams only (no merging required)
+                    format_str = (
+                        f"best[height<={height}][vcodec!=none][acodec!=none][ext={video_format}]/"
+                        f"best[height<={height}][vcodec!=none][acodec!=none]/"
+                        f"best[vcodec!=none][acodec!=none]"
+                    )
 
             logger.info(f"Using yt-dlp format string: {format_str}")
 
@@ -767,8 +786,9 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 source.uri
             ]
 
-            # Add merge format if container specified and not mp4
-            if video_format != "mp4":
+            # Add merge format option if container specified and FFmpeg is available
+            # Only applies when using separate streams (+ merging)
+            if video_format != "mp4" and ffmpeg_available:
                 cmd.extend(["-S", f"ext:{video_format}"])
 
             logger.info(f"yt-dlp command: {' '.join(cmd)}")
@@ -931,6 +951,24 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         except Exception as e:
             logger.error(f"Error getting channel name: {e}")
             return None
+
+    def _is_ffmpeg_available(self) -> bool:
+        """
+        Check if FFmpeg is installed and accessible.
+
+        Returns:
+            True if FFmpeg is available and can be executed, False otherwise
+        """
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+            return False
 
 
     # ========== Additional Mixin Methods ==========

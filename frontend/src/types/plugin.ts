@@ -272,11 +272,6 @@ export interface UploadQueueStatus {
   failed: number;
   cancelled: number;
   retryable: number;
-  arkiv_sync_pending: number;
-  arkiv_sync_syncing: number;
-  arkiv_sync_completed: number;
-  arkiv_sync_failed: number;
-  arkiv_sync_skipped: number;
 }
 
 export interface UploadQueueEntry {
@@ -291,8 +286,4 @@ export interface UploadQueueEntry {
   max_attempts: number;
   error_message?: string;
   source: 'plugin' | 'manual' | 'depin';
-  arkiv_sync_status?: 'pending' | 'syncing' | 'completed' | 'failed' | 'skipped' | null;
-  arkiv_sync_started_at?: string | null;
-  arkiv_sync_completed_at?: string | null;
-  arkiv_sync_error?: string | null;
 }

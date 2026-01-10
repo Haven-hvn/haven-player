@@ -123,20 +123,15 @@ class ArkivSyncWorker:
                 await self.mark_arkiv_sync_failed(queue_id, "Video not uploaded to FileCoin yet")
                 return False
 
-            # Get timestamps
+            # Get timestamps (optional - we can sync without timestamps)
             timestamps = db.query(Timestamp).filter(
                 Timestamp.video_path == queue_entry.video_path
             ).all()
 
-            if not timestamps:
-                logger.info(f"No timestamps found for {queue_entry.video_path}, skipping Arkiv sync")
-                await self.mark_arkiv_sync_skipped(queue_id, "No timestamps found")
-                return True
+            logger.info(f"Starting Arkiv sync for {queue_entry.video_path} ({len(timestamps)} timestamps)")
 
             # Perform Arkiv sync via existing service
             from app.services.arkiv_sync import build_arkiv_config
-
-            logger.info(f"Starting Arkiv sync for {queue_entry.video_path} ({len(timestamps)} timestamps)")
 
             client = await build_arkiv_config(db)
             result = await client.sync_video_with_timestamps(video, timestamps)

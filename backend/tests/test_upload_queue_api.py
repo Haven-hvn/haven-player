@@ -763,8 +763,6 @@ class TestArkivSyncEndoints:
 
     def test_update_status_auto_queues_arkiv_sync(self, client: TestClient, db_session):
         """Test that updating status to completed automatically queues Arkiv sync."""
-        from app.models.video import Timestamp
-
         # Add a video with timestamps and Arkiv enabled
         video = Video(
             title="Test Video",
@@ -815,9 +813,9 @@ class TestArkivSyncEndoints:
         # Arkiv sync should be auto-queued to pending
         assert data["arkiv_sync_status"] == "pending"
 
-    def test_update_status_skips_arkiv_sync_no_timestamps(self, client: TestClient, db_session):
-        """Test that Arkiv sync is skipped when no timestamps exist."""
-        # Add a video without timestamps
+    def test_update_status_queues_arkiv_sync_without_timestamps(self, client: TestClient, db_session):
+        """Test that Arkiv sync is queued even without timestamps (syncs encrypted CID)."""
+        # Add a video without timestamps but with Arkiv enabled
         video = Video(
             title="Test Video",
             path="/test/video.mp4",
@@ -855,13 +853,11 @@ class TestArkivSyncEndoints:
 
         assert response.status_code == 200
         data = response.json()
-        # Arkiv sync should be skipped
-        assert data["arkiv_sync_status"] == "skipped"
+        # Arkiv sync should still be queued to pending (sync encrypted CID to blockchain)
+        assert data["arkiv_sync_status"] == "pending"
 
     def test_update_status_skips_arkiv_sync_disabled(self, client: TestClient, db_session):
         """Test that Arkiv sync is skipped when share_to_arkiv is False."""
-        from app.models.video import Timestamp
-
         # Add a video with timestamps but Arkiv disabled
         video = Video(
             title="Test Video",

@@ -186,81 +186,33 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
               </Typography>
 
               {queueStats && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                    FileCoin Upload Status
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Chip
+                    label={`Pending: ${queueStats.pending}`}
+                    size="small"
+                    color="warning"
+                  />
+                  <Chip
+                    label={`Processing: ${queueStats.processing}`}
+                    size="small"
+                    color="info"
+                  />
+                  <Chip
+                    label={`Completed: ${queueStats.completed}`}
+                    size="small"
+                    color="success"
+                  />
+                  <Chip
+                    label={`Failed: ${queueStats.failed}`}
+                    size="small"
+                    color="error"
+                  />
+                  {queueStats.retryable > 0 && (
                     <Chip
-                      label={`Pending: ${queueStats.pending}`}
+                      label={`Retryable: ${queueStats.retryable}`}
                       size="small"
-                      color="warning"
+                      color="secondary"
                     />
-                    <Chip
-                      label={`Processing: ${queueStats.processing}`}
-                      size="small"
-                      color="info"
-                    />
-                    <Chip
-                      label={`Completed: ${queueStats.completed}`}
-                      size="small"
-                      color="success"
-                    />
-                    <Chip
-                      label={`Failed: ${queueStats.failed}`}
-                      size="small"
-                      color="error"
-                    />
-                    {queueStats.retryable > 0 && (
-                      <Chip
-                        label={`Retryable: ${queueStats.retryable}`}
-                        size="small"
-                        color="secondary"
-                      />
-                    )}
-                  </Box>
-                  {queueStats.arkiv_sync_pending > 0 || queueStats.arkiv_sync_syncing > 0 || queueStats.arkiv_sync_failed > 0 ? (
-                    <>
-                      <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                        Arkiv Sync Status (Blockchain)
-                      </Typography>
-                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        {queueStats.arkiv_sync_pending > 0 && (
-                          <Chip
-                            label={`Arkiv Pending: ${queueStats.arkiv_sync_pending}`}
-                            size="small"
-                            variant="outlined"
-                            color="warning"
-                          />
-                        )}
-                        {queueStats.arkiv_sync_syncing > 0 && (
-                          <Chip
-                            label={`Arkiv Syncing: ${queueStats.arkiv_sync_syncing}`}
-                            size="small"
-                            variant="outlined"
-                            color="info"
-                          />
-                        )}
-                        <Chip
-                          label={`Arkiv Completed: ${queueStats.arkiv_sync_completed}`}
-                          size="small"
-                          variant="outlined"
-                          color="success"
-                        />
-                        {queueStats.arkiv_sync_failed > 0 && (
-                          <Chip
-                            label={`Arkiv Failed: ${queueStats.arkiv_sync_failed}`}
-                            size="small"
-                            variant="outlined"
-                            color="error"
-                          />
-                        )}
-                      </Box>
-                    </>
-                  ) : (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                      No Arkiv sync activity
-                    </Typography>
                   )}
                 </Box>
               )}

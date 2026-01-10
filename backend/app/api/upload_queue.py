@@ -415,7 +415,7 @@ async def update_upload_status(
                 # Check if video needs Arkiv sync
                 if video.share_to_arkiv and not video.arkiv_entity_key:
                     # Check if video has timestamps (required for Arkiv sync)
-                    from app.models.video import Timestamp
+                    from app.models.timestamp import Timestamp
                     timestamps = db.query(Timestamp).filter(Timestamp.video_path == queue_entry.video_path).all()
 
                     if timestamps:

@@ -45,9 +45,9 @@ def get_vlm_config() -> Dict[str, Any]:
                 }
             },
             "models": {
-                "video_preprocessor_dynamic": {
+                "binary_search_processor_dynamic": {
                     "type": "video_preprocessor",
-                    "model_file_name": "video_preprocessor_dynamic"
+                    "model_file_name": "binary_search_processor_dynamic"
                 },
                 "vlm_nsfw_model": {
                     "type": "vlm_model",

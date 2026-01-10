@@ -197,8 +197,9 @@ async def get_next_pending_upload(db: Session = Depends(get_db)):
             return None
 
         # Update status to processing atomically
+        from datetime import datetime, timezone
         queue_entry.status = 'processing'
-        queue_entry.started_at = queue_entry.started_at or UploadQueue.__table__.c.started_at.default.arg()
+        queue_entry.started_at = queue_entry.started_at or datetime.now(timezone.utc)
         queue_entry.attempts += 1
         db.commit()
         db.refresh(queue_entry)

@@ -741,15 +741,22 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             logger.info(f"Video settings - Format (container): {video_format}, Quality: {video_quality}")
 
             # Build format string based on quality setting
-            # Format syntax: quality[ext=container] for best match
+            # Format syntax: multi-stage fallback that never falls back to audio-only
+            # Prefers ANY video quality over audio-only streams
             if video_quality == "best":
-                # Best quality with requested container
-                format_str = f"best[ext={video_format}]/best"
+                # Best quality with requested container, never audio-only
+                format_str = f"bestvideo[ext={video_format}]+bestaudio/bestvideo+bestaudio/best[acodec!=none]"
             else:
                 # Specific quality with requested container
                 # Convert "1080p" to height=1080 for yt-dlp
                 height = video_quality.replace("p", "")
-                format_str = f"bestvideo[height<={height}][ext={video_format}]+bestaudio/bestvideo[height<={height}]/best[height<={height}][ext={video_format}]/best[height<={height}]"
+                # Multi-stage fallback: try exact quality, then any quality, then combined streams
+                # Never falls back to audio-only - prefers ANY video quality over audio
+                format_str = (
+                    f"bestvideo[height<={height}][ext={video_format}]+bestaudio/bestvideo[height<={height}]+bestaudio/"
+                    f"bestvideo[ext={video_format}]+bestaudio/bestvideo+bestaudio/"
+                    f"best[acodec!=none]"
+                )
 
             logger.info(f"Using yt-dlp format string: {format_str}")
 

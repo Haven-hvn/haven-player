@@ -125,6 +125,17 @@ class VLMAnalysisWorker:
                 await self.mark_vlm_analysis_skipped(queue_id, "VLM analysis disabled for this video")
                 return True
 
+            # Double-check file has video streams before processing (defensive check)
+            # This catches any audio-only files that slipped through queue validation
+            from app.utils.video.video_file_validator import is_video_content
+            if not is_video_content(queue_entry.video_path):
+                logger.warning(f"Skipping VLM analysis for non-video file: {queue_entry.video_path}")
+                await self.mark_vlm_analysis_skipped(
+                    queue_id,
+                    "File contains audio-only content (no video streams)"
+                )
+                return True
+
             logger.info(f"Starting VLM analysis for {queue_entry.video_path}")
 
             # Perform VLM analysis via existing processor

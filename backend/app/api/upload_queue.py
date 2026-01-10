@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.upload_queue import UploadQueue
 from app.models.video import Video
+from app.utils.video.video_file_validator import is_video_content
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -108,7 +109,6 @@ async def add_to_upload_queue(
         if existing:
             # Get video to check VLM preference
             video = db.query(Video).filter(Video.path == queue_data.video_path).first()
-            enable_vlm = video.enable_vlm_analysis if video else False
 
             if existing.is_completed():
                 # Already uploaded, no need to queue again
@@ -125,7 +125,17 @@ async def add_to_upload_queue(
                 existing.error_message = None
                 existing.attempts = 0
                 # Update VLM status based on video preference
+                enable_vlm = video.enable_vlm_analysis if video else False
                 existing.vlm_analysis_status = 'pending' if enable_vlm else 'skipped'
+
+                # Check if file actually contains video streams before enabling VLM
+                if enable_vlm:
+                    logger.debug(f"Checking if {queue_data.video_path} contains video streams (re-queue)")
+                    if not is_video_content(queue_data.video_path):
+                        logger.info(f"File {queue_data.video_path} does not contain video streams, skipping VLM analysis (re-queue)")
+                        existing.vlm_analysis_status = 'skipped'
+                        existing.vlm_analysis_error = 'File contains audio-only content (no video streams)'
+
                 db.commit()
                 db.refresh(existing)
                 logger.info(f"Re-queued video: {queue_data.video_path}")
@@ -147,6 +157,17 @@ async def add_to_upload_queue(
         db.add(queue_entry)
         db.commit()
         db.refresh(queue_entry)
+
+        # Check if file actually contains video streams before enabling VLM
+        # This is a defensive check to prevent processing audio-only files
+        if enable_vlm:
+            logger.debug(f"Checking if {queue_data.video_path} contains video streams")
+            if not is_video_content(queue_data.video_path):
+                logger.info(f"File {queue_data.video_path} does not contain video streams, skipping VLM analysis")
+                queue_entry.vlm_analysis_status = 'skipped'
+                queue_entry.vlm_analysis_error = 'File contains audio-only content (no video streams)'
+                db.commit()
+                db.refresh(queue_entry)
 
         logger.info(f"Added video to upload queue: {queue_data.video_path} (priority={queue_data.priority})")
         return UploadQueueResponse.model_validate(queue_entry)

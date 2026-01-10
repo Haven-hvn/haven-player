@@ -3,7 +3,6 @@
  * Tests cover all major scenarios including bug fixes for null queue entries
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import {
   UploadWorker,
   UploadCoordinatorConfig,
@@ -12,59 +11,71 @@ import {
   startUploadWorker,
   stopUploadWorker,
 } from '../uploadWorker';
-import * as fs from 'fs';
-import * as path from 'path';
 
 // Mock dependencies
-vi.mock('fs');
-vi.mock('path');
-vi.mock('../filecoinService');
-vi.mock('electron', () => ({
+jest.mock('fs');
+jest.mock('path');
+jest.mock('../filecoinService');
+jest.mock('electron', () => ({
   default: {
-    getPath: vi.fn(),
+    getPath: jest.fn(),
   },
   app: {
-    getPath: vi.fn(),
+    getPath: jest.fn(),
   },
   safeStorage: {
-    isEncryptionAvailable: vi.fn(),
-    decryptString: vi.fn(),
+    isEncryptionAvailable: jest.fn(),
+    decryptString: jest.fn(),
   },
 }));
 
+const fs = require('fs');
+const path = require('path');
+const { uploadVideoToFilecoin } = require('../filecoinService');
+
 describe('UploadWorker', () => {
   let worker: UploadWorker;
-  let mockFetch: Mock;
-  let mockUploadVideoToFilecoin: any;
+  let mockFetch: jest.Mock;
+  let mockUploadVideoToFilecoin: jest.Mock;
 
   beforeEach(() => {
+    // Reset modules
+    jest.clearAllMocks();
+    jest.resetModules();
+
     // Mock fetch
-    mockFetch = vi.fn();
-    global.fetch = mockFetch as any;
+    mockFetch = jest.fn();
+    global.fetch = mockFetch;
 
     // Mock filecoin service
-    const mockModule = await import('../filecoinService');
-    mockUploadVideoToFilecoin = vi.fn();
-    mockModule.uploadVideoToFilecoin = mockUploadVideoToFilecoin;
+    mockUploadVideoToFilecoin = jest.fn();
+    jest.doMock('../filecoinService', () => ({
+      uploadVideoToFilecoin: mockUploadVideoToFilecoin,
+    }));
+    (require('../filecoinService') as any).uploadVideoToFilecoin = mockUploadVideoToFilecoin;
 
     // Mock fs methods
-    vi.mocked(fs.existsSync).mockReturnValue(true);
-    vi.mocked(fs.statSync).mockReturnValue({ size: 1000000 } as any);
-    vi.mocked(fs.readFileSync).mockReturnValue(Buffer.from('test video data'));
+    fs.existsSync = jest.fn();
+    fs.statSync = jest.fn();
+    fs.readFileSync = jest.fn();
+
+    fs.existsSync.mockReturnValue(true);
+    fs.statSync.mockReturnValue({ size: 1000000 });
+    fs.readFileSync.mockReturnValue(Buffer.from('test video data'));
 
     // Mock path methods
-    vi.mocked(path.basename).mockReturnValue('test-video.mp4');
-    vi.mocked(path.join).mockImplementation((...args) => args.join('/'));
-    vi.mocked(path.extname).mockReturnValue('.mp4');
+    path.basename = jest.fn(() => 'test-video.mp4');
+    path.join = jest.fn((...args: string[]) => args.join('/'));
+    path.extname = jest.fn(() => '.mp4');
 
     // Mock electron safeStorage
-    const { safeStorage } = await import('electron');
-    vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValue(true);
-    vi.mocked(safeStorage.decryptString).mockReturnValue('mock-private-key');
+    const { safeStorage } = require('electron');
+    safeStorage.isEncryptionAvailable.mockReturnValue(true);
+    safeStorage.decryptString.mockReturnValue('mock-private-key');
 
     // Mock electron app
-    const { app } = await import('electron');
-    vi.mocked(app.getPath).mockReturnValue('/mock/user/data');
+    const { app } = require('electron');
+    app.getPath.mockReturnValue('/mock/user/data');
 
     worker = new UploadWorker({
       enabled: true,
@@ -74,7 +85,7 @@ describe('UploadWorker', () => {
 
   afterEach(() => {
     worker.stop();
-    vi.clearAllMocks();
+    jest.clearAllMocks();
   });
 
   describe('Constructor', () => {
@@ -116,10 +127,17 @@ describe('UploadWorker', () => {
     });
 
     it('should not start if already running', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 204,
+        text: async () => '',
+      });
+
       await worker.start();
       await worker.start(); // Try to start again
 
       expect(worker.isWorkerRunning()).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1); // Only called once
     });
 
     it('should start when config is enabled', async () => {
@@ -167,9 +185,7 @@ describe('UploadWorker', () => {
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => {
-            mockQueueEntry;
-          },
+          json: async () => mockQueueEntry,
         });
 
       mockUploadVideoToFilecoin.mockResolvedValue({
@@ -188,7 +204,7 @@ describe('UploadWorker', () => {
   });
 
   describe('processQueue', () => {
-    beforeEach(async () => {
+    beforeEach(() => {
       worker = new UploadWorker({ enabled: true });
     });
 
@@ -252,7 +268,7 @@ describe('UploadWorker', () => {
         json: async () => null,
       });
 
-      const consoleErrorSpy = vi.spyOn(console, 'error');
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 
       await (worker as any).processQueue();
 
@@ -261,6 +277,8 @@ describe('UploadWorker', () => {
         null
       );
       expect(mockUploadVideoToFilecoin).not.toHaveBeenCalled();
+
+      consoleErrorSpy.mockRestore();
     });
 
     it('should handle queue entry with missing video_path - BUG FIX TEST', async () => {
@@ -280,7 +298,7 @@ describe('UploadWorker', () => {
         json: async () => invalidEntry,
       });
 
-      const consoleErrorSpy = vi.spyOn(console, 'error');
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 
       await (worker as any).processQueue();
 
@@ -289,6 +307,8 @@ describe('UploadWorker', () => {
         invalidEntry
       );
       expect(mockUploadVideoToFilecoin).not.toHaveBeenCalled();
+
+      consoleErrorSpy.mockRestore();
     });
 
     it('should handle queue entry with missing id - BUG FIX TEST', async () => {
@@ -308,7 +328,7 @@ describe('UploadWorker', () => {
         json: async () => invalidEntry,
       });
 
-      const consoleErrorSpy = vi.spyOn(console, 'error');
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 
       await (worker as any).processQueue();
 
@@ -317,6 +337,8 @@ describe('UploadWorker', () => {
         invalidEntry
       );
       expect(mockUploadVideoToFilecoin).not.toHaveBeenCalled();
+
+      consoleErrorSpy.mockRestore();
     });
 
     it('should successfully process valid queue entry', async () => {
@@ -349,7 +371,7 @@ describe('UploadWorker', () => {
         isEncrypted: false,
       });
 
-      const consoleLogSpy = vi.spyOn(console, 'log');
+      const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
 
       await (worker as any).processQueue();
 
@@ -362,6 +384,8 @@ describe('UploadWorker', () => {
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringContaining('Upload complete:')
       );
+
+      consoleLogSpy.mockRestore();
     });
   });
 
@@ -376,7 +400,7 @@ describe('UploadWorker', () => {
     };
 
     it('should handle missing Filecoin config', async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
+      fs.existsSync.mockReturnValue(false);
 
       const result = await (worker as any).processUpload(validQueueEntry);
 
@@ -385,9 +409,9 @@ describe('UploadWorker', () => {
     });
 
     it('should throw error if video file does not exist', async () => {
-      vi.mocked(fs.existsSync).mockImplementation((filePath) => {
+      fs.existsSync.mockImplementation((filePath: string) => {
         // Filecoin config exists
-        if (filePath && filePath.includes('filecoin-config.json')) {
+        if (typeof filePath === 'string' && filePath.includes('filecoin-config.json')) {
           return true;
         }
         // Video file doesn't exist
@@ -425,7 +449,7 @@ describe('UploadWorker', () => {
 
       // Verify update status call
       const updateCall = mockFetch.mock.calls.find(
-        (call: any[]) => call[0]?.includes('/upload-queue/1/status')
+        (call: any[]) => typeof call[0] === 'string' && call[0].includes('/upload-queue/1/status')
       );
       expect(updateCall).toBeDefined();
 
@@ -435,7 +459,7 @@ describe('UploadWorker', () => {
     });
 
     it('should handle upload failure and update status to failed', async () => {
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation();
 
       mockUploadVideoToFilecoin.mockRejectedValue(new Error('Upload failed'));
 
@@ -450,7 +474,7 @@ describe('UploadWorker', () => {
 
       // Verify failed status update
       const updateCall = mockFetch.mock.calls.find(
-        (call: any[]) => call[0]?.includes('/upload-queue/1/status')
+        (call: any[]) => typeof call[0] === 'string' && call[0].includes('/upload-queue/1/status')
       );
       expect(updateCall).toBeDefined();
 
@@ -462,7 +486,7 @@ describe('UploadWorker', () => {
     });
 
     it('should handle update status failure', async () => {
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation();
 
       mockUploadVideoToFilecoin.mockRejectedValue(new Error('Upload failed'));
 
@@ -481,7 +505,7 @@ describe('UploadWorker', () => {
 
   describe('loadFilecoinConfig', () => {
     it('should return null if config file does not exist', async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
+      fs.existsSync.mockReturnValue(false);
 
       const config = await (worker as any).loadFilecoinConfig();
 
@@ -489,8 +513,8 @@ describe('UploadWorker', () => {
     });
 
     it('should return null if encryption is not available', async () => {
-      const { safeStorage } = await import('electron');
-      vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValue(false);
+      const { safeStorage } = require('electron');
+      safeStorage.isEncryptionAvailable.mockReturnValue(false);
 
       const config = await (worker as any).loadFilecoinConfig();
 
@@ -498,7 +522,7 @@ describe('UploadWorker', () => {
     });
 
     it('should successfully load and decrypt Filecoin config', async () => {
-      vi.mocked(fs.existsSync).mockImplementation((filePath) => {
+      fs.existsSync.mockImplementation((filePath: string) => {
         return typeof filePath === 'string' && filePath.includes('filecoin-config.json');
       });
 
@@ -509,7 +533,7 @@ describe('UploadWorker', () => {
         encryptionEnabled: true,
       };
 
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(mockConfig));
+      fs.readFileSync.mockReturnValue(JSON.stringify(mockConfig));
 
       const config = await (worker as any).loadFilecoinConfig();
 
@@ -521,9 +545,9 @@ describe('UploadWorker', () => {
       });
     });
 
-    it('should return null JSON parse error', async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue('{invalid json}');
+    it('should return null on JSON parse error', async () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('{invalid json}');
 
       const config = await (worker as any).loadFilecoinConfig();
 
@@ -534,8 +558,8 @@ describe('UploadWorker', () => {
   describe('readFileAsFile', () => {
     it('should create File object from video file', async () => {
       const mockStats = { size: 1024000 };
-      vi.mocked(fs.statSync).mockReturnValue(mockStats as any);
-      vi.mocked(fs.readFileSync).mockReturnValue(Buffer.from('test video data'));
+      fs.statSync.mockReturnValue(mockStats);
+      fs.readFileSync.mockReturnValue(Buffer.from('test video data'));
 
       const result = await (worker as any).readFileAsFile('/test/video.mp4');
 
@@ -545,8 +569,8 @@ describe('UploadWorker', () => {
     });
 
     it('should detect video/webm mimetype', async () => {
-      vi.mocked(path.extname).mockReturnValue('.webm');
-      vi.mocked(path.basename).mockReturnValue('test-video.webm');
+      path.extname.mockReturnValue('.webm');
+      path.basename.mockReturnValue('test-video.webm');
 
       const result = await (worker as any).readFileAsFile('/test/video.webm');
 
@@ -554,8 +578,8 @@ describe('UploadWorker', () => {
     });
 
     it('should default to application/octet-stream for unknown extensions', async () => {
-      vi.mocked(path.extname).mockReturnValue('.unknown');
-      vi.mocked(path.basename).mockReturnValue('test-video.unknown');
+      path.extname.mockReturnValue('.unknown');
+      path.basename.mockReturnValue('test-video.unknown');
 
       const result = await (worker as any).readFileAsFile('/test/video.unknown');
 
@@ -579,6 +603,7 @@ describe('UploadWorker', () => {
     });
 
     it('should do nothing if not running', () => {
+      worker = new UploadWorker();
       expect(worker.isWorkerRunning()).toBe(false);
       worker.stop();
       expect(worker.isWorkerRunning()).toBe(false);
@@ -645,8 +670,7 @@ describe('UploadWorker', () => {
   describe('Singleton functions', () => {
     beforeEach(() => {
       // Reset singleton instance
-      const module = await import('../uploadWorker');
-      (module as any).uploadWorkerInstance = null;
+      jest.resetModules();
     });
 
     it('getUploadWorker should return singleton instance', () => {

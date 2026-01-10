@@ -15,6 +15,7 @@ import os
 import subprocess
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone # Import timezone
+from unidecode import unidecode
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -705,7 +706,10 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             channel_dir = os.path.join(self.download_dir, channel_name)
             os.makedirs(channel_dir, exist_ok=True)
 
-            safe_title = "".join(c for c in source.metadata.get("title", "video") if c.isalnum() or c in (' ', '-', '_'))
+            # Transliterate Unicode to ASCII (preserves Japanese->romaji, Cyrillic->Latin, etc.)
+            transliterated_title = unidecode(source.metadata.get("title", "video"))
+            # Then sanitize the ASCII-only title
+            safe_title = "".join(c for c in transliterated_title if c.isalnum() or c in (' ', '-', '_'))
             # Include video ID to ensure unique filenames
             output_template = os.path.join(channel_dir, f"{safe_title}_{source.source_id}.%(ext)s")
 

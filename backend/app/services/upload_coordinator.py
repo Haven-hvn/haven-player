@@ -62,27 +62,36 @@ class UploadCoordinator:
                 logger.info("No app config found, creating default")
                 return self.DEFAULT_CONFIG.copy()
 
-            # Load from database
-            db_config = {
-                'enabled': config.upload_coordinator_enabled,
-                'plugin_overrides': config.upload_coordinator_plugin_overrides or {},
-                'priority': config.upload_coordinator_priority,
-            }
+            # Start with default config as base
+            merged_config = self.DEFAULT_CONFIG.copy()
+
+            # Override with database values
+            db_config = {}
+            if config.upload_coordinator_enabled is not None:
+                db_config['enabled'] = config.upload_coordinator_enabled
+            if config.upload_coordinator_plugin_overrides:
+                db_config['plugin_overrides'] = config.upload_coordinator_plugin_overrides
+            if config.upload_coordinator_priority is not None:
+                db_config['priority'] = config.upload_coordinator_priority
+
+            # Merge database config into defaults (only override what's explicitly set)
+            merged_config.update(db_config)
 
             # Auto-detect if enabled is None
-            if db_config['enabled'] is None:
+            if merged_config['enabled'] is None:
                 if self.is_filecoin_configured():
-                    db_config['enabled'] = True
+                    merged_config['enabled'] = True
                     logger.info("FileCoin is configured, auto-enabled upload coordinator")
                 else:
-                    db_config['enabled'] = False
+                    merged_config['enabled'] = False
                     logger.info("FileCoin not configured, upload coordinator remains disabled")
 
                 # Save the auto-detected value to database (only update enabled field)
-                self.save_config({'enabled': db_config['enabled']})
+                self.save_config({'enabled': merged_config['enabled']})
 
             logger.info(f"Loaded UploadCoordinator config from database")
-            return db_config
+            logger.info(f"Plugin overrides: {merged_config['plugin_overrides']}")
+            return merged_config
 
         finally:
             db.close()

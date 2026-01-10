@@ -1,5 +1,6 @@
 fastapi==0.128.0
 uvicorn==0.40.0
+unidecode==1.3.8
 sqlalchemy==2.0.45
 pydantic==2.12.5
 python-dotenv==1.2.1

@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadVideoToFilecoin } from './filecoinService';
 import type { FilecoinConfig } from '../types/filecoin';
+import type { UploadWorkerConfig } from '../types/plugin';
 
 export interface UploadQueueEntry {
   id: number;
@@ -22,20 +23,13 @@ export interface UploadQueueEntry {
   source: string;
 }
 
-export interface UploadCoordinatorConfig {
-  enabled: boolean;
-  pollInterval: number;  // milliseconds
-  maxConcurrentUploads: number;
-  retryAttempts: number;
-}
-
 export class UploadWorker {
   private pollingInterval: NodeJS.Timeout | null = null;
   private isProcessing = false;
-  private config: UploadCoordinatorConfig;
+  private config: UploadWorkerConfig;
   private isRunning = false;
 
-  constructor(config?: Partial<UploadCoordinatorConfig>) {
+  constructor(config?: Partial<UploadWorkerConfig>) {
     this.config = {
       enabled: config?.enabled ?? false,
       pollInterval: config?.pollInterval ?? 15000,  // Default 15s
@@ -44,7 +38,7 @@ export class UploadWorker {
     };
   }
 
-  async start(config?: Partial<UploadCoordinatorConfig>): Promise<void> {
+  async start(config?: Partial<UploadWorkerConfig>): Promise<void> {
     // Update config if provided
     if (config) {
       this.config = { ...this.config, ...config };
@@ -296,7 +290,7 @@ export class UploadWorker {
     this.isRunning = false;
   }
 
-  updateConfig(newConfig: Partial<UploadCoordinatorConfig>): void {
+  updateConfig(newConfig: Partial<UploadWorkerConfig>): void {
     this.config = { ...this.config, ...newConfig };
     console.log('[UploadWorker] Config updated:', this.config);
 
@@ -307,7 +301,7 @@ export class UploadWorker {
     }
   }
 
-  getConfig(): UploadCoordinatorConfig {
+  getConfig(): UploadWorkerConfig {
     return { ...this.config };
   }
 
@@ -326,7 +320,7 @@ export function getUploadWorker(): UploadWorker {
   return uploadWorkerInstance;
 }
 
-export function startUploadWorker(config?: Partial<UploadCoordinatorConfig>): UploadWorker {
+export function startUploadWorker(config?: Partial<UploadWorkerConfig>): UploadWorker {
   const worker = getUploadWorker();
   worker.start(config);
   return worker;

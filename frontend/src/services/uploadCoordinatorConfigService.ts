@@ -5,11 +5,7 @@
  * for plugin downloads by updating the backend configuration.
  */
 
-export interface UploadCoordinatorConfig {
-  enabled: boolean;
-  plugin_overrides?: Record<string, boolean>;
-  priority?: number;
-}
+import type { UploadCoordinatorConfig } from '@/types/plugin';
 
 export class UploadCoordinatorConfigService {
   /**
@@ -23,7 +19,7 @@ export class UploadCoordinatorConfigService {
       if (!response.ok) {
         throw new Error(`Failed to get upload coordinator config: ${response.status}`);
       }
-      return await response.json();
+      return await response.json() as UploadCoordinatorConfig;
     } catch (error) {
       console.error('[UploadCoordinatorConfigService] Failed to get config:', error);
       throw error;
@@ -49,9 +45,7 @@ export class UploadCoordinatorConfigService {
         throw new Error(`Failed to update upload coordinator config: ${response.status} - ${errorText}`);
       }
 
-      const updatedConfig = await response.json();
-      console.log('[UploadCoordinatorConfigService] Updated config:', updatedConfig);
-      return updatedConfig;
+      return await response.json() as UploadCoordinatorConfig;
     } catch (error) {
       console.error('[UploadCoordinatorConfigService] Failed to update config:', error);
       throw error;

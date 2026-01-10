@@ -8,7 +8,7 @@
  */
 
 import type {
-  UploadCoordinatorConfig,
+  UploadWorkerConfig,
   UploadQueueStatus,
   UploadQueueEntry,
 } from '../types/plugin';
@@ -18,13 +18,13 @@ export type { UploadQueueStatus, UploadQueueEntry };
 
 export interface UploadWorkerStatus {
   isRunning: boolean;
-  config: UploadCoordinatorConfig;
+  config: UploadWorkerConfig;
 }
 
 export interface UploadWorkerStartResponse {
   success: boolean;
   isRunning: boolean;
-  config: UploadCoordinatorConfig;
+  config: UploadWorkerConfig;
   filecoinConfigured: boolean;
   message: string;
 }
@@ -44,7 +44,7 @@ export class UploadWorkerService {
    * @param config - Optional configuration for the upload worker
    * @returns Promise with start response
    */
-  async start(config?: Partial<UploadCoordinatorConfig>): Promise<UploadWorkerStartResponse> {
+  async start(config?: Partial<UploadWorkerConfig>): Promise<UploadWorkerStartResponse> {
     try {
       const response = await ipcRenderer.invoke('upload-worker:start', config);
       return response;
@@ -90,9 +90,9 @@ export class UploadWorkerService {
    * @param newConfig - Partial configuration to update
    * @returns Promise with success status and updated config
    */
-  async updateConfig(newConfig: Partial<UploadCoordinatorConfig>): Promise<{
+  async updateConfig(newConfig: Partial<UploadWorkerConfig>): Promise<{
     success: boolean;
-    config: UploadCoordinatorConfig;
+    config: UploadWorkerConfig;
     message: string;
   }> {
     try {

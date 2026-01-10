@@ -16,17 +16,16 @@ import {
   CardContent,
   Chip,
   Grid,
-  useTheme,
-} from '@mui/material';
-import {
-  CloudUpload as CloudUploadIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Info as InfoIcon,
-} from '@mui/icons-material';
-import { useUploadWorker } from '@/hooks/useUploadWorker';
-import { uploadCoordinatorConfigService } from '@/services/uploadCoordinatorConfigService';
-import type { UploadCoordinatorConfig } from '@/types/plugin';
+    useTheme,
+  } from '@mui/material';
+  import {
+    CloudUpload as CloudUploadIcon,
+    CheckCircle as CheckCircleIcon,
+    Error as ErrorIcon,
+    Info as InfoIcon,
+  } from '@mui/icons-material';
+  import { useUploadWorker } from '@/hooks/useUploadWorker';
+  import { uploadCoordinatorConfigService, type UploadCoordinatorConfig } from '@/services/uploadCoordinatorConfigService';
 
 interface UploadWorkerConfigProps {
   filecoinConfigured: boolean;

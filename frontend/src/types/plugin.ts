@@ -243,12 +243,25 @@ export interface SchedulerStatus {
 
 // ========== Upload Coordinator Types ==========
 
+/**
+ * Backend Upload Coordinator configuration.
+ * Controls which videos get automatically queued for upload.
+ */
 export interface UploadCoordinatorConfig {
+  enabled: boolean;
+  plugin_overrides: Record<string, boolean>;  // plugin_name -> enabled
+  priority: number;
+}
+
+/**
+ * Frontend Upload Worker configuration.
+ * Controls how the worker processes the upload queue.
+ */
+export interface UploadWorkerConfig {
   enabled: boolean;
   pollInterval: number;  // milliseconds
   maxConcurrentUploads: number;
   retryAttempts: number;
-  pluginOverrides: Record<string, boolean>;  // plugin_name -> enabled
 }
 
 export interface UploadQueueStatus {

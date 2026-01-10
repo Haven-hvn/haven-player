@@ -16,7 +16,7 @@ import {
   type UploadQueueStatus,
   type UploadQueueEntry,
 } from '@/services/uploadWorkerService';
-import type { UploadCoordinatorConfig } from '@/types/plugin';
+import type { UploadWorkerConfig } from '@/types/plugin';
 
 export interface UseUploadWorkerReturn {
   // Status
@@ -26,9 +26,9 @@ export interface UseUploadWorkerReturn {
   error: string | null;
 
   // Actions
-  start: (config?: Partial<UploadCoordinatorConfig>) => Promise<UploadWorkerStartResponse>;
+  start: (config?: Partial<UploadWorkerConfig>) => Promise<UploadWorkerStartResponse>;
   stop: () => Promise<void>;
-  updateConfig: (newConfig: Partial<UploadCoordinatorConfig>) => Promise<void>;
+  updateConfig: (newConfig: Partial<UploadWorkerConfig>) => Promise<void>;
   refreshStatus: () => Promise<void>;
   refreshQueueStats: () => Promise<void>;
 }
@@ -67,7 +67,7 @@ export function useUploadWorker(): UseUploadWorkerReturn {
 
   // Start upload worker
   const start = useCallback(async (
-    config?: Partial<UploadCoordinatorConfig>
+    config?: Partial<UploadWorkerConfig>
   ): Promise<UploadWorkerStartResponse> => {
     try {
       setLoading(true);
@@ -107,7 +107,7 @@ export function useUploadWorker(): UseUploadWorkerReturn {
 
   // Update configuration
   const updateConfig = useCallback(async (
-    newConfig: Partial<UploadCoordinatorConfig>
+    newConfig: Partial<UploadWorkerConfig>
   ) => {
     try {
       setLoading(true);

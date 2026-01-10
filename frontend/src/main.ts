@@ -10,7 +10,7 @@ import type { IpfsGatewayConfig } from './types/playback';
 import { DEFAULT_IPFS_GATEWAY, normalizeGatewayBase } from './services/playbackResolver';
 import { decryptTextWithLit, deserializeEncryptionMetadata } from './services/litService';
 import type { LitEncryptionMetadata } from './services/litService';
-import { getUploadWorker, type UploadCoordinatorConfig } from './services/uploadWorker';
+import { getUploadWorker, type UploadWorkerConfig } from './services/uploadWorker';
 
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
@@ -940,7 +940,7 @@ function writeIpfsGatewayConfig(config: IpfsGatewayConfig): IpfsGatewayConfig {
 }
 
 // IPC handlers for upload worker control
-ipcMain.handle('upload-worker:start', async (_event, config?: Partial<UploadCoordinatorConfig>) => {
+ipcMain.handle('upload-worker:start', async (_event, config?: Partial<UploadWorkerConfig>) => {
   try {
     const worker = getUploadWorker();
 
@@ -949,7 +949,7 @@ ipcMain.handle('upload-worker:start', async (_event, config?: Partial<UploadCoor
     const isConfigured = !!filecoinConfig?.privateKey;
 
     // Auto-enable if Filecoin is configured and no explicit config provided
-    const effectiveConfig: Partial<UploadCoordinatorConfig> = config || {};
+    const effectiveConfig: Partial<UploadWorkerConfig> = config || {};
     if (isConfigured && effectiveConfig.enabled === undefined) {
       effectiveConfig.enabled = true;
     }
@@ -1001,7 +1001,7 @@ ipcMain.handle('upload-worker:get-status', async () => {
   }
 });
 
-ipcMain.handle('upload-worker:update-config', async (_event, newConfig: Partial<UploadCoordinatorConfig>) => {
+ipcMain.handle('upload-worker:update-config', async (_event, newConfig: Partial<UploadWorkerConfig>) => {
   try {
     const worker = getUploadWorker();
 

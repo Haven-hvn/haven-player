@@ -37,8 +37,8 @@ class JobCreateResponse(BaseModel):
 @router.post("/videos/{video_path:path}/analyze", response_model=JobCreateResponse)
 def start_analysis_job(
     video_path: str,
-    job_params: Optional[JobCreateRequest] = None,
     background_tasks: BackgroundTasks,
+    job_params: Optional[JobCreateRequest] = None,
     db: Session = Depends(get_db)
 ) -> dict:
     """Start a new analysis job for the specified video."""

@@ -18,13 +18,19 @@ def _blocking_process_video_with_engine(engine, video_path, frame_interval, retu
     Blocking function that runs VLM processing in a separate thread.
     """
     logger.info(f"Starting blocking VLM processing in thread for video: {video_path}")
-    result = engine.process_video(
-        video_path,
-        frame_interval=frame_interval,
-        return_timestamps=return_timestamps,
-        return_confidence=return_confidence,
-        threshold=threshold
-    )
+    
+    # Create an async function inside the thread to run the coroutine
+    async def _async_process():
+        return await engine.process_video(
+            video_path,
+            frame_interval=frame_interval,
+            return_timestamps=return_timestamps,
+            return_confidence=return_confidence,
+            threshold=threshold
+        )
+    
+    # Run the async function in the thread's event loop
+    result = asyncio.run(_async_process())
     logger.info(f"Completed blocking VLM processing in thread for video: {video_path}")
     return result
 

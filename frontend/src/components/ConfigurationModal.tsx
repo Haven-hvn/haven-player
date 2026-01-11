@@ -63,6 +63,14 @@ declare global {
 interface AppConfig {
   id: number;
   analysis_tags: string;
+  // VLM Processing Configuration
+  vlm_frame_interval: number;
+  vlm_threshold: number;
+  vlm_return_timestamps: boolean;
+  vlm_return_confidence: boolean;
+  vlm_multiplexer_enabled: boolean;
+  vlm_multiplexer_endpoints: string | null;
+  // LLM Configuration
   llm_base_url: string;
   llm_model: string;
   max_batch_size: number;
@@ -98,6 +106,12 @@ const defaultFilecoinConfig: FilecoinConfig = {
 
 const defaultAppConfig: EditableAppConfig = {
   analysis_tags: "",
+  vlm_frame_interval: 2.0,
+  vlm_threshold: 0.5,
+  vlm_return_timestamps: true,
+  vlm_return_confidence: true,
+  vlm_multiplexer_enabled: false,
+  vlm_multiplexer_endpoints: null,
   llm_base_url: "http://localhost:1234",
   llm_model: "HuggingFaceTB/SmolVLM-Instruct",
   max_batch_size: 1,
@@ -183,6 +197,12 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       const data = await response.json();
       setConfig({
         analysis_tags: data.analysis_tags,
+        vlm_frame_interval: data.vlm_frame_interval ?? 2.0,
+        vlm_threshold: data.vlm_threshold ?? 0.5,
+        vlm_return_timestamps: data.vlm_return_timestamps ?? true,
+        vlm_return_confidence: data.vlm_return_confidence ?? true,
+        vlm_multiplexer_enabled: data.vlm_multiplexer_enabled ?? false,
+        vlm_multiplexer_endpoints: data.vlm_multiplexer_endpoints ?? null,
         llm_base_url: data.llm_base_url,
         llm_model: data.llm_model,
         max_batch_size: data.max_batch_size,
@@ -665,6 +685,70 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
             </Box>
           </Box>
         )}
+      </Box>
+
+      <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
+
+      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
+        VLM Processing Parameters
+      </Typography>
+
+      <Box sx={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+        <TextField
+          sx={{ flex: 1, minWidth: 200 }}
+          label="Frame Interval (seconds)"
+          type="number"
+          value={config.vlm_frame_interval}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setConfig((prev: EditableAppConfig) => ({
+              ...prev,
+              vlm_frame_interval: parseFloat(e.target.value) || 2.0,
+            }))
+          }
+          inputProps={{ step: 0.1, min: 0.1, max: 60.0 }}
+          helperText="Seconds between frame samples"
+        />
+
+        <TextField
+          sx={{ flex: 1, minWidth: 200 }}
+          label="Confidence Threshold"
+          type="number"
+          value={config.vlm_threshold}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setConfig((prev: EditableAppConfig) => ({
+              ...prev,
+              vlm_threshold: parseFloat(e.target.value) || 0.5,
+            }))
+          }
+          inputProps={{ step: 0.01, min: 0.0, max: 1.0 }}
+          helperText="Min confidence for tag detection"
+        />
+
+        <FormControl sx={{ flex: 1, minWidth: 150 }}>
+          <InputLabel style={{ backgroundColor: "#2A2A2A", padding: "0 4px" }}>
+            VLM Settings
+          </InputLabel>
+          <Select
+            multiple
+            value={[
+              ...[config.vlm_return_timestamps ? "Timestamps" : ""],
+              ...[config.vlm_return_confidence ? "Confidence" : ""],
+            ].filter(Boolean)}
+            label="VLM Settings"
+            onChange={(e: SelectChangeEvent<string[]>) => {
+              const values = e.target.value;
+              setConfig((prev: EditableAppConfig) => ({
+                ...prev,
+                vlm_return_timestamps: values.includes("Timestamps"),
+                vlm_return_confidence: values.includes("Confidence"),
+              }));
+            }}
+            renderValue={(selected: string[]) => selected.join(", ")}
+          >
+            <MenuItem value={"Timestamps"}>Include Timestamps</MenuItem>
+            <MenuItem value={"Confidence"}>Include Confidence</MenuItem>
+          </Select>
+        </FormControl>
       </Box>
 
       <Divider sx={{ backgroundColor: "#F0F0F0" }} />

@@ -1,99 +1,144 @@
 import asyncio
-import concurrent.futures
 import logging
 import json
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Callable, Optional
 from sqlalchemy.orm import Session
 from app.models.database import SessionLocal
 from app.models.video import Video, Timestamp
 from app.models.analysis_job import AnalysisJob
-from app.services.vlm_config import create_engine_config
+from app.models.upload_queue import UploadQueue
+from app.services.vlm_config import create_engine_config, get_vlm_processing_params
 from vlm_engine import VLMEngine
 
 logger = logging.getLogger(__name__)
 
-import functools
 
-def _blocking_process_video_with_engine(engine, video_path, frame_interval, return_timestamps, return_confidence, threshold):
+async def process_video_with_progress(
+    video_path: str,
+    job_id: Optional[int] = None,
+    queue_id: Optional[int] = None,
+    progress_callback: Optional[Callable[[int], None]] = None,
+    frame_interval: Optional[float] = None,
+    threshold: Optional[float] = None,
+    return_timestamps: Optional[bool] = None,
+    return_confidence: Optional[bool] = None
+) -> Dict[str, Any]:
     """
-    Blocking function that runs VLM processing in a separate thread.
-    Runs the entire async engine processing in a thread to avoid blocking the event loop.
+    Process a video using VLM engine with proper async handling and progress tracking.
+    
+    Args:
+        video_path: Path to video file
+        job_id: Optional AnalysisJob ID for progress tracking
+        queue_id: Optional UploadQueue ID for progress tracking
+        progress_callback: Optional callback for progress updates
+        frame_interval: Seconds between frame samples
+        threshold: Confidence threshold for tag detection
+        return_timestamps: Include timestamp information
+        return_confidence: Include confidence scores
+        
+    Returns:
+        Dictionary containing VLM analysis results
     """
-    import time
-    start_time = time.time()
-    logger.info(f"Starting blocking VLM processing in thread for video: {video_path}")
+    db = SessionLocal()
     try:
-        result = asyncio.run(
-            engine.process_video(
-                video_path,
-                frame_interval=frame_interval,
-                return_timestamps=return_timestamps,
-                return_confidence=return_confidence,
-                threshold=threshold
-            )
+        # Update status if job_id provided
+        if job_id:
+            job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+            if job:
+                job.status = 'processing'
+                job.started_at = datetime.now(timezone.utc)
+                db.commit()
+        
+        # Update status if queue_id provided
+        if queue_id:
+            queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+            if queue_entry:
+                queue_entry.vlm_analysis_status = 'processing'
+                queue_entry.vlm_analysis_started_at = datetime.now(timezone.utc)
+                db.commit()
+        
+        # Get processing parameters from database configuration
+        processing_params = get_vlm_processing_params()
+        
+        # Use provided parameters or fall back to database defaults
+        frame_interval_val = frame_interval if frame_interval is not None else processing_params["frame_interval"]
+        threshold_val = threshold if threshold is not None else processing_params["threshold"]
+        return_timestamps_val = return_timestamps if return_timestamps is not None else processing_params["return_timestamps"]
+        return_confidence_val = return_confidence if return_confidence is not None else processing_params["return_confidence"]
+        vr_video_val = processing_params["vr_video"]
+        
+        # Create progress callback wrapper
+        async def wrapped_progress_callback(progress: int) -> None:
+            """Wrap progress callback to update database"""
+            if progress_callback:
+                progress_callback(progress)
+            
+            # Update database progress if job_id provided
+            if job_id:
+                job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+                if job:
+                    job.progress = progress
+                    db.commit()
+                    db.refresh(job)
+        
+        # Load configuration and initialize engine
+        config = create_engine_config()
+        engine = VLMEngine(config=config)
+        await engine.initialize()
+        
+        # Process video directly with progress callback
+        logger.info(f"Starting VLM processing for video: {video_path}")
+        results = await engine.process_video(
+            video_path,
+            progress_callback=wrapped_progress_callback,
+            frame_interval=frame_interval_val,
+            threshold=threshold_val,
+            return_timestamps=return_timestamps_val,
+            return_confidence=return_confidence_val,
+            vr_video=vr_video_val,
+            existing_json_data=None,
+            skipped_categories=None
         )
-        elapsed = time.time() - start_time
-        logger.info(f"Completed blocking VLM processing in thread for video: {video_path} (took {elapsed:.2f} seconds)")
-        return result
+        
+        logger.info(f"Completed VLM processing for video: {video_path}")
+        return results
+        
     except Exception as e:
-        elapsed = time.time() - start_time
-        logger.error(f"Error in blocking VLM processing after {elapsed:.2f} seconds: {str(e)}")
+        logger.error(f"Error processing video {video_path}: {str(e)}", exc_info=True)
         raise
+    finally:
+        db.close()
+
 
 async def process_video_async(job_id: int, video_path: str):
     """
     Process a video asynchronously using VLM engine.
     Updates job progress and saves results to database.
     """
-    db = SessionLocal()
     try:
-        # Get job and update status
-        job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
-        if not job:
-            logger.error(f"Job {job_id} not found")
-            return
-            
-        job.status = 'processing'
-        job.started_at = datetime.now(timezone.utc)
-        db.commit()
+        # Process video with progress tracking using default parameters
+        results = await process_video_with_progress(
+            video_path=video_path,
+            job_id=job_id,
+            frame_interval=None,  # Use database defaults
+            threshold=None,      # Use database defaults
+            return_timestamps=None,  # Use database defaults
+            return_confidence=None   # Use database defaults
+        )
         
-        # Load configuration from database
-        config = create_engine_config()
-        
-        # Initialize VLM engine
-        engine = VLMEngine(config=config)
-        await engine.initialize()
-        
-        # Simulate progress updates (naive approach)
-        # Start progress tracking task
-        progress_task = asyncio.create_task(update_progress_naive(job_id, db))
-        
+        # Save results to database
+        db = SessionLocal()
         try:
-            # Process video in separate thread to avoid blocking event loop
-            logger.info(f"Starting VLM processing for video: {video_path}")
-            # Use asyncio.to_thread to run the entire async processing in a thread
-            results = await asyncio.to_thread(
-                _blocking_process_video_with_engine,
-                engine,
-                video_path,
-                2.0,  # frame_interval
-                True,  # return_timestamps
-                True,  # return_confidence
-                0.5    # threshold
-            )
-            
-            # Cancel progress task
-            progress_task.cancel()
-            
-            # Save results to database
             save_results_to_db(video_path, results, db)
             
             # Update job status
-            job.status = 'completed'
-            job.progress = 100
-            job.completed_at = datetime.now(timezone.utc)
-            db.commit()
+            job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+            if job:
+                job.status = 'completed'
+                job.progress = 100
+                job.completed_at = datetime.now(timezone.utc)
+                db.commit()
             
             # Update video has_ai_data flag
             video = db.query(Video).filter(Video.path == video_path).first()
@@ -106,40 +151,66 @@ async def process_video_async(job_id: int, video_path: str):
             
             logger.info(f"Successfully completed VLM processing for video: {video_path}")
             
-        except asyncio.CancelledError:
-            # Progress task was cancelled
-            pass
+        finally:
+            db.close()
             
     except Exception as e:
         logger.error(f"Error processing video {video_path}: {str(e)}", exc_info=True)
-        if job:
-            job.status = 'failed'
-            job.error = str(e)
-            db.commit()
-    finally:
-        db.close()
+        db = SessionLocal()
+        try:
+            job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+            if job:
+                job.status = 'failed'
+                job.error = str(e)
+                db.commit()
+        finally:
+            db.close()
 
-async def update_progress_naive(job_id: int, db: Session):
+
+async def process_video_for_queue(queue_id: int, video_path: str):
     """
-    Naive progress update - increments progress over time.
+    Process video as part of upload queue pipeline.
+    Similar to process_video_async but updates UploadQueue instead of AnalysisJob.
+    
+    Args:
+        queue_id: Upload queue entry ID
+        video_path: Path to the video file
     """
     try:
-        progress = 0
-        while progress < 90:  # Leave last 10% for actual completion
-            await asyncio.sleep(2)  # Update every 2 seconds
-            progress += 5
+        # Process video without job progress tracking using default parameters
+        results = await process_video_with_progress(
+            video_path=video_path,
+            queue_id=queue_id,
+            frame_interval=None,  # Use database defaults
+            threshold=None,      # Use database defaults
+            return_timestamps=None,  # Use database defaults
+            return_confidence=None   # Use database defaults
+        )
+        
+        db = SessionLocal()
+        try:
+            # Save results to database
+            save_results_to_db(video_path, results, db)
             
-            job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
-            if job and job.status == 'processing':
-                job.progress = progress
+            # Save results to .AI.json file for compatibility
+            save_results_to_file(video_path, results)
+            
+            # Update video has_ai_data flag
+            video = db.query(Video).filter(Video.path == video_path).first()
+            if video:
+                video.has_ai_data = True
                 db.commit()
-            else:
-                break
-    except asyncio.CancelledError:
-        # Task was cancelled, this is expected
-        pass
+            
+            logger.info(f"✅ Successfully completed VLM processing for queue video: {video_path}")
+            
+        finally:
+            db.close()
+            
     except Exception as e:
-        logger.error(f"Error updating progress for job {job_id}: {str(e)}")
+        logger.error(f"Error processing video {video_path} in queue: {str(e)}", exc_info=True)
+        # Note: Error status is updated by the worker, not here
+        raise
+
 
 def save_results_to_db(video_path: str, results: Dict[str, Any], db: Session):
     """
@@ -173,6 +244,7 @@ def save_results_to_db(video_path: str, results: Dict[str, Any], db: Session):
         db.rollback()
         raise
 
+
 def save_results_to_file(video_path: str, results: Dict[str, Any]):
     """
     Save results to .AI.json file for compatibility with existing system.
@@ -184,68 +256,3 @@ def save_results_to_file(video_path: str, results: Dict[str, Any]):
         logger.info(f"Saved results to file: {ai_file_path}")
     except Exception as e:
         logger.error(f"Error saving results to file: {str(e)}")
-
-
-async def process_video_for_queue(queue_id: int, video_path: str):
-    """
-    Process video as part of upload queue pipeline.
-    Similar to process_video_async but updates UploadQueue instead of AnalysisJob.
-    Uses existing save_results_to_db and save_results_to_file helper functions.
-
-    Args:
-        queue_id: Upload queue entry ID
-        video_path: Path to the video file
-    """
-    from app.models.upload_queue import UploadQueue
-    db = SessionLocal()
-    try:
-        # Get queue entry
-        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
-        if not queue_entry:
-            logger.error(f"Queue entry {queue_id} not found")
-            return
-
-        # Update status to processing
-        queue_entry.vlm_analysis_status = 'processing'
-        queue_entry.vlm_analysis_started_at = datetime.now(timezone.utc)
-        db.commit()
-
-        # Load configuration from database
-        config = create_engine_config()
-
-        # Initialize VLM engine
-        engine = VLMEngine(config=config)
-        await engine.initialize()
-
-        # Process video without progress tracking (simpler for queue processing)
-        logger.info(f"Starting VLM processing for queue video: {video_path}")
-        # Use asyncio.to_thread to run the entire async processing in a thread
-        results = await asyncio.to_thread(
-            _blocking_process_video_with_engine,
-            engine,
-            video_path,
-            2.0,  # frame_interval
-            True,  # return_timestamps
-            True,  # return_confidence
-            0.5    # threshold
-        )
-
-        # Save results to database
-        save_results_to_db(video_path, results, db)
-
-        # Save results to .AI.json file for compatibility
-        save_results_to_file(video_path, results)
-
-        # Update video has_ai_data flag
-        video = db.query(Video).filter(Video.path == video_path).first()
-        if video:
-            video.has_ai_data = True
-            db.commit()
-
-        logger.info(f"✅ Successfully completed VLM processing for queue video: {video_path}")
-
-    except Exception as e:
-        logger.error(f"Error processing video {video_path} in queue: {str(e)}", exc_info=True)
-        # Note: Error status is updated by the worker, not here
-    finally:
-        db.close()

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
-from typing import Optional
-from sqlalchemy import String, Integer, Text, Boolean, JSON
+from typing import Optional, List, Dict, Any
+from sqlalchemy import String, Integer, Text, Boolean, JSON, Float
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
@@ -10,6 +10,14 @@ class AppConfig(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # AI Analysis Configuration
     analysis_tags: Mapped[str] = mapped_column(Text, default="person,car,bicycle,motorcycle,airplane,bus,train,truck,boat,traffic_light,stop_sign,walking,running,standing,sitting,talking,eating,drinking,phone,laptop,book,bag,umbrella,skateboard,surfboard,tennis_racket")
+    # VLM Processing Configuration
+    vlm_frame_interval: Mapped[float] = mapped_column(Float, default=2.0)
+    vlm_threshold: Mapped[float] = mapped_column(Float, default=0.5)
+    vlm_return_timestamps: Mapped[bool] = mapped_column(Boolean, default=True)
+    vlm_return_confidence: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Multiplexer Configuration
+    vlm_multiplexer_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    vlm_multiplexer_endpoints: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
     # LLM Configuration
     llm_base_url: Mapped[str] = mapped_column(String, default="http://localhost:1234")
     llm_model: Mapped[str] = mapped_column(String, default="HuggingFaceTB/SmolVLM-Instruct")
@@ -30,6 +38,12 @@ class AppConfig(Base):
         return {
             'id': self.id,
             'analysis_tags': self.analysis_tags,
+            'vlm_frame_interval': self.vlm_frame_interval,
+            'vlm_threshold': self.vlm_threshold,
+            'vlm_return_timestamps': self.vlm_return_timestamps,
+            'vlm_return_confidence': self.vlm_return_confidence,
+            'vlm_multiplexer_enabled': self.vlm_multiplexer_enabled,
+            'vlm_multiplexer_endpoints': self.vlm_multiplexer_endpoints,
             'llm_base_url': self.llm_base_url,
             'llm_model': self.llm_model,
             'max_batch_size': self.max_batch_size,

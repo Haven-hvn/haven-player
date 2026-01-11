@@ -1,10 +1,10 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.video import Video
 from app.models.analysis_job import AnalysisJob
-from app.services.vlm_processor import process_video_async
+from app.services.vlm_processor import process_video_with_progress
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 import asyncio
@@ -23,6 +23,13 @@ class JobResponse(BaseModel):
     completed_at: Optional[datetime]
     error: Optional[str]
 
+class JobCreateRequest(BaseModel):
+    """Request parameters for video analysis job."""
+    frame_interval: Optional[float] = None
+    threshold: Optional[float] = None
+    return_timestamps: Optional[bool] = None
+    return_confidence: Optional[bool] = None
+
 class JobCreateResponse(BaseModel):
     job_id: int
     status: str
@@ -30,6 +37,7 @@ class JobCreateResponse(BaseModel):
 @router.post("/videos/{video_path:path}/analyze", response_model=JobCreateResponse)
 def start_analysis_job(
     video_path: str,
+    job_params: Optional[JobCreateRequest] = None,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ) -> dict:
@@ -60,9 +68,22 @@ def start_analysis_job(
     db.commit()
     db.refresh(job)
     
-    # Start async processing
+    # Extract processing parameters
+    params = job_params.dict(exclude_none=True) if job_params else {}
+    
+    # Start async processing with parameters
+    async def process_with_params():
+        await process_video_with_progress(
+            video_path=normalized_path,
+            job_id=job.id,
+            frame_interval=params.get('frame_interval'),
+            threshold=params.get('threshold'),
+            return_timestamps=params.get('return_timestamps'),
+            return_confidence=params.get('return_confidence')
+        )
+    
     background_tasks.add_task(
-        lambda: asyncio.run(process_video_async(job.id, normalized_path))
+        lambda: asyncio.run(process_with_params())
     )
     
     return {"job_id": job.id, "status": "started"}

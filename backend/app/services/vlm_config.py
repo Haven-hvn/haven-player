@@ -1,8 +1,9 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.models.config import AppConfig
 from app.models.database import SessionLocal
 from vlm_engine.config_models import EngineConfig, ModelConfig, PipelineConfig, PipelineModelConfig
+
 
 def get_vlm_config() -> Dict[str, Any]:
     """
@@ -16,6 +17,26 @@ def get_vlm_config() -> Dict[str, Any]:
         
         # Convert comma-separated tags to list
         tag_list = [tag.strip() for tag in config.analysis_tags.split(',') if tag.strip()]
+        
+        # Build model config
+        model_config = {
+            "type": "vlm_model",
+            "model_file_name": "vlm_nsfw_model",
+            "model_category": "actiondetection",
+            "model_id": config.llm_model,
+            "model_identifier": 93848,
+            "model_version": "1.0",
+            "api_base_url": config.llm_base_url,
+            "tag_list": tag_list,
+            "max_new_tokens": 128,
+            "request_timeout": 70,
+            "vlm_detected_tag_confidence": 0.99
+        }
+        
+        # Add multiplexer configuration if enabled
+        if config.vlm_multiplexer_enabled and config.vlm_multiplexer_endpoints:
+            model_config["use_multiplexer"] = True
+            model_config["multiplexer_endpoints"] = config.vlm_multiplexer_endpoints
         
         # Build the complete configuration
         return {
@@ -49,19 +70,7 @@ def get_vlm_config() -> Dict[str, Any]:
                     "type": "video_preprocessor",
                     "model_file_name": "binary_search_processor_dynamic"
                 },
-                "vlm_nsfw_model": {
-                    "type": "vlm_model",
-                    "model_file_name": "vlm_nsfw_model",
-                    "model_category": "actiondetection",
-                    "model_id": config.llm_model,
-                    "model_identifier": 93848,
-                    "model_version": "1.0",
-                    "api_base_url": config.llm_base_url,
-                    "tag_list": tag_list,
-                    "max_new_tokens": 128,
-                    "request_timeout": 70,
-                    "vlm_detected_tag_confidence": 0.99
-                },
+                "vlm_nsfw_model": model_config,
                 "result_coalescer": {
                     "type": "python",
                     "model_file_name": "result_coalescer"
@@ -95,6 +104,7 @@ def get_vlm_config() -> Dict[str, Any]:
     finally:
         db.close()
 
+
 def create_engine_config() -> EngineConfig:
     """
     Create a VLM EngineConfig object from database configuration.
@@ -122,8 +132,35 @@ def create_engine_config() -> EngineConfig:
         )
     
     return EngineConfig(
-        active_ai_models=config_dict["active_ai_models"],
+        active_ai_models=config_dict.get("active_ai_models", ["vlm_nsfw_model"]),
         models=models,
         pipelines=pipelines,
         category_config=config_dict["category_config"]
     )
+
+
+def get_vlm_processing_params() -> Dict[str, Any]:
+    """
+    Get VLM processing parameters from database configuration.
+    """
+    db = SessionLocal()
+    try:
+        config = db.query(AppConfig).first()
+        if not config:
+            return {
+                "frame_interval": 2.0,
+                "threshold": 0.5,
+                "return_timestamps": True,
+                "return_confidence": True,
+                "vr_video": False,
+            }
+        
+        return {
+            "frame_interval": config.vlm_frame_interval,
+            "threshold": config.vlm_threshold,
+            "return_timestamps": config.vlm_return_timestamps,
+            "return_confidence": config.vlm_return_confidence,
+            "vr_video": False,  # VR video support can be added later if needed
+        }
+    finally:
+        db.close()

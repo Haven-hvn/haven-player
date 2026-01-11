@@ -13,26 +13,33 @@ from vlm_engine import VLMEngine
 
 logger = logging.getLogger(__name__)
 
+import functools
+
 def _blocking_process_video_with_engine(engine, video_path, frame_interval, return_timestamps, return_confidence, threshold):
     """
     Blocking function that runs VLM processing in a separate thread.
+    Runs the entire async engine processing in a thread to avoid blocking the event loop.
     """
+    import time
+    start_time = time.time()
     logger.info(f"Starting blocking VLM processing in thread for video: {video_path}")
-    
-    # Create an async function inside the thread to run the coroutine
-    async def _async_process():
-        return await engine.process_video(
-            video_path,
-            frame_interval=frame_interval,
-            return_timestamps=return_timestamps,
-            return_confidence=return_confidence,
-            threshold=threshold
+    try:
+        result = asyncio.run(
+            engine.process_video(
+                video_path,
+                frame_interval=frame_interval,
+                return_timestamps=return_timestamps,
+                return_confidence=return_confidence,
+                threshold=threshold
+            )
         )
-    
-    # Run the async function in the thread's event loop
-    result = asyncio.run(_async_process())
-    logger.info(f"Completed blocking VLM processing in thread for video: {video_path}")
-    return result
+        elapsed = time.time() - start_time
+        logger.info(f"Completed blocking VLM processing in thread for video: {video_path} (took {elapsed:.2f} seconds)")
+        return result
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"Error in blocking VLM processing after {elapsed:.2f} seconds: {str(e)}")
+        raise
 
 async def process_video_async(job_id: int, video_path: str):
     """
@@ -65,18 +72,16 @@ async def process_video_async(job_id: int, video_path: str):
         try:
             # Process video in separate thread to avoid blocking event loop
             logger.info(f"Starting VLM processing for video: {video_path}")
-            loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                results = await loop.run_in_executor(
-                    executor,
-                    _blocking_process_video_with_engine,
-                    engine,
-                    video_path,
-                    2.0,  # frame_interval
-                    True,  # return_timestamps
-                    True,  # return_confidence
-                    0.5    # threshold
-                )
+            # Use asyncio.to_thread to run the entire async processing in a thread
+            results = await asyncio.to_thread(
+                _blocking_process_video_with_engine,
+                engine,
+                video_path,
+                2.0,  # frame_interval
+                True,  # return_timestamps
+                True,  # return_confidence
+                0.5    # threshold
+            )
             
             # Cancel progress task
             progress_task.cancel()
@@ -214,18 +219,16 @@ async def process_video_for_queue(queue_id: int, video_path: str):
 
         # Process video without progress tracking (simpler for queue processing)
         logger.info(f"Starting VLM processing for queue video: {video_path}")
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = await loop.run_in_executor(
-                executor,
-                _blocking_process_video_with_engine,
-                engine,
-                video_path,
-                2.0,  # frame_interval
-                True,  # return_timestamps
-                True,  # return_confidence
-                0.5    # threshold
-            )
+        # Use asyncio.to_thread to run the entire async processing in a thread
+        results = await asyncio.to_thread(
+            _blocking_process_video_with_engine,
+            engine,
+            video_path,
+            2.0,  # frame_interval
+            True,  # return_timestamps
+            True,  # return_confidence
+            0.5    # threshold
+        )
 
         # Save results to database
         save_results_to_db(video_path, results, db)

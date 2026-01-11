@@ -62,6 +62,77 @@ This application consists of two main components:
 - **RESTful API** for all operations
 - **Real-time updates** across the interface
 
+### YouTube Plugin Requirements
+
+The YouTube plugin uses yt-dlp to download videos. For full functionality, you may need additional dependencies:
+
+#### JavaScript Runtime (Required for YouTube)
+
+YouTube has deprecated video extraction without a JavaScript runtime. Without it, yt-dlp will fail for many videos (especially age-gated or bot-protected content).
+
+**Install Deno** (Recommended - Smaller, Faster):
+```bash
+# macOS
+brew install deno
+
+# Windows
+# Download from https://deno.land/install
+
+# Linux
+curl -fsSL https://deno.land/install.sh | sh
+```
+
+**Install Node.js** (Alternative):
+```bash
+# macOS
+brew install node
+
+# Windows
+# Download from https://nodejs.org
+
+# Linux
+# Use your distribution's package manager (e.g., sudo apt install nodejs)
+```
+
+**What happens without a JS runtime?**
+- YouTube downloads are in degraded mode
+- Only basic download formats work (lower quality)
+- Age-gated and bot-protected videos will fail to download
+- The application will still function, just with limited YouTube capabilities
+
+#### YouTube Authentic Cookies (Optional - For Age-Gated Videos)
+
+To download age-gated or bot-protected YouTube videos, you need to provide authentication cookies:
+
+**Option 1: Browser Extension (Recommended)**
+1. Install the "Get cookies.txt LOCALLY" extension for Chrome or Firefox
+2. Sign in to YouTube in your browser
+3. Click the extension icon and export cookies
+4. Configure the cookie file path via the YouTube plugin settings
+
+**Option 2: yt-dlp Browser Export**
+```bash
+# Export cookies from Chrome/Firefox to a file
+yt-dlp --cookies-from-browser chrome --cookies cookies.txt
+```
+
+**Security Note**: Never commit cookie files to version control. They contain authentication credentials.
+
+#### FFmpeg (Optional - For Better Video Quality)
+
+FFmpeg is optional but recommended for better video quality and format optimization:
+
+```bash
+# macOS
+brew install ffmpeg
+
+# Windows
+# Download from https://ffmpeg.org/download.html
+
+# Linux (Debian/Ubuntu)
+sudo apt install ffmpeg
+```
+
 ## Quick Start
 
 ### Prerequisites

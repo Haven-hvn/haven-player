@@ -971,7 +971,15 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                         combined_error = result.stderr + "\n\n" + fallback_result.stderr
 
                         # Add helpful info about JavaScript runtime
-                        combined_error += "\n\n" + self._get_runtime_installation_guide()
+                        install_hint = """
+\n\n\tYouTube downloads may fail without a JavaScript runtime.
+\tTo fix this, install Deno or Node.js:
+\t\tbrew install deno  # or
+\t\tbrew install node
+
+\tThen specify it in yt-dlp config or add --js-runtimes deno to commands.
+\tFor more info: https://github.com/yt-dlp/yt-dlp/wiki/EJS"""
+                        combined_error += install_hint
 
                         return {
                             "success": False,

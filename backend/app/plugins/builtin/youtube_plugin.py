@@ -988,10 +988,21 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             # Execution continues here only if we didn't hit an error above
             # (either original succeeded, or fallback succeeded)
 
+            # Extract output path - prioritize merged video filename over temporary files
             output_path = None
+            
+            # For merged videos, first try to find the ffmpeg merge line
             for line in result.stdout.split('\n'):
-                if "[download] Destination:" in line:
-                    output_path = line.split("[download] Destination:")[1].strip()
+                if "[ffmpeg] Merging formats into" in line:
+                    # Extract the final merged filename (removes quotes if present)
+                    output_path = line.split("[ffmpeg] Merging formats into")[1].strip().strip('"')
+                    break
+            
+            # If no merge line found, fall back to download destination
+            if not output_path:
+                for line in result.stdout.split('\n'):
+                    if "[download] Destination:" in line:
+                        output_path = line.split("[download] Destination:")[1].strip()
 
             # Validate that we actually got an output path and the file exists
             if not output_path or not os.path.exists(output_path):

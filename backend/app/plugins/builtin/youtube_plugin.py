@@ -202,16 +202,14 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
         # Detect JavaScript runtime for yt-dlp
         runtime_type, runtime_path = self._detect_js_runtime()
-        if runtime_type and runtime_path:
+       if runtime_type and runtime_path:
             self.js_runtime_type = runtime_type
             self.js_runtime_path = runtime_path
-            logger.info(f"JavaScript runtime available: {runtime_type} (yt-dlp will use it for signature decryption)")
+            logger.info(f"JavaScript runtime available: {runtime_type} (yt-dlp will use it with EJS challenge solver)")
         else:
-            # Runtime is optional - degrade gracefully but warn user
-            logger.warning("YouTube downloads are in degraded mode: JavaScript runtime not detected.")
-            logger.warning("YouTube has deprecated video extraction without a JS runtime.")
+            logger.warning("YouTube downloads are in basic mode: JavaScript runtime not detected.")
+            logger.warning("Currently: only basic download formats will work (lower quality, may fail for some videos).")
             logger.warning(self._get_runtime_installation_guide())
-            logger.warning("Currently: only basic download formats will work (lower quality, may fail for age-gated/bot-protected videos).")
 
         self.initialized = True
         logger.info("YouTubePlugin initialized")
@@ -984,11 +982,19 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                     logger.warning(f"Initial format failed, trying simpler format without video+audio merge")
                     # Try a much simpler format that doesn't require JS signature decoding
                     simple_cmd = [
-                        "yt-dlp",
+                        "yt-dlp"
+                    ]
+
+                    # Add JavaScript components for the fallback too
+                    if self._is_js_runtime_available():
+                        simple_cmd.extend(["--remote-components", "ejs:github", "--js-runtimes", self.js_runtime_type])
+
+                    # Add the simpler format that doesn't require complex merging
+                    simple_cmd.extend([
                         "--format", "worst[vcodec!=none][ext=mp4]/best[vcodec!=none][ext=mp4]?/worst[vcodec!=none]",
                         "--output", output_template,
                         source.uri
-                    ]
+                    ])
 
                     logger.info(f"Retrying with simpler format: {' '.join(simple_cmd)}")
                     fallback_result = subprocess.run(

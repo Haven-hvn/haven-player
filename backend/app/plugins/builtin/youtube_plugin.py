@@ -983,7 +983,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                     # Try a much simpler format that doesn't require JS signature decoding
                     simple_cmd = [
                         "yt-dlp",
-                        "--format", "worst[ext=mp4]/best[ext=mp4]?/worst",
+                        "--format", "worst[vcodec!=none][ext=mp4]/best[vcodec!=none][ext=mp4]?/worst[vcodec!=none]",
                         "--output", output_template,
                         source.uri
                     ]

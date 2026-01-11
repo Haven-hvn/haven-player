@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 import json
 from datetime import datetime, timezone
@@ -11,6 +12,21 @@ from app.services.vlm_config import create_engine_config
 from vlm_engine import VLMEngine
 
 logger = logging.getLogger(__name__)
+
+def _blocking_process_video_with_engine(engine, video_path, frame_interval, return_timestamps, return_confidence, threshold):
+    """
+    Blocking function that runs VLM processing in a separate thread.
+    """
+    logger.info(f"Starting blocking VLM processing in thread for video: {video_path}")
+    result = engine.process_video(
+        video_path,
+        frame_interval=frame_interval,
+        return_timestamps=return_timestamps,
+        return_confidence=return_confidence,
+        threshold=threshold
+    )
+    logger.info(f"Completed blocking VLM processing in thread for video: {video_path}")
+    return result
 
 async def process_video_async(job_id: int, video_path: str):
     """
@@ -41,15 +57,20 @@ async def process_video_async(job_id: int, video_path: str):
         progress_task = asyncio.create_task(update_progress_naive(job_id, db))
         
         try:
-            # Process video
+            # Process video in separate thread to avoid blocking event loop
             logger.info(f"Starting VLM processing for video: {video_path}")
-            results = await engine.process_video(
-                video_path,
-                frame_interval=2.0,
-                return_timestamps=True,
-                return_confidence=True,
-                threshold=0.5
-            )
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                results = await loop.run_in_executor(
+                    executor,
+                    _blocking_process_video_with_engine,
+                    engine,
+                    video_path,
+                    2.0,  # frame_interval
+                    True,  # return_timestamps
+                    True,  # return_confidence
+                    0.5    # threshold
+                )
             
             # Cancel progress task
             progress_task.cancel()
@@ -187,13 +208,18 @@ async def process_video_for_queue(queue_id: int, video_path: str):
 
         # Process video without progress tracking (simpler for queue processing)
         logger.info(f"Starting VLM processing for queue video: {video_path}")
-        results = await engine.process_video(
-            video_path,
-            frame_interval=2.0,
-            return_timestamps=True,
-            return_confidence=True,
-            threshold=0.5
-        )
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = await loop.run_in_executor(
+                executor,
+                _blocking_process_video_with_engine,
+                engine,
+                video_path,
+                2.0,  # frame_interval
+                True,  # return_timestamps
+                True,  # return_confidence
+                0.5    # threshold
+            )
 
         # Save results to database
         save_results_to_db(video_path, results, db)

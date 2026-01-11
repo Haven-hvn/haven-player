@@ -202,7 +202,7 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
         # Detect JavaScript runtime for yt-dlp
         runtime_type, runtime_path = self._detect_js_runtime()
-       if runtime_type and runtime_path:
+        if runtime_type and runtime_path:
             self.js_runtime_type = runtime_type
             self.js_runtime_path = runtime_path
             logger.info(f"JavaScript runtime available: {runtime_type} (yt-dlp will use it with EJS challenge solver)")
@@ -540,10 +540,10 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
             # Check JS runtime availability (non-critical, warn if missing)
             if self._is_js_runtime_available():
-                logger.info(f"Health check: Healthy (using {self.js_runtime_type} runtime for full YouTube support)")
+                logger.info(f"Health check: Enhanced mode (using {self.js_runtime_type} runtime with EJS challenge solver)")
             else:
-                logger.warning("Health check: Degraded mode (no JS runtime - limited YouTube functionality)")
-                logger.warning("See initialization logs for installation guidance to enable full functionality")
+                logger.warning("Health check: Basic mode (no JS runtime - limited functionality)")
+                logger.warning("See installation logs for guidance on enabling full YouTube extraction")
 
             return True
         except Exception as e:

@@ -1033,30 +1033,128 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             # Extract output path - prioritize merged video filename over temporary files
             output_path = None
             
-            # For merged videos, first try to find the ffmpeg merge line
-            for line in result.stdout.split('\n'):
-                if "[ffmpeg] Merging formats into" in line:
-                    # Extract the final merged filename (removes quotes if present)
-                    output_path = line.split("[ffmpeg] Merging formats into")[1].strip().strip('"')
+            # Debug: log yt-dlp output for troubleshooting
+            logger.debug(f"yt-dlp stdout (first 10 lines): {list(result.stdout.split('\\n')[:10])}")
+            
+            # Look for various merge patterns in yt-dlp output
+            # Common patterns include:
+            # 1. [ffmpeg] Merging formats into "filename.ext"
+            # 2. [Merger] Merging into "filename.ext"  
+            # 3. [download] Merging formats into "filename.ext"
+            # 4. The final [download] Destination: line (after merge)
+            merge_patterns = [
+                ("[ffmpeg] Merging formats into", "yt-dlp with ffmpeg merge"),
+                ("[Merger] Merging into", "yt-dlp merger"),
+                ("[download] Merging formats into", "yt-dlp download merge")
+            ]
+            
+            for pattern, description in merge_patterns:
+                for line in result.stdout.split('\n'):
+                    if pattern in line:
+                        # Extract the final merged filename (removes quotes if present)
+                        output_path = line.split(pattern)[1].strip().strip('"').strip("'")
+                        logger.info(f"Found merged file via {description}: {output_path}")
+                        break
+                if output_path:
                     break
             
-            # If no merge line found, fall back to download destination
+            # If still no output path, look for the final download destination
+            # Collect all download destinations and find the most likely video file
             if not output_path:
+                download_paths = []
                 for line in result.stdout.split('\n'):
                     if "[download] Destination:" in line:
-                        output_path = line.split("[download] Destination:")[1].strip()
+                        path = line.split("[download] Destination:")[1].strip()
+                        download_paths.append(path)
+                
+                # Log all found download paths for debugging
+                if download_paths:
+                    logger.debug(f"Found download destinations: {download_paths}")
+                
+                # Filter out audio-only files and find the actual video file
+                # Look for files with video extensions (.mp4, .mkv, .webm, .avi, .mov, .flv)
+                video_extensions = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv'}
+                for path in download_paths:
+                    ext = os.path.splitext(path)[1].lower()
+                    if ext in video_extensions:
+                        output_path = path
+                        logger.info(f"Selected video file by extension {ext}: {output_path}")
+                        break
+                
+                # If no video file found with standard extensions, try any file that's not audio-only
+                if not output_path and download_paths:
+                    # Filter out known audio-only extensions
+                    audio_extensions = {'.m4a', '.mp3', '.aac', '.wav', '.flac', '.opus', '.ogg', '.f140', '.f251'}
+                    for path in download_paths:
+                        ext = os.path.splitext(path)[1].lower()
+                        if ext not in audio_extensions:
+                            output_path = path
+                            logger.info(f"Selected non-audio file {ext}: {output_path}")
+                            break
+                
+                # Last resort: use the last download destination
+                if not output_path and download_paths:
+                    output_path = download_paths[-1]
+                    logger.info(f"Using last download destination: {output_path}")
 
             # Validate that we actually got an output path and the file exists
-            if not output_path or not os.path.exists(output_path):
-                error_msg = f"Download completed but no valid file found. Output path: {output_path}"
-                logger.error(error_msg)
-                return {
-                    "success": False,
-                    "error": error_msg,
-                }
-
-            file_size_bytes = os.path.getsize(output_path)
-            logger.info(f"Successfully downloaded video to: {output_path}")
+            # First check if the detected output path exists
+            if output_path and os.path.exists(output_path):
+                # Found the file at the detected path
+                file_size_bytes = os.path.getsize(output_path)
+                logger.info(f"Successfully downloaded video to: {output_path}")
+            else:
+                # File not found at detected path, search for it in the output directory
+                # This handles cases where yt-dlp creates temporary files or renames files
+                output_dir = channel_dir
+                search_prefix = f"{safe_title}_{source.source_id}".lower()
+                logger.info(f"Searching for files with prefix '{search_prefix}' in {output_dir}")
+                
+                # Search for files matching the pattern (case-insensitive)
+                matching_files = []
+                try:
+                    file_list = os.listdir(output_dir)
+                    logger.info(f"Files in directory: {file_list}")
+                    for file in file_list:
+                        if file.lower().startswith(search_prefix):
+                            file_path = os.path.join(output_dir, file)
+                            if os.path.isfile(file_path):
+                                matching_files.append(file_path)
+                                logger.info(f"Found matching file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Error searching for files in {output_dir}: {e}")
+                    matching_files = []
+                
+                # Filter out small files (likely temporary/intermediate files)
+                # and prioritize video files
+                video_files = []
+                for file_path in matching_files:
+                    try:
+                        file_size = os.path.getsize(file_path)
+                        if file_size > 1024 * 1024:  # At least 1MB (video files are larger)
+                            video_files.append((file_path, file_size))
+                    except Exception:
+                        continue
+                
+                # Sort by file size (largest first) - video files are usually larger than audio
+                video_files.sort(key=lambda x: x[1], reverse=True)
+                
+                if video_files:
+                    output_path, file_size_bytes = video_files[0]
+                    logger.info(f"Found video file via search: {output_path} (size: {file_size_bytes} bytes)")
+                elif matching_files:
+                    # Use any file if no large files found
+                    output_path = matching_files[0]
+                    file_size_bytes = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+                    logger.info(f"Using found file (may be small/audio): {output_path}")
+                else:
+                    # No file found at all
+                    error_msg = f"Download completed but no valid file found. Output path from parser: {output_path if output_path else 'None'}"
+                    logger.error(error_msg)
+                    return {
+                        "success": False,
+                        "error": error_msg,
+                    }
 
             return {
                 "success": True,

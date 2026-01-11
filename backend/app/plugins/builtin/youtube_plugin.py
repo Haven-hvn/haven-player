@@ -946,8 +946,10 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
 
             # Add JavaScript runtime if available (for signature decryption)
             if self._is_js_runtime_available():
-                cmd.extend(["--js-runtimes", self.js_runtime_path])
-                logger.debug(f"Using JavaScript runtime: {self.js_runtime_type}")
+                # Use 'ejs:github' to download challenge solver script from GitHub (faster, no npm install)
+                cmd.extend(["--remote-components", "ejs:github"])
+                cmd.extend(["--js-runtimes", self.js_runtime_type])
+                logger.info(f"Using JavaScript runtime ({self.js_runtime_type}) with EJS challenge solver for full YouTube decryption")
             else:
                 logger.debug("No JS runtime available - using degraded mode")
 

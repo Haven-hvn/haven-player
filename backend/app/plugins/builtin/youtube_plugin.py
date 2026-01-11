@@ -36,6 +36,7 @@ from app.models.plugin import Plugin as PluginModel
 from app.models.video import Video, Timestamp
 from app.models.analysis_job import AnalysisJob
 from app.utils.video import get_video_duration
+from app.utils.video.video_file_validator import is_video_content
 
 
 logger = logging.getLogger(__name__)
@@ -391,6 +392,40 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             download_result = await self._download_video(source)
 
             if download_result["success"]:
+                file_path = download_result["output_path"]
+                
+                # Validate that the downloaded file actually contains video content
+                logger.info(f"Validating downloaded file for video content: {file_path}")
+                if not is_video_content(file_path):
+                    logger.error(f"Downloaded file {file_path} does not contain valid video frames")
+                    
+                    # Clean up the invalid file
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            logger.info(f"Removed invalid file: {file_path}")
+                    except Exception as cleanup_error:
+                        logger.error(f"Error cleaning up invalid file {file_path}: {cleanup_error}")
+                    
+                    # Create a failed analysis job to track this failure
+                    current_time = datetime.utcnow()
+                    failed_job = AnalysisJob(
+                        video_path=file_path,
+                        status='failed',
+                        error="Downloaded file does not contain valid video frames",
+                        created_at=current_time,
+                        completed_at=current_time
+                    )
+                    db.add(failed_job)
+                    db.commit()
+                    
+                    return ArchiveResult(
+                        success=False,
+                        error="Downloaded file does not contain valid video frames. This may indicate the video was downloaded as audio-only or the download was corrupted."
+                    )
+                
+                logger.info(f"✓ Video validation successful: {file_path} contains valid video content")
+
                 # Mark as archived in config
                 _archived_videos = plugin.config.get("_archived_videos", {})
                 _archived_videos[video_id] = {
@@ -408,7 +443,6 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 db.commit()
 
                 # Create an entry in the main Video table
-                file_path = download_result["output_path"]
                 file_size = download_result.get("file_size_bytes")
                 file_extension = os.path.splitext(file_path)[1].lstrip('.') if file_path else None
 

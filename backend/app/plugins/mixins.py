@@ -152,7 +152,7 @@ class SourcePluginMixin(ABC):
     Mixin for plugins that work with individual sources.
     
     Examples:
-    - WebRTCPlugin: Individual live streams
+    - PumpFunPlugin: Individual live streams
     - HTTPPlugin: Individual downloadable files
     
     Plugins that inherit from this mixin support:
@@ -262,7 +262,7 @@ class ObservablePluginMixin(ABC):
     Mixin for plugins that support real-time notifications.
     
     Examples:
-    - WebRTCPlugin: Notify when stream goes live
+    - PumpFunPlugin: Notify when stream goes live
     - YouTubePlugin: Notify when new video discovered
     
     Plugins that inherit from this mixin support:

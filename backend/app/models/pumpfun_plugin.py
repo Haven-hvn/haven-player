@@ -1,8 +1,8 @@
 """
-WebRTC plugin data models for Haven Player.
+PumpFun plugin data models for Haven Player.
 
-This module defines the database models for storing WebRTC stream subscriptions
-and recording history from LiveKit sources.
+This module defines the database models for storing PumpFun stream subscriptions
+and recording history with subscription-based auto-recording.
 """
 
 from sqlalchemy import Column, String, Boolean, JSON, Integer, DateTime, text, ForeignKey
@@ -14,24 +14,25 @@ from uuid import uuid4
 from app.models.base import Base
 
 
-class WebRTCSubscription(Base):
+class PumpFunSubscription(Base):
     """
-    WebRTC stream subscription model.
+    PumpFun stream subscription model.
     
-    This table stores stream subscriptions for the WebRTC plugin, similar to
-    YouTube channels but for WebRTC/LiveKit streams.
+    This table stores stream subscriptions for the PumpFun plugin,
+    enabling subscription-based auto-recording of PumpFun livestreams.
     """
     
-    __tablename__ = "webrtc_subscriptions"
+    __tablename__ = "pumpfun_subscriptions"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"))
-    # Unique identifier for the stream (could be mint_id for PumpFun streams or external reference)
+    # Unique identifier for the stream (mint_id for PumpFun streams)
     stream_id = Column(String(255), nullable=False, unique=True, index=True)
     stream_name = Column(String(500), nullable=True)
-    # LiveKit URL for this specific stream (inherited from plugin-level configuration)
-    livekit_url = Column(String(500), nullable=False, default="wss://pump-prod-tg2x8veh.livekit.cloud")
     enabled = Column(Boolean, default=True, nullable=False)
-    auto_record = Column(Boolean, default=True, nullable=False)
+    # Priority determines recording order when hitting concurrent limit (0-10, default 5)
+    priority = Column(Integer, default=5, nullable=False)
+    # User notes about why they subscribed
+    notes = Column(String(2000), nullable=True)
     # Stream-specific configuration (quality settings, etc.)
     config = Column(JSON, nullable=True)
     last_polled_at = Column(DateTime, nullable=True)
@@ -39,10 +40,10 @@ class WebRTCSubscription(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relationship to stream history
-    sessions = relationship("WebRTCSession", back_populates="subscription", cascade="all, delete-orphan")
+    sessions = relationship("PumpFunSession", back_populates="subscription", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<WebRTCSubscription {self.stream_name} ({self.stream_id})>"
+        return f"<PumpFunSubscription {self.stream_name} ({self.stream_id})>"
     
     def to_dict(self):
         """Convert to dictionary representation."""
@@ -50,9 +51,9 @@ class WebRTCSubscription(Base):
             "id": str(self.id),
             "stream_id": self.stream_id,
             "stream_name": self.stream_name,
-            "livekit_url": self.livekit_url,
             "enabled": self.enabled,
-            "auto_record": self.auto_record,
+            "priority": self.priority,
+            "notes": self.notes,
             "config": self.config,
             "last_polled_at": self.last_polled_at.isoformat() if self.last_polled_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -60,19 +61,19 @@ class WebRTCSubscription(Base):
         }
 
 
-class WebRTCSession(Base):
+class PumpFunSession(Base):
     """
-    WebRTS session tracking model.
+    PumpFun session tracking model.
     
-    This table tracks discovered WebRTC streams and their recording status.
-    Similar to YouTube videos but for WebRTC sessions.
+    This table tracks discovered PumpFun streams and their recording status.
+    Similar to YouTube videos but for PumpFun sessions.
     """
     
-    __tablename__ = "webrtc_sessions"
+    __tablename__ = "pumpfun_sessions"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"))
     session_id = Column(String(255), nullable=False, unique=True, index=True)
-    subscription_id = Column(UUID(as_uuid=True), ForeignKey("webrtc_subscriptions.id", ondelete="CASCADE"), nullable=False)
+    subscription_id = Column(UUID(as_uuid=True), ForeignKey("pumpfun_subscriptions.id", ondelete="CASCADE"), nullable=False)
     stream_name = Column(String(500), nullable=True)
     stream_uri = Column(String(1000), nullable=True)
     # Recording status tracking
@@ -89,10 +90,10 @@ class WebRTCSession(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relationship to subscription
-    subscription = relationship("WebRTCSubscription", back_populates="sessions")
+    subscription = relationship("PumpFunSubscription", back_populates="sessions")
     
     def __repr__(self):
-        return f"<WebRTCSession {self.session_id} ({self.stream_name})>"
+        return f"<PumpFunSession {self.session_id} ({self.stream_name})>"
     
     def to_dict(self):
         """Convert to dictionary representation."""

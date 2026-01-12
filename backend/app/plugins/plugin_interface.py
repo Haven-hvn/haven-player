@@ -158,7 +158,7 @@ class ArchiverPlugin(ABC):
     4. Report health status
     
     Example:
-        class MyWebRTCPlugin(ArchiverPlugin):
+        class MyPumpFunPlugin(ArchiverPlugin):
             def get_metadata(self) -> PluginMetadata:
                 return PluginMetadata(
                     name="my-webrtc",

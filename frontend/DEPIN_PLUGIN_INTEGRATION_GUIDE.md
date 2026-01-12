@@ -807,7 +807,7 @@ export interface YouTubePluginConfig {
   max_concurrent_downloads: number;
 }
 
-export interface WebRTCPluginConfig {
+export interface PumpFunPluginConfig {
   video_format: 'webm' | 'mp4';
   video_quality: 'best' | '1080p' | '720p' | '480p';
   audio_bitrate: number;

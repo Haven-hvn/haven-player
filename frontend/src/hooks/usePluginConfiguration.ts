@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
-import { PluginConfigSchema, WebRTCPluginConfig, PluginConfig, YouTubePluginConfig, BitTorrentPluginConfig } from '@/types/plugin';
+import { PluginConfigSchema, PumpFunPluginConfig, PluginConfig, YouTubePluginConfig, BitTorrentPluginConfig } from '@/types/plugin';
 import { pluginService } from '@/services/api';
 
-const defaultWebRTCConfig: WebRTCPluginConfig = {
+const defaultPumpFunConfig: PumpFunPluginConfig = {
   livekit_url: 'wss://pump-prod-tg2x8veh.livekit.cloud',
   output_format: 'webm',
   video_quality: 'best',
@@ -30,8 +30,8 @@ export function usePluginConfiguration(pluginName: string) {
     // The backend returns { name, enabled, config, priority, ... } where 'config' is the actual plugin config
     const actualConfig = currentConfig.config || currentConfig;
 
-    if (pluginName.toLowerCase().includes('webrtc')) {
-      return { ...defaultWebRTCConfig, ...actualConfig } as WebRTCPluginConfig;
+    if (pluginName.toLowerCase().includes('pumpfun')) {
+      return { ...defaultPumpFunConfig, ...actualConfig } as PumpFunPluginConfig;
     }
 
     if (pluginName.toLowerCase().includes('youtube')) {

@@ -55,7 +55,7 @@ export interface ArchiveResult {
   message: string;
 }
 
-export type PluginConfig = YouTubePluginConfig | WebRTCPluginConfig | BitTorrentPluginConfig;
+export type PluginConfig = YouTubePluginConfig | PumpFunPluginConfig | BitTorrentPluginConfig;
 
 export interface DiscoverResponse {
   success: boolean;
@@ -175,11 +175,33 @@ export interface YouTubePluginConfig {
   }>;
 }
 
-export interface WebRTCPluginConfig {
+export interface PumpFunPluginConfig {
   discover_limit?: number;
   livekit_url: string;
   output_format?: 'webm' | 'mp4';
   video_quality?: 'best' | '1080p' | '720p' | '480p';
+}
+
+export interface PumpFunStream {
+    stream_id: string;  // mint_id
+    name: string;
+    symbol: string;
+    market_cap: number;
+    num_participants: number;
+    thumbnail: string;
+    is_currently_live: boolean;
+    uri: string;
+}
+
+export interface PumpFunSubscription {
+    stream_id: string;
+    stream_name: string;
+    enabled: boolean;
+    priority?: number;
+    notes?: string;
+    created_at: string;
+    is_currently_recording: boolean;
+    recording_status: 'idle' | 'recording' | 'not_live';
 }
 
 export interface BitTorrentPluginConfig {

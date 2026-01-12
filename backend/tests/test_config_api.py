@@ -422,7 +422,7 @@ class TestPluginConfigAPI:
         """Test that GET /api/plugins/{plugin_name}/config returns database entry when it exists"""
         # Create a plugin configuration in database
         plugin_config = PluginModel(
-            name="WebRTCPlugin",
+            name="PumpFunPlugin",
             enabled=True,
             config={"livekit_url": "wss://custom.livekit.cloud", "discover_limit": 50},
             priority=5
@@ -431,11 +431,11 @@ class TestPluginConfigAPI:
         db_session.commit()
         
         # Get the config
-        response = client.get("/api/plugins/WebRTCPlugin/config")
+        response = client.get("/api/plugins/PumpFunPlugin/config")
         assert response.status_code == 200
         
         data = response.json()
-        assert data["name"] == "WebRTCPlugin"
+        assert data["name"] == "PumpFunPlugin"
         assert data["enabled"] is True
         assert data["config"]["livekit_url"] == "wss://custom.livekit.cloud"
         assert data["config"]["discover_limit"] == 50
@@ -449,15 +449,15 @@ class TestPluginConfigAPI:
 
     def test_get_plugin_config_returns_default_from_plugin(self, client: TestClient):
         """Test that GET /api/plugins/{plugin_name}/config returns default config from loaded plugin when no database entry exists"""
-        # Note: This test assumes WebRTCPlugin is loaded during app startup
+        # Note: This test assumes PumpFunPlugin is loaded during app startup
         # The plugin must implement get_default_config method
-        response = client.get("/api/plugins/WebRTCPlugin/config")
+        response = client.get("/api/plugins/PumpFunPlugin/config")
         
-        # If WebRTCPlugin is enabled and loaded, should return default config
+        # If PumpFunPlugin is enabled and loaded, should return default config
         # If not enabled, might return 404
         if response.status_code == 200:
             data = response.json()
-            assert data["name"] == "WebRTCPlugin"
+            assert data["name"] == "PumpFunPlugin"
             assert data["enabled"] is False  # Not in database, so False
             assert "config" in data
             assert data["is_default"] is True
@@ -472,11 +472,11 @@ class TestPluginConfigAPI:
             "discover_limit": 30
         }
         
-        response = client.patch("/api/plugins/WebRTCPlugin/config", json=update_data)
+        response = client.patch("/api/plugins/PumpFunPlugin/config", json=update_data)
         assert response.status_code == 200
         
         data = response.json()
-        assert data["message"] == "Plugin WebRTCPlugin configuration updated"
+        assert data["message"] == "Plugin PumpFunPlugin configuration updated"
         assert data["config"]["livekit_url"] == "wss://new.livekit.cloud"
         assert data["config"]["discover_limit"] == 30
 
@@ -484,7 +484,7 @@ class TestPluginConfigAPI:
         """Test that PATCH /api/plugins/{plugin_name}/config updates existing database entry"""
         # Create an existing config
         plugin_config = PluginModel(
-            name="WebRTCPlugin",
+            name="PumpFunPlugin",
             enabled=True,
             config={"livekit_url": "wss://old.livekit.cloud", "discover_limit": 20}
         )
@@ -497,7 +497,7 @@ class TestPluginConfigAPI:
             "output_format": "mp4"
         }
         
-        response = client.patch("/api/plugins/WebRTCPlugin/config", json=update_data)
+        response = client.patch("/api/plugins/PumpFunPlugin/config", json=update_data)
         assert response.status_code == 200
         
         data = response.json()
@@ -510,7 +510,7 @@ class TestPluginConfigAPI:
         """Test that DELETE /api/plugins/{plugin_name}/config removes database entry"""
         # Create a config
         plugin_config = PluginModel(
-            name="WebRTCPlugin",
+            name="PumpFunPlugin",
             enabled=True,
             config={"livekit_url": "wss://test.livekit.cloud"}
         )
@@ -518,12 +518,12 @@ class TestPluginConfigAPI:
         db_session.commit()
         
         # Delete the config
-        response = client.delete("/api/plugins/WebRTCPlugin/config")
+        response = client.delete("/api/plugins/PumpFunPlugin/config")
         assert response.status_code == 200
         assert "deleted" in response.json()["message"]
         
         # Verify it's gone
-        response = client.get("/api/plugins/WebRTCPlugin/config")
+        response = client.get("/api/plugins/PumpFunPlugin/config")
         # Should return default config from plugin now
         assert response.status_code == 200
         assert response.json()["is_default"] is True

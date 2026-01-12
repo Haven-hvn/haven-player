@@ -801,12 +801,12 @@ class WebRTCAdapter(ArchiverPluginAdapter):
 **Phase 2: Extract Plugin Logic (Week 3-4)**
 ```rust
 // Port core logic to Rust
-pub struct WebRTCPlugin {
+pub struct PumpFunPlugin {
     livekit_client: LiveKitClient,
     recorder: ParticipantRecorder,
 }
 
-impl ArchiverPlugin for WebRTCPlugin {
+impl ArchiverPlugin for PumpFunPlugin {
     async fn archive(&mut self, source: MediaSource) -> ArchiveResult {
         // Rust implementation (no Python dependency)
         self.recorder.start(&source).await?;

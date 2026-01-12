@@ -1,8 +1,9 @@
 """
-WebRTC recording plugin for Haven Player.
+PumpFun livestream recording plugin for Haven Player.
 
-This plugin wraps the existing PumpFun and WebRTC recording services
-to provide a plugin interface for archiving WebRTC streams from pump.fun.
+This plugin provides subscription-based auto-recording of PumpFun livestreams.
+Users subscribe to streams they want to monitor, and a recurring job automatically
+records those streams when they go live.
 """
 
 from typing import Dict, Any, List
@@ -20,20 +21,20 @@ from app.plugins.plugin_interface import (
 )
 from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 from app.models.database import get_db as get_db_session
-from app.models.webrtc_plugin import WebRTCSubscription, WebRTCSession
+from app.models.pumpfun_plugin import PumpFunSubscription, PumpFunSession
 from app.services.pumpfun_service import PumpFunService
 from app.services.webrtc_recording_service import WebRTCRecordingService
 
 logger = logging.getLogger(__name__)
 
 
-class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixin):
+class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixin):
     """
-    WebRTC recording plugin with subscription-based configuration.
+    PumpFun livestream recording plugin with subscription-based auto-recording.
     
-    This plugin provides archiving capabilities for WebRTC streams with per-source 
-    LiveKit server configuration, similar to YouTube plugin's channel subscriptions.
-    \
+    This plugin provides subscription-based auto-recording of PumpFun livestreams.
+    Users subscribe to streams they want to monitor, and a recurring job automatically
+    records those streams when they go live.
     
     Plugins inherit from:
     - Core ArchiverPlugin interface: discover_sources, archive, health_check
@@ -50,9 +51,9 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
     def get_metadata(self) -> PluginMetadata:
         """Return plugin metadata."""
         return PluginMetadata(
-            name="WebRTCPlugin",
+            name="PumpFunPlugin",
             version="1.1.0",
-            description="Archives WebRTC streams from LiveKit with per-source configuration",
+            description="Archives PumpFun livestreams with subscription-based auto-recording",
             media_types=[MediaType.WEBRTC],
             author="Haven Team",
             capabilities=[
@@ -67,30 +68,72 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         """Initialize plugin with configuration."""
         self.config = config
         self._initialized = True
-        logger.info("WebRTCPlugin initialized")
+        logger.info("PumpFunPlugin initialized")
         return True
     
-    async def discover_sources(self) -> List[MediaSource]:
+    async def discover_sources(
+        self,
+        offset: int = 0,
+        limit: int = 20,
+        filter_options: Dict[str, Any] = None
+    ) -> List[MediaSource]:
         """
-        Discover popular live streams from PumpFun.
+        Discover live streams from PumpFun with pagination and filtering.
+        
+        Args:
+            offset: Pagination offset
+            limit: Maximum number of streams to return
+            filter_options: Filtering options (min_participants, max_participants, include_nsfw, etc.)
         
         Returns:
-            List of MediaSource objects representing popular live streams
+            List of MediaSource objects representing available live streams
         """
         try:
-            # Get popular streams from PumpFun
-            popular_streams = await self.pumpfun_service.get_popular_live_streams(
-                limit=self.config.get("discover_limit", 20)
-            )
+            filter_options = filter_options or {}
+            min_participants = filter_options.get("min_participants", 0)
+            max_participants = filter_options.get("max_participants", float("inf"))
+            include_nsfw = filter_options.get("include_nsfw", False)
             
-            sources = []
-            for stream in popular_streams:
+            # Get all available live streams
+            all_streams = await self.pumpfun_service.get_currently_live_streams(limit=1000)
+            
+            # Apply filters
+            filtered_streams = []
+            for stream in all_streams:
                 mint_id = stream.get("mint")
                 if not mint_id:
                     continue
                 
-                # Determine priority based on participant count
                 num_participants = stream.get("num_participants", 0)
+                nsfw = stream.get("nsfw", False)
+                
+                # Apply participant count filters
+                if num_participants < min_participants or num_participants > max_participants:
+                    continue
+                
+                # Apply NSFW filter
+                if nsfw and not include_nsfw:
+                    continue
+                
+                # Add to filtered list
+                filtered_streams.append(stream)
+            
+            # Sort by participant count (descending) for default view
+            sorted_streams = sorted(
+                filtered_streams,
+                key=lambda x: x.get("num_participants", 0),
+                reverse=True
+            )
+            
+            # Apply pagination
+            paginated_streams = sorted_streams[offset:offset + limit]
+            
+            sources = []
+            for stream in paginated_streams:
+                mint_id = stream.get("mint")
+                num_participants = stream.get("num_participants", 0)
+                
+                # Determine priority based on participant count
                 if num_participants > 100:
                     priority = "high"
                 elif num_participants > 50:
@@ -104,29 +147,31 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
                     media_type=MediaType.WEBRTC,
                     uri=f"webrtc://pumpfun/{mint_id}",
                     metadata={
+                        "stream_id": mint_id,
                         "name": stream.get("name", "Unknown"),
                         "symbol": stream.get("symbol", ""),
-                        "participants": num_participants,
                         "market_cap": stream.get("market_cap"),
-                        "image_uri": stream.get("image_uri"),
+                        "num_participants": num_participants,
                         "thumbnail": stream.get("thumbnail"),
-                        "creator": stream.get("creator"),
                         "is_currently_live": stream.get("is_currently_live", True),
+                        "creator": stream.get("creator"),
+                        "image_uri": stream.get("image_uri"),
+                        "nsfw": stream.get("nsfw", False),
                     },
                     priority=priority,
                 )
                 sources.append(source)
             
-            logger.info(f"WebRTCPlugin discovered {len(sources)} sources")
+            logger.info(f"PumpFunPlugin discovered {len(sources)} sources (from {len(filtered_streams)} filtered, {len(all_streams)} total)")
             return sources
         
         except Exception as e:
-            logger.error(f"Error discovering WebRTC sources: {e}")
+            logger.error(f"Error discovering PumpFun sources: {e}")
             return []
     
     async def archive(self, source: MediaSource) -> ArchiveResult:
         """
-        Archive a WebRTC stream.
+        Archive a PumpFun stream.
         
         Args:
             source: MediaSource to archive (must be WEBRTC type)
@@ -143,7 +188,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         try:
             # Extract mint_id from URI
             mint_id = source.uri.split("/")[-1]
-            logger.info(f"Archiving WebRTC stream: {mint_id}")
+            logger.info(f"Archiving PumpFun stream: {mint_id}")
             
             # Get recording config from source metadata or plugin config
             output_format = self.config.get("output_format", "webm")
@@ -200,10 +245,10 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         """
         # Check if PumpFun service is responsive
         try:
-            streams = await self.pumpfun_service.get_popular_live_streams(limit=1)
+            streams = await self.pumpfun_service.get_currently_live_streams(limit=1)
             return True
         except Exception as e:
-            logger.error(f"WebRTCPlugin health check failed: {e}")
+            logger.error(f"PumpFunPlugin health check failed: {e}")
             return False
     
     async def stop_archiving(self, source_id: str) -> Dict[str, Any]:
@@ -264,24 +309,21 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Subscribe to a WebRTC stream with specific LiveKit URL configuration.
+        Subscribe to a PumpFun stream with priority and user notes.
         
         Called via: POST /api/plugins/execute
         {
-          "plugin_name": "WebRTCPlugin",
+          "plugin_name": "PumpFunPlugin",
           "operation": "subscribe",
           "params": {
-            "collection_uri": "mint_id_or_stream_identifier",
+            "collection_uri": "mint_id",
             "config": {
-              "stream_name": "My Stream",
-              "stream_id": "my-stream-id",
-              "auto_record": true
+              "stream_name": "Stream Name",
+              "priority": 5,
+              "notes": "Why I want to record this stream"
             }
           }
         }
-        
-        Note: LiveKit URL is obtained from plugin-level configuration (not per-stream).
-        Use the plugin's update_config operation to set the shared LiveKit server URL.
         """
         try:
             db = next(get_db_session())
@@ -290,13 +332,11 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
             config = config or {}
             stream_id = config.get("stream_id", collection_uri)  # Default to collection_uri if no stream_id
             stream_name = config.get("stream_name", stream_id)
-            
-            # Get LiveKit URL from plugin-level configuration (shared by all streams)
-            livekit_url = self.config.get("livekit_url", "wss://pump-prod-tg2x8veh.livekit.cloud")
-            auto_record = config.get("auto_record", True)
+            priority = config.get("priority", 5)
+            notes = config.get("notes", "")
             
             # Check if already subscribed
-            existing_stmt = select(WebRTCSubscription).where(WebRTCSubscription.stream_id == stream_id)
+            existing_stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == stream_id)
             existing_result = db.execute(existing_stmt)
             existing_subscription = existing_result.scalar_one_or_none()
             
@@ -308,32 +348,32 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
                     "stream_name": existing_subscription.stream_name,
                 }
             
-            # Create new subscription with plugin-level LiveKit URL
-            new_subscription = WebRTCSubscription(
+            # Create new subscription
+            new_subscription = PumpFunSubscription(
                 stream_id=stream_id,
                 stream_name=stream_name,
-                livekit_url=livekit_url,  # Uses plugin-level LiveKit URL
-                auto_record=auto_record,
+                priority=priority,
+                notes=notes,
                 config=config
             )
             db.add(new_subscription)
             db.commit()
             db.refresh(new_subscription)
             
-            logger.info(f"Subscribed to WebRTC stream: {new_subscription.stream_name}")
+            logger.info(f"Subscribed to PumpFun stream: {new_subscription.stream_name}")
             
             return {
                 "success": True,
                 "stream_id": new_subscription.stream_id,
                 "stream_name": new_subscription.stream_name,
-                "livekit_url": new_subscription.livekit_url,
                 "enabled": new_subscription.enabled,
-                "auto_record": new_subscription.auto_record,
+                "priority": new_subscription.priority,
+                "notes": new_subscription.notes,
                 "created_at": new_subscription.created_at.isoformat(),
             }
         
         except Exception as e:
-            logger.error(f"Error subscribing to WebRTC stream: {e}")
+            logger.error(f"Error subscribing to PumpFun stream: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -343,11 +383,11 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
     
     async def unsubscribe(self, collection_id: str) -> Dict[str, Any]:
         """
-        Unsubscribe from a WebRTC stream.
+        Unsubscribe from a PumpFun stream.
         
         Called via: POST /api/plugins/execute
         {
-          "plugin_name": "WebRTCPlugin",
+          "plugin_name": "PumpFunPlugin",
           "operation": "unsubscribe",
           "params": {"collection_id": "my-stream-id"}
         }
@@ -355,7 +395,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         try:
             db = next(get_db_session())
             
-            stmt = select(WebRTCSubscription).where(WebRTCSubscription.stream_id == collection_id)
+            stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == collection_id)
             result = db.execute(stmt)
             subscription = result.scalar_one_or_none()
             
@@ -368,7 +408,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
             db.delete(subscription)
             db.commit()
             
-            logger.info(f"Unsubscribed from WebRTC stream: {subscription.stream_name}")
+            logger.info(f"Unsubscribed from PumpFun stream: {subscription.stream_name}")
             
             return {
                 "success": True,
@@ -386,11 +426,11 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
     
     async def list_subscriptions(self) -> List[Dict[str, Any]]:
         """
-        List all WebRTC stream subscriptions.
+        List all PumpFun stream subscriptions.
         
         Called via: POST /api/plugins/execute
         {
-          "plugin_name": "WebRTCPlugin",
+          "plugin_name": "PumpFunPlugin",
           "operation": "list_subscriptions",
           "params": {}
         }
@@ -398,7 +438,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         try:
             db = next(get_db_session())
             
-            stmt = select(WebRTCSubscription).order_by(WebRTCSubscription.stream_name)
+            stmt = select(PumpFunSubscription).order_by(PumpFunSubscription.stream_name)
             result = db.execute(stmt)
             subscriptions = result.scalars().all()
             
@@ -407,9 +447,9 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
                 subscription_list.append({
                     "stream_id": sub.stream_id,
                     "stream_name": sub.stream_name,
-                    "livekit_url": sub.livekit_url,
                     "enabled": sub.enabled,
-                    "auto_record": sub.auto_record,
+                    "priority": sub.priority,
+                    "notes": sub.notes,
                     "created_at": sub.created_at.isoformat(),
                     "last_polled_at": sub.last_polled_at.isoformat() if sub.last_polled_at else None,
                     "session_count": len(sub.sessions)
@@ -418,18 +458,18 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
             return subscription_list
         
         except Exception as e:
-            logger.error(f"Error listing WebRTC subscriptions: {e}")
+            logger.error(f"Error listing PumpFun subscriptions: {e}")
             return []
         finally:
             db.close()
     
     async def get_subscription(self, collection_id: str) -> Dict[str, Any]:
         """
-        Get WebRTC subscription details.
+        Get PumpFun subscription details.
         
         Called via: POST /api/plugins/execute
         {
-          "plugin_name": "WebRTCPlugin",
+          "plugin_name": "PumpFunPlugin",
           "operation": "get_subscription",
           "params": {"collection_id": "my-stream-id"}
         }
@@ -437,7 +477,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         try:
             db = next(get_db_session())
             
-            stmt = select(WebRTCSubscription).where(WebRTCSubscription.stream_id == collection_id)
+            stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == collection_id)
             result = db.execute(stmt)
             subscription = result.scalar_one_or_none()
             
@@ -447,9 +487,9 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
             return {
                 "stream_id": subscription.stream_id,
                 "stream_name": subscription.stream_name,
-                "livekit_url": subscription.livekit_url,
                 "enabled": subscription.enabled,
-                "auto_record": subscription.auto_record,
+                "priority": subscription.priority,
+                "notes": subscription.notes,
                 "config": subscription.config,
                 "created_at": subscription.created_at.isoformat(),
                 "updated_at": subscription.updated_at.isoformat(),
@@ -469,18 +509,18 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
             }
         
         except Exception as e:
-            logger.error(f"Error getting WebRTC subscription: {e}")
+            logger.error(f"Error getting PumpFun subscription: {e}")
             return None
         finally:
             db.close()
     
     async def discover_from_subscription(self, collection_id: str) -> List[MediaSource]:
         """
-        Discover sessions from a specific WebRTC stream subscription.
+        Discover sessions from a specific PumpFun stream subscription.
         
         Called via: POST /api/plugins/execute
         {
-          "plugin_name": "WebRTCPlugin",
+          "plugin_name": "PumpFunPlugin",
           "operation": "discover_from_subscription",
           "params": {"collection_id": "my-stream-id"}
         }
@@ -488,7 +528,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         try:
             db = next(get_db_session())
             
-            stmt = select(WebRTCSubscription).where(WebRTCSubscription.stream_id == collection_id)
+            stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == collection_id)
             result = db.execute(stmt)
             subscription = result.scalar_one_or_none()
             
@@ -533,7 +573,7 @@ class WebRTCPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixi
         
         Called via: POST /api/plugins/execute
         {
-          "plugin_name": "WebRTCPlugin",
+          "plugin_name": "PumpFunPlugin",
           "operation": "archive_from_subscription",
           "params": {"collection_id": "my-stream-id"}
         }

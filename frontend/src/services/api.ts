@@ -13,6 +13,8 @@ import {
   RecurringJobCreate,
   RecurringJobUpdate,
   SchedulerStatus,
+  PumpFunStream,
+  PumpFunSubscription,
 } from '@/types/plugin';
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -370,6 +372,129 @@ export const pluginService = {
   // Get scheduler status
   getSchedulerStatus: async (): Promise<SchedulerStatus> => {
     const response = await api.get<SchedulerStatus>('/recurring-jobs/jobs/recurring/scheduler');
+    return response.data;
+  },
+};
+
+// PumpFun-related API functions
+export const pumpfunService = {
+  // Get available PumpFun streams
+  getStreams: async (
+    offset?: number,
+    limit?: number,
+    minParticipants?: number,
+    maxParticipants?: number,
+    includeNsfw?: boolean
+  ): Promise<PumpFunStream[]> => {
+    const params = new URLSearchParams();
+    if (offset !== undefined) params.append('offset', offset.toString());
+    if (limit !== undefined) params.append('limit', limit.toString());
+    if (minParticipants !== undefined) params.append('min_participants', minParticipants.toString());
+    if (maxParticipants !== undefined) params.append('max_participants', maxParticipants.toString());
+    if (includeNsfw !== undefined) params.append('include_nsfw', includeNsfw.toString());
+
+    const response = await api.get<PumpFunStream[]>(`/live/available?${params.toString()}`);
+    return response.data;
+  },
+
+  // Get PumpFun stream details
+  getStream: async (mintId: string): Promise<PumpFunStream> => {
+    const response = await api.get<PumpFunStream>(`/live/stream/${mintId}`);
+    return response.data;
+  },
+
+  // Get user's PumpFun subscriptions
+  getSubscriptions: async (): Promise<PumpFunSubscription[]> => {
+    const response = await api.get<PumpFunSubscription[]>('/live/subscriptions');
+    return response.data;
+  },
+
+  // Get subscription details for a specific stream
+  getSubscription: async (mintId: string): Promise<PumpFunSubscription> => {
+    const response = await api.get<PumpFunSubscription>(`/live/subscription/${mintId}`);
+    return response.data;
+  },
+
+  // Get subscription status (including recording status)
+  getSubscriptionStatus: async (mintId: string): Promise<{
+    is_subscribed: boolean;
+    is_enabled: boolean;
+    is_recording: boolean;
+    subscription?: PumpFunSubscription;
+  }> => {
+    const response = await api.get(`/live/subscription/${mintId}/status`);
+    return response.data;
+  },
+
+  // Subscribe to a PumpFun stream
+  subscribe: async (mintId: string, config?: {
+    stream_name?: string;
+    priority?: number;
+    notes?: string;
+  }): Promise<PumpFunSubscription> => {
+    const response = await api.post<PumpFunSubscription>('/live/subscribe', {
+      mint_id: mintId,
+      ...config,
+    });
+    return response.data;
+  },
+
+  // Unsubscribe from a PumpFun stream
+  unsubscribe: async (mintId: string): Promise<{ message: string }> => {
+    const response = await api.delete<{ message: string }>(`/live/unsubscribe/${mintId}`);
+    return response.data;
+  },
+
+  // Enable a subscription
+  enableSubscription: async (mintId: string): Promise<{ message: string }> => {
+    const response = await api.patch<{ message: string }>(`/live/subscription/${mintId}`, {
+      enabled: true,
+    });
+    return response.data;
+  },
+
+  // Disable a subscription
+  disableSubscription: async (mintId: string): Promise<{ message: string }> => {
+    const response = await api.patch<{ message: string }>(`/live/subscription/${mintId}`, {
+      enabled: false,
+    });
+    return response.data;
+  },
+
+  // Update subscription
+  updateSubscription: async (mintId: string, updates: {
+    priority?: number;
+    notes?: string;
+  }): Promise<PumpFunSubscription> => {
+    const response = await api.patch<PumpFunSubscription>(`/live/subscription/${mintId}`, updates);
+    return response.data;
+  },
+
+  // Get recording status for a stream
+  getRecordingStatus: async (mintId: string): Promise<{
+    is_recording: boolean;
+    recording_path?: string;
+    started_at?: string;
+    progress?: number;
+  }> => {
+    const response = await api.get(`/recording/status/${mintId}`);
+    return response.data;
+  },
+
+  // Get all active recordings
+  getActiveRecordings: async (): Promise<Array<{
+    mint_id: string;
+    stream_name: string;
+    recording_path: string;
+    started_at: string;
+  }>> => {
+    const response = await api.get('/recording/active');
+    return response.data;
+  },
+
+  // Manual stop recording (emergency use)
+  stopRecording: async (mintId: string): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(`/recording/stop/${mintId}`);
     return response.data;
   },
 };

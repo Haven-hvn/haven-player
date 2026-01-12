@@ -12,7 +12,6 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   AcUnit as BrainIcon,
-  LiveTv as LiveTvIcon,
   CloudUpload as CloudUploadIcon,
   Extension as PluginsIcon,
 } from "@mui/icons-material";
@@ -67,12 +66,6 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
         label: "Plugins",
         path: "/plugins",
         active: location.pathname === "/plugins" || location.pathname.startsWith("/plugins/"),
-      },
-      {
-        icon: LiveTvIcon,
-        label: "Livestream Recorder",
-        path: "/livestream-recorder",
-        active: location.pathname === "/livestream-recorder",
       },
       {
         icon: CloudUploadIcon,

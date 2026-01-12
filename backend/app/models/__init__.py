@@ -3,7 +3,7 @@ from app.models.base import Base
 from app.models.config import AppConfig
 from app.models.analysis_job import AnalysisJob
 from app.models.video import Video, Timestamp
-from app.models.webrtc_plugin import WebRTCSubscription, WebRTCSession
+from app.models.pumpfun_plugin import PumpFunSubscription, PumpFunSession
 from app.models.live_session import LiveSession
 from app.models.plugin import Plugin
 
@@ -13,8 +13,8 @@ __all__ = [
     'AnalysisJob',
     'Video',
     'Timestamp',
-    'WebRTCSubscription',
-    'WebRTCSession',
+    'PumpFunSubscription',
+    'PumpFunSession',
     'LiveSession',
     'Plugin',
 ]

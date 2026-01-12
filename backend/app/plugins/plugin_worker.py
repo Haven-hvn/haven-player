@@ -106,7 +106,7 @@ def _get_plugin_module_name(plugin_name: str) -> str:
     
     Examples:
         "YouTubePlugin" -> "app.plugins.builtin.youtube_plugin"
-        "WebRTCPlugin" -> "app.plugins.builtin.webrtc_plugin"
+        "PumpFunPlugin" -> "app.plugins.builtin.pumpfun_plugin"
         "BitTorrentPlugin" -> "app.plugins.builtin.bittorrent_plugin"
     
     Args:

@@ -15,7 +15,7 @@ Added unified type definitions for the plugin-based architecture:
 - `PluginConfigField`: Schema definition for plugin configuration fields
 - `PluginConfigSchema`: Complete configuration schema for a plugin
 - `YouTubePluginConfig`: YouTube-specific configuration interface
-- `WebRTCPluginConfig`: WebRTC-specific configuration interface
+- `PumpFunPluginConfig`: PumpFun-specific configuration interface
 - `BitTorrentPluginConfig`: BitTorrent-specific configuration interface
 
 Updated `MediaSource` metadata to include:

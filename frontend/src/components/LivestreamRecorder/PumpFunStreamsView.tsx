@@ -32,7 +32,7 @@ interface PumpFunStreamsViewProps {
   loading: boolean;
   error: string | null;
   onRefresh: () => Promise<void>;
-  onSubscribe: (stream: PumpFunStream, priority?: number, notes?: string) => Promise<void>;
+  onSubscribe: (stream: PumpFunStream, priority?: number) => Promise<void>;
   onUnsubscribe: (stream: PumpFunStream) => Promise<void>;
   onUpdateSubscription: (subscription: PumpFunSubscription, updates: Partial<PumpFunSubscription>) => Promise<void>;
 }
@@ -61,10 +61,10 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
   const [subscribingStreams, setSubscribingStreams] = useState<Set<string>>(new Set());
   const [unsubscribingStreams, setUnsubscribingStreams] = useState<Set<string>>(new Set());
 
-  const handleSubscribe = async (stream: PumpFunStream, priority?: number, notes?: string) => {
+  const handleSubscribe = async (stream: PumpFunStream, priority?: number) => {
     setSubscribingStreams((prev) => new Set(prev).add(stream.stream_id));
     try {
-      await onSubscribe(stream, priority, notes);
+      await onSubscribe(stream, priority);
     } finally {
       setSubscribingStreams((prev) => {
         const next = new Set(prev);

@@ -9,6 +9,7 @@ records those streams when they go live.
 from typing import Dict, Any, List
 import logging
 import asyncio
+from datetime import datetime
 
 from sqlalchemy import select
 
@@ -21,7 +22,7 @@ from app.plugins.plugin_interface import (
 )
 from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 from app.models.database import get_db as get_db_session
-from app.models.pumpfun_plugin import PumpFunSubscription, PumpFunSession
+from app.models.plugin import Plugin as PluginModel
 from app.services.pumpfun_service import PumpFunService
 from app.services.webrtc_recording_service import WebRTCRecordingService
 
@@ -80,6 +81,9 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """
         Discover live streams from PumpFun with pagination and filtering.
         
+        If the plugin has subscribed streams in config, returns only currently live subscribed streams.
+        Otherwise returns all available live streams with filtering.
+        
         Args:
             offset: Pagination offset
             limit: Maximum number of streams to return
@@ -94,29 +98,65 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             max_participants = filter_options.get("max_participants", float("inf"))
             include_nsfw = filter_options.get("include_nsfw", False)
             
+            # Get subscribed streams from plugin config
+            db = next(get_db_session())
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "PumpFunPlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
+            db.close()
+            
+            subscribed_streams = []
+            if plugin and plugin.config:
+                subscribed_streams = plugin.config.get("streams", [])
+            
             # Get all available live streams
             all_streams = await self.pumpfun_service.get_currently_live_streams(limit=1000)
             
-            # Apply filters
-            filtered_streams = []
-            for stream in all_streams:
-                mint_id = stream.get("mint")
-                if not mint_id:
-                    continue
-                
-                num_participants = stream.get("num_participants", 0)
-                nsfw = stream.get("nsfw", False)
-                
-                # Apply participant count filters
-                if num_participants < min_participants or num_participants > max_participants:
-                    continue
-                
-                # Apply NSFW filter
-                if nsfw and not include_nsfw:
-                    continue
-                
-                # Add to filtered list
-                filtered_streams.append(stream)
+            # Filter based on whether we have subscribed streams
+            if subscribed_streams:
+                # Only check subscribed streams for live status
+                subscribed_ids = [s.get("stream_id") for s in subscribed_streams if s.get("stream_id")]
+                filtered_streams = []
+                for stream in all_streams:
+                    mint_id = stream.get("mint")
+                    if not mint_id or mint_id not in subscribed_ids:
+                        continue
+                    
+                    num_participants = stream.get("num_participants", 0)
+                    nsfw = stream.get("nsfw", False)
+                    
+                    # Apply participant count filters
+                    if num_participants < min_participants or num_participants > max_participants:
+                        continue
+                    
+                    # Apply NSFW filter
+                    if nsfw and not include_nsfw:
+                        continue
+                    
+                    # Add to filtered list
+                    filtered_streams.append(stream)
+                logger.info(f"Checking {len(subscribed_ids)} subscribed streams, found {len(filtered_streams)} currently live")
+            else:
+                # No subscribed streams - return all streams with filters
+                filtered_streams = []
+                for stream in all_streams:
+                    mint_id = stream.get("mint")
+                    if not mint_id:
+                        continue
+                    
+                    num_participants = stream.get("num_participants", 0)
+                    nsfw = stream.get("nsfw", False)
+                    
+                    # Apply participant count filters
+                    if num_participants < min_participants or num_participants > max_participants:
+                        continue
+                    
+                    # Apply NSFW filter
+                    if nsfw and not include_nsfw:
+                        continue
+                    
+                    # Add to filtered list
+                    filtered_streams.append(stream)
             
             # Sort by participant count (descending) for default view
             sorted_streams = sorted(
@@ -173,6 +213,9 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """
         Archive a PumpFun stream.
         
+        Streams are continuous live sessions - no duplicate checking needed.
+        Simply starts recording the stream if it's live.
+        
         Args:
             source: MediaSource to archive (must be WEBRTC type)
             
@@ -203,7 +246,6 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             
             if result.get("success"):
                 # Wait a moment for recording to start
-                import asyncio
                 await asyncio.sleep(2)
                 
                 # Get recording status
@@ -309,7 +351,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Subscribe to a PumpFun stream with priority and user notes.
+        Subscribe to a PumpFun stream with priority .
         
         Called via: POST /api/plugins/execute
         {
@@ -319,8 +361,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             "collection_uri": "mint_id",
             "config": {
               "stream_name": "Stream Name",
-              "priority": 5,
-              "notes": "Why I want to record this stream"
+              "priority": 5
             }
           }
         }
@@ -328,48 +369,63 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         try:
             db = next(get_db_session())
             
+            # Get plugin
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "PumpFunPlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
+            
+            if not plugin:
+                return {
+                    "success": False,
+                    "error": "PumpFun plugin not found"
+                }
+            
             # Extract configuration
             config = config or {}
             stream_id = config.get("stream_id", collection_uri)  # Default to collection_uri if no stream_id
             stream_name = config.get("stream_name", stream_id)
             priority = config.get("priority", 5)
-            notes = config.get("notes", "")
+            
+            # Get current streams list
+            streams = plugin.config.get("streams", [])
             
             # Check if already subscribed
-            existing_stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == stream_id)
-            existing_result = db.execute(existing_stmt)
-            existing_subscription = existing_result.scalar_one_or_none()
+            for stream in streams:
+                if stream.get("stream_id") == stream_id:
+                    return {
+                        "success": False,
+                        "error": "Already subscribed to this stream",
+                        "stream_id": stream_id,
+                        "stream_name": stream.get("stream_name", stream_id),
+                    }
             
-            if existing_subscription:
-                return {
-                    "success": False,
-                    "error": "Already subscribed to this stream",
-                    "stream_id": stream_id,
-                    "stream_name": existing_subscription.stream_name,
-                }
+            # Add new stream subscription
+            new_stream = {
+                "stream_id": stream_id,
+                "stream_name": stream_name,
+                "enabled": True,
+                "priority": priority,
+                "created_at": datetime.utcnow().isoformat(),
+            }
             
-            # Create new subscription
-            new_subscription = PumpFunSubscription(
-                stream_id=stream_id,
-                stream_name=stream_name,
-                priority=priority,
-                notes=notes,
-                config=config
-            )
-            db.add(new_subscription)
+            streams.append(new_stream)
+            
+            # Update plugin config
+            config_copy = plugin.config.copy()
+            config_copy["streams"] = streams
+            plugin.config = config_copy
+            
             db.commit()
-            db.refresh(new_subscription)
             
-            logger.info(f"Subscribed to PumpFun stream: {new_subscription.stream_name}")
+            logger.info(f"Subscribed to PumpFun stream: {new_stream['stream_name']}")
             
             return {
                 "success": True,
-                "stream_id": new_subscription.stream_id,
-                "stream_name": new_subscription.stream_name,
-                "enabled": new_subscription.enabled,
-                "priority": new_subscription.priority,
-                "notes": new_subscription.notes,
-                "created_at": new_subscription.created_at.isoformat(),
+                "stream_id": new_stream["stream_id"],
+                "stream_name": new_stream["stream_name"],
+                "enabled": new_stream["enabled"],
+                "priority": new_stream["priority"],
+                "created_at": new_stream["created_at"],
             }
         
         except Exception as e:
@@ -395,24 +451,42 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         try:
             db = next(get_db_session())
             
-            stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == collection_id)
-            result = db.execute(stmt)
-            subscription = result.scalar_one_or_none()
+            # Get plugin
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "PumpFunPlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
             
-            if not subscription:
+            if not plugin:
+                return {
+                    "success": False,
+                    "error": "PumpFun plugin not found"
+                }
+            
+            # Get current streams list
+            streams = plugin.config.get("streams", [])
+            
+            # Find and remove the stream
+            original_count = len(streams)
+            filtered_streams = [s for s in streams if s.get("stream_id") != collection_id]
+            
+            if len(filtered_streams) == original_count:
                 return {
                     "success": False,
                     "error": "Stream subscription not found",
                 }
             
-            db.delete(subscription)
+            # Update plugin config
+            config_copy = plugin.config.copy()
+            config_copy["streams"] = filtered_streams
+            plugin.config = config_copy
+            
             db.commit()
             
-            logger.info(f"Unsubscribed from PumpFun stream: {subscription.stream_name}")
+            logger.info(f"Unsubscribed from PumpFun stream: {collection_id}")
             
             return {
                 "success": True,
-                "message": f"Unsubscribed from {subscription.stream_name}",
+                "message": f"Unsubscribed from {collection_id}",
             }
         
         except Exception as e:
@@ -438,24 +512,17 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         try:
             db = next(get_db_session())
             
-            stmt = select(PumpFunSubscription).order_by(PumpFunSubscription.stream_name)
-            result = db.execute(stmt)
-            subscriptions = result.scalars().all()
+            # Get plugin
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "PumpFunPlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
             
-            subscription_list = []
-            for sub in subscriptions:
-                subscription_list.append({
-                    "stream_id": sub.stream_id,
-                    "stream_name": sub.stream_name,
-                    "enabled": sub.enabled,
-                    "priority": sub.priority,
-                    "notes": sub.notes,
-                    "created_at": sub.created_at.isoformat(),
-                    "last_polled_at": sub.last_polled_at.isoformat() if sub.last_polled_at else None,
-                    "session_count": len(sub.sessions)
-                })
+            if not plugin:
+                return []
             
-            return subscription_list
+            # Return streams list directly from config
+            streams = plugin.config.get("streams", [])
+            return streams
         
         except Exception as e:
             logger.error(f"Error listing PumpFun subscriptions: {e}")
@@ -477,36 +544,21 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         try:
             db = next(get_db_session())
             
-            stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == collection_id)
-            result = db.execute(stmt)
-            subscription = result.scalar_one_or_none()
+            # Get plugin
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "PumpFunPlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
             
-            if not subscription:
+            if not plugin:
                 return None
             
-            return {
-                "stream_id": subscription.stream_id,
-                "stream_name": subscription.stream_name,
-                "enabled": subscription.enabled,
-                "priority": subscription.priority,
-                "notes": subscription.notes,
-                "config": subscription.config,
-                "created_at": subscription.created_at.isoformat(),
-                "updated_at": subscription.updated_at.isoformat(),
-                "last_polled_at": subscription.last_polled_at.isoformat() if subscription.last_polled_at else None,
-                "session_count": len(subscription.sessions),
-                "sessions": [
-                    {
-                        "session_id": s.session_id,
-                        "stream_name": s.stream_name,
-                        "recording_status": s.recording_status,
-                        "recording_path": s.recording_path,
-                        "started_at": s.started_at.isoformat() if s.started_at else None,
-                        "ended_at": s.ended_at.isoformat() if s.ended_at else None
-                    }
-                    for s in subscription.sessions
-                ]
-            }
+            # Find stream in config
+            streams = plugin.config.get("streams", [])
+            for stream in streams:
+                if stream.get("stream_id") == collection_id:
+                    return stream
+            
+            return None
         
         except Exception as e:
             logger.error(f"Error getting PumpFun subscription: {e}")
@@ -518,6 +570,9 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """
         Discover sessions from a specific PumpFun stream subscription.
         
+        Checks if the subscribed stream is currently live via PumpFun API.
+        Returns MediaSource if stream is live, empty list if not.
+        
         Called via: POST /api/plugins/execute
         {
           "plugin_name": "PumpFunPlugin",
@@ -528,38 +583,72 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         try:
             db = next(get_db_session())
             
-            stmt = select(PumpFunSubscription).where(PumpFunSubscription.stream_id == collection_id)
-            result = db.execute(stmt)
-            subscription = result.scalar_one_or_none()
+            # Get plugin config to find stream details
+            plugin_stmt = select(PluginModel).where(PluginModel.name == "PumpFunPlugin")
+            plugin_result = db.execute(plugin_stmt)
+            plugin = plugin_result.scalar_one_or_none()
             
-            if not subscription:
-                logger.error(f"WebRTC subscription {collection_id} not found")
+            if not plugin or not plugin.config:
+                logger.error(f"PumpFun plugin config not found")
                 return []
             
-            logger.info(f"Discovering sessions from subscription: {subscription.stream_name}")
+            # Find stream in config
+            streams = plugin.config.get("streams", [])
+            stream_info = None
+            for stream in streams:
+                if stream.get("stream_id") == collection_id:
+                    stream_info = stream
+                    break
             
-            # Adapt to MediaSource format based on stream type  
-            sources = []
-            for i, session in enumerate(subscription.sessions):
-                source = MediaSource(
-                    source_id=f"{subscription.stream_id}_{session.session_id}",
-                    media_type=MediaType.WEBRTC,
-                    uri=f"webrtc://{subscription.stream_id}",
-                    metadata={
-                        "stream_name": subscription.stream_name,
-                        "stream_id": subscription.stream_id,
-                        "livekit_url": subscription.livekit_url,
-                        "session_id": session.session_id,
-                        "recording_status": session.recording_status,
-                        "recording_path": session.recording_path,
-                    },
-                    priority="normal"
-                )
-                sources.append(source)
+            if not stream_info:
+                logger.error(f"Stream subscription {collection_id} not found")
+                return []
             
-            db.commit()
-            logger.info(f"Discovered {len(sources)} sources from {subscription.stream_name}")
-            return sources
+            logger.info(f"Checking if subscribed stream is live: {stream_info.get('stream_name', collection_id)}")
+            
+            # Check if stream is currently live via PumpFun API
+            all_streams = await self.pumpfun_service.get_currently_live_streams(limit=1000)
+            
+            live_stream = None
+            for stream in all_streams:
+                if stream.get("mint") == collection_id:
+                    live_stream = stream
+                    break
+            
+            if not live_stream:
+                logger.info(f"Stream {collection_id} is not currently live")
+                return []
+            
+            # Stream is live - create MediaSource
+            num_participants = live_stream.get("num_participants", 0)
+            if num_participants > 100:
+                priority = "high"
+            elif num_participants > 50:
+                priority = "normal"
+            else:
+                priority = "low"
+            
+            source = MediaSource(
+                source_id=collection_id,
+                media_type=MediaType.WEBRTC,
+                uri=f"webrtc://pumpfun/{collection_id}",
+                metadata={
+                    "stream_id": collection_id,
+                    "name": live_stream.get("name", stream_info.get("stream_name", "Unknown")),
+                    "symbol": live_stream.get("symbol", ""),
+                    "market_cap": live_stream.get("market_cap"),
+                    "num_participants": num_participants,
+                    "thumbnail": live_stream.get("thumbnail"),
+                    "is_currently_live": True,
+                    "creator": live_stream.get("creator"),
+                    "image_uri": live_stream.get("image_uri"),
+                    "nsfw": live_stream.get("nsfw", False),
+                },
+                priority=priority,
+            )
+            
+            logger.info(f"Discovered live stream from subscription: {stream_info.get('stream_name', collection_id)}")
+            return [source]
         
         except Exception as e:
             logger.error(f"Error discovering from subscription: {e}")

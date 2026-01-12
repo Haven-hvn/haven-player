@@ -59,12 +59,11 @@ export default function usePumpFunSources({
   }, [loadStreams, loadSubscriptions]);
 
   const subscribe = useCallback(
-    async (stream: PumpFunStream, priority?: number, notes?: string) => {
+    async (stream: PumpFunStream) => {
       try {
         await pumpfunService.subscribe(stream.stream_id, {
           stream_name: stream.name,
-          priority,
-          notes,
+          priority: 5,
         });
         await loadSubscriptions();
       } catch (error) {
@@ -103,11 +102,10 @@ export default function usePumpFunSources({
         }
       }
 
-      if (updates.priority !== undefined || updates.notes !== undefined) {
+      if (updates.priority !== undefined !== undefined) {
         try {
           await pumpfunService.updateSubscription(subscription.stream_id, {
             priority: updates.priority,
-            notes: updates.notes,
           });
         } catch (error) {
           console.error("Error updating subscription:", error);

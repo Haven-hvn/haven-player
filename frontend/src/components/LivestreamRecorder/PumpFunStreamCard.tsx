@@ -26,7 +26,7 @@ export interface PumpFunStreamCardProps {
   subscription?: PumpFunSubscription;
   isSubscribing: boolean;
   isUnsubscribing: boolean;
-  onSubscribe: (stream: PumpFunStream, priority?: number, notes?: string) => Promise<void>;
+  onSubscribe: (stream: PumpFunStream, priority?: number) => Promise<void>;
   onUnsubscribe: (stream: PumpFunStream) => Promise<void>;
   onUpdateSubscription: (subscription: PumpFunSubscription, updates: Partial<PumpFunSubscription>) => Promise<void>;
 }
@@ -41,9 +41,7 @@ const PumpFunStreamCard: React.FC<PumpFunStreamCardProps> = ({
   onUpdateSubscription,
 }) => {
   const [priorityValue, setPriorityValue] = useState<string>(subscription?.priority?.toString() || "5");
-  const [notesValue, setNotesValue] = useState<string>(subscription?.notes || "");
   const [editingPriority, setEditingPriority] = useState<boolean>(false);
-  const [editingNotes, setEditingNotes] = useState<boolean>(false);
 
   const isSubscribed = Boolean(subscription);
   const isEnabled = subscription?.enabled ?? true;
@@ -57,17 +55,6 @@ const PumpFunStreamCard: React.FC<PumpFunStreamCardProps> = ({
         setPriorityValue(newPriority);
       } catch (error) {
         console.error("Failed to update priority:", error);
-      }
-    }
-  };
-
-  const handleNotesChange = async (newNotes: string) => {
-    if (subscription) {
-      try {
-        await onUpdateSubscription(subscription, { notes: newNotes });
-        setNotesValue(newNotes);
-      } catch (error) {
-        console.error("Failed to update notes:", error);
       }
     }
   };
@@ -246,52 +233,6 @@ const PumpFunStreamCard: React.FC<PumpFunStreamCardProps> = ({
             )}
           </Box>
         )}
-
-        {/* Notes (if subscribed) */}
-        {isSubscribed && (
-          <Box sx={{ mb: 1 }}>
-            <Typography variant="caption" color="text.secondary" gutterBottom sx={{ display: "block" }}>
-              Notes:
-            </Typography>
-            {editingNotes ? (
-              <textarea
-                value={notesValue}
-                onChange={(e) => setNotesValue(e.target.value)}
-                onBlur={() => {
-                  handleNotesChange(notesValue);
-                  setEditingNotes(false);
-                }}
-                style={{
-                  width: "100%",
-                  fontSize: "0.75rem",
-                  padding: 4,
-                  border: "1px solid #E0E0E0",
-                  borderRadius: 4,
-                  minHeight: 40,
-                  resize: "vertical",
-                }}
-              />
-            ) : (
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{
-                  fontSize: "0.75rem",
-                  cursor: "pointer",
-                  "&:hover": {
-                    backgroundColor: "#F5F5F5",
-                    borderRadius: 1,
-                    padding: 0.5,
-                  },
-                }}
-                onClick={() => setEditingNotes(true)}
-              >
-                {notesValue || "Click to add notes..."}
-              </Typography>
-            )}
-          </Box>
-        )}
-      </CardContent>
 
       {/* Action buttons */}
       <Box sx={{ p: 1.5, borderTop: "1px solid #F0F0F0", display: "flex", gap: 1 }}>

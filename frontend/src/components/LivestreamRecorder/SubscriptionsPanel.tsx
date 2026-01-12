@@ -45,7 +45,6 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
 }) => {
   const [editingSubscription, setEditingSubscription] = useState<PumpFunSubscription | null>(null);
   const [priorityValue, setPriorityValue] = useState<string>("");
-  const [notesValue, setNotesValue] = useState<string>("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ stream: PumpFunStream; subscription: PumpFunSubscription } | null>(null);
 
@@ -60,7 +59,6 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
   const handleEditClick = (subscription: PumpFunSubscription) => {
     setEditingSubscription(subscription);
     setPriorityValue(subscription.priority?.toString() || "5");
-    setNotesValue(subscription.notes || "");
   };
 
   const handleSaveEdit = async () => {
@@ -69,9 +67,6 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
       const priorityNum = parseInt(priorityValue, 10);
       if (!isNaN(priorityNum) && priorityNum >= 0 && priorityNum <= 10) {
         updates.priority = priorityNum;
-      }
-      if (notesValue !== editingSubscription.notes) {
-        updates.notes = notesValue;
       }
       await onUpdateSubscription(editingSubscription, updates);
       setEditingSubscription(null);
@@ -206,12 +201,6 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
                         </Typography>
                       </Box>
 
-                      {subscription.notes && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                          Notes: {subscription.notes}
-                        </Typography>
-                      )}
-
                       <Box sx={{ display: "flex", gap: 1 }}>
                         <Button
                           size="small"
@@ -262,14 +251,6 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
                 onChange={(e) => setPriorityValue(e.target.value)}
                 inputProps={{ min: 0, max: 10 }}
                 helperText="Higher priority streams are recorded first when hitting concurrent limits"
-              />
-              <TextField
-                label="Notes"
-                multiline
-                rows={3}
-                value={notesValue}
-                onChange={(e) => setNotesValue(e.target.value)}
-                helperText="Why you subscribed to this stream"
               />
             </Box>
           )}

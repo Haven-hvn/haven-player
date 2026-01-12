@@ -198,7 +198,6 @@ export interface PumpFunSubscription {
     stream_name: string;
     enabled: boolean;
     priority?: number;
-    notes?: string;
     created_at: string;
     is_currently_recording: boolean;
     recording_status: 'idle' | 'recording' | 'not_live';

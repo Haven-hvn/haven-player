@@ -430,7 +430,6 @@ export const pumpfunService = {
   subscribe: async (mintId: string, config?: {
     stream_name?: string;
     priority?: number;
-    notes?: string;
   }): Promise<PumpFunSubscription> => {
     const response = await api.post<PumpFunSubscription>('/live/subscribe', {
       mint_id: mintId,
@@ -464,7 +463,6 @@ export const pumpfunService = {
   // Update subscription
   updateSubscription: async (mintId: string, updates: {
     priority?: number;
-    notes?: string;
   }): Promise<PumpFunSubscription> => {
     const response = await api.patch<PumpFunSubscription>(`/live/subscription/${mintId}`, updates);
     return response.data;

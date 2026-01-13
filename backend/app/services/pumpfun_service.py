@@ -283,21 +283,12 @@ class PumpFunService:
             Formatted stream data
         """
         return {
-            "mint_id": stream.get("mint"),
+            "stream_id": stream.get("mint"),
             "name": stream.get("name"),
             "symbol": stream.get("symbol"),
-            "description": stream.get("description"),
-            "image_uri": stream.get("image_uri"),
-            "thumbnail": stream.get("thumbnail"),
-            "creator": stream.get("creator"),
             "market_cap": stream.get("market_cap"),
-            "usd_market_cap": stream.get("usd_market_cap"),
             "num_participants": stream.get("num_participants", 0),
+            "thumbnail": stream.get("thumbnail"),
             "is_currently_live": stream.get("is_currently_live", False),
-            "created_timestamp": stream.get("created_timestamp"),
-            "last_trade_timestamp": stream.get("last_trade_timestamp"),
-            "nsfw": stream.get("nsfw", False),
-            "website": stream.get("website"),
-            "twitter": stream.get("twitter"),
-            "telegram": stream.get("telegram")
+            "uri": f"webrtc://pump/{stream.get('mint')}",
         }

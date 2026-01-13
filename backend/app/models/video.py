@@ -42,6 +42,9 @@ class Video(Base):
     # Pump.fun token association
     mint_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     
+    # Stream grouping field (for segments from same stream)
+    parent_mint_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    
     # Filecoin storage metadata
     filecoin_root_cid: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     filecoin_piece_cid: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -93,6 +96,7 @@ class Video(Base):
             'vlm_analysis_required': self.vlm_analysis_required,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'mint_id': self.mint_id,
+            'parent_mint_id': self.parent_mint_id,
             'filecoin_root_cid': self.filecoin_root_cid,
             'filecoin_piece_cid': self.filecoin_piece_cid,
             'filecoin_piece_id': self.filecoin_piece_id,

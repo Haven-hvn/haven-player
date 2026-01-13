@@ -34,6 +34,7 @@ class UploadCoordinator:
         'plugin_overrides': {
             'YouTubePlugin': True,  # YouTube plugin enabled by default
             'BitTorrentPlugin': True,
+            'PumpFunPlugin': True,  # ADD THIS
         },
         'priority': 0,  # Default priority for auto-uploads
     }

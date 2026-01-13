@@ -25,6 +25,7 @@ from app.models.database import get_db as get_db_session
 from app.models.plugin import Plugin as PluginModel
 from app.services.pumpfun_service import PumpFunService
 from app.services.webrtc_recording_service import WebRTCRecordingService
+from app.services.stream_manager import StreamManager
 
 logger = logging.getLogger(__name__)
 
@@ -53,15 +54,16 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """Return plugin metadata."""
         return PluginMetadata(
             name="PumpFunPlugin",
-            version="1.1.0",
-            description="Archives PumpFun livestreams with subscription-based auto-recording",
+            version="3.0.0",  # Bump version for segmented recording feature
+            description="Automated 30-second chunk recording of PumpFun livestreams with keyframe-based segmentation",
             media_types=[MediaType.WEBRTC],
             author="Haven Team",
             capabilities=[
                 "discover_sources", "archive", "health_check", "stop_archiving", "get_archiving_status",
                 "subscribe", "unsubscribe", "list_subscriptions", "get_subscription",
                 "discover_from_subscription", "archive_from_subscription",
-                "get_config", "update_config", "get_default_config"
+                "get_config", "update_config", "get_default_config",
+                "manage_recordings",  # ADD THIS for automated segmented recording
             ],
         )
     
@@ -704,4 +706,82 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             "livekit_url": "wss://pump-prod-tg2x8veh.livekit.cloud",
             "output_format": "webm",
             "video_quality": "best",
+            "auto_recording_enabled": False,
+            "segment_duration": 30,
         }
+    
+    async def manage_recordings(self) -> Dict[str, Any]:
+        """
+        Manage automated segmented recording of subscribed streams.
+        
+        Called by JobScheduler every 30 seconds.
+        
+        This method:
+        - Checks which subscribed streams are live
+        - Starts segmented recordings for new live streams
+        - Stops recordings for offline streams
+        - Segments rotate automatically (every 30s on keyframe)
+        - Completed segments auto-enqueued to UploadCoordinator
+        
+        Returns:
+            Statistics about recording operations
+        """
+        from app.services.pumpfun_recording_manager import PumpFunRecordingManager
+        
+        try:
+            # Get global recording manager (singleton)
+            manager = PumpFunRecordingManager()
+            
+            # Inject stream manager
+            from app.services.stream_manager import StreamManager
+            manager.set_stream_manager(StreamManager())
+            
+            # Get plugin configuration
+            db = next(get_db_session())
+            try:
+                plugin_stmt = select(PluginModel).where(PluginModel.name == "PumpFunPlugin")
+                plugin_result = db.execute(plugin_stmt)
+                plugin = plugin_result.scalar_one_or_none()
+                
+                if not plugin or not plugin.config:
+                    logger.info("No plugin config found")
+                    return {"status": "no_config", "message": "Plugin configuration not found"}
+                
+                # Get subscribed streams
+                subscribed_streams = plugin.config.get("streams", [])
+                enabled_streams = [s for s in subscribed_streams if s.get("enabled", False)]
+                
+                # Check if auto recording is enabled in config
+                auto_recording_enabled = plugin.config.get("auto_recording_enabled", False)
+                if not auto_recording_enabled:
+                    logger.info("Auto recording is disabled in plugin config")
+                    return {"status": "disabled", "message": "Auto recording is disabled"}
+                
+                segment_duration = plugin.config.get("segment_duration", 30)
+                logger.info(f"Managing recordings for {len(enabled_streams)} enabled streams, segment duration: {segment_duration}s")
+                
+                # Let manager handle all recording logic
+                stats = await manager.manage_subscriptions(enabled_streams)
+                
+                result = {
+                    "status": "success",
+                    "total_subscribed": len(enabled_streams),
+                    "active_recordings": stats.get("active", 0),
+                    "started": stats.get("started", 0),
+                    "stopped": stats.get("stopped", 0),
+                    "errors": stats.get("errors", 0),
+                    "segment_duration": segment_duration,
+                }
+                
+                logger.info(f"Recording management completed: {result}")
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error during recording management: {e}", exc_info=True)
+                return {"status": "error", "error": str(e), "message": "Recording management failed"}
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error in manage_recordings: {e}", exc_info=True)
+            return {"status": "error", "error": str(e)}

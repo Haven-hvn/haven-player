@@ -15,6 +15,8 @@ def init_db():
     from app.models.pumpfun_coin import PumpFunCoin
     from app.models.plugin import Plugin
     from app.models.upload_queue import UploadQueue
+    from app.models.recurring_job import RecurringJob
+    from app.models.segment_metadata import SegmentMetadata
 
     # Create all tables using the imported engine
     Base.metadata.create_all(bind=engine)

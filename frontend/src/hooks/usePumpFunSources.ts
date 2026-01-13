@@ -102,7 +102,7 @@ export default function usePumpFunSources({
         }
       }
 
-      if (updates.priority !== undefined !== undefined) {
+      if (updates.priority !== undefined) {
         try {
           await pumpfunService.updateSubscription(subscription.stream_id, {
             priority: updates.priority,

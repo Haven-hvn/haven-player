@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import asyncio
 
-from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin, restore, plugins, recurring_jobs, upload_queue, upload_coordinator_config
+from app.api import videos, config, jobs, pumpfun_streams, live_sessions, recording, depin, restore, plugins, recurring_jobs, upload_queue, upload_coordinator_config, pumpfun_recorder
 from app.models.base import init_db
 from app.models.database import SessionLocal
 from app.models.config import AppConfig
@@ -163,6 +163,14 @@ async def lifespan(app: FastAPI):
     vlm_analysis_worker_task = asyncio.create_task(run_vlm_analysis_worker())
     print("✅ VLM analysis worker initialized")
 
+    # Initialize PumpFun automated recording job
+    try:
+        from app.services.initialize_pumpfun_recording import initialize_pumpfun_automated_recording
+        await initialize_pumpfun_automated_recording(job_scheduler, plugin_manager)
+        print("✅ PumpFun automated recording job initialized")
+    except Exception as e:
+        print(f"⚠️  Failed to initialize PumpFun automated recording job: {e}")
+
     yield
     
     # Shutdown
@@ -253,6 +261,7 @@ app.include_router(plugins.router, prefix="/api/plugins", tags=["plugins"])
 app.include_router(recurring_jobs.router, prefix="/api/recurring-jobs", tags=["recurring-jobs"])
 app.include_router(upload_queue.router, prefix="/api", tags=["upload-queue"])
 app.include_router(upload_coordinator_config.router, prefix="/api", tags=["upload-coordinator-config"])
+app.include_router(pumpfun_recorder.router, prefix="/api/pumpfun", tags=["pumpfun-recorder"])
 
 
 @app.get("/")

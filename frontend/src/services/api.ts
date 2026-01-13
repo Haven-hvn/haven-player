@@ -313,6 +313,16 @@ export const pluginService = {
     return response.data;
   },
 
+  // Execute plugin operation (unified API)
+  executeOperation: async (plugin_name: string, operation: string, params?: Record<string, any>): Promise<any> => {
+    const response = await api.post('/plugins/execute', {
+      plugin_name,
+      operation,
+      params: params || {}
+    });
+    return response.data;
+  },
+
   // ============================================
   // Recurring Jobs
   // ============================================
@@ -393,7 +403,7 @@ export const pumpfunService = {
     if (maxParticipants !== undefined) params.append('max_participants', maxParticipants.toString());
     if (includeNsfw !== undefined) params.append('include_nsfw', includeNsfw.toString());
 
-    const response = await api.get<PumpFunStream[]>(`/live/available?${params.toString()}`);
+    const response = await api.get<PumpFunStream[]>(`/live/live?${params.toString()}`);
     return response.data;
   },
 
@@ -405,14 +415,12 @@ export const pumpfunService = {
 
   // Get user's PumpFun subscriptions
   getSubscriptions: async (): Promise<PumpFunSubscription[]> => {
-    const response = await api.get<PumpFunSubscription[]>('/live/subscriptions');
-    return response.data;
+    return await pluginService.executeOperation('PumpFunPlugin', 'list_subscriptions', {});
   },
 
   // Get subscription details for a specific stream
   getSubscription: async (mintId: string): Promise<PumpFunSubscription> => {
-    const response = await api.get<PumpFunSubscription>(`/live/subscription/${mintId}`);
-    return response.data;
+    return await pluginService.executeOperation('PumpFunPlugin', 'get_subscription', { collection_id: mintId });
   },
 
   // Get subscription status (including recording status)
@@ -422,8 +430,15 @@ export const pumpfunService = {
     is_recording: boolean;
     subscription?: PumpFunSubscription;
   }> => {
-    const response = await api.get(`/live/subscription/${mintId}/status`);
-    return response.data;
+    const subscription = await pumpfunService.getSubscription(mintId);
+    const recordingStatus = await pumpfunService.getRecordingStatus(mintId);
+    
+    return {
+      is_subscribed: subscription !== null,
+      is_enabled: subscription?.enabled ?? false,
+      is_recording: recordingStatus.is_recording,
+      subscription: subscription ?? undefined
+    };
   },
 
   // Subscribe to a PumpFun stream
@@ -431,41 +446,57 @@ export const pumpfunService = {
     stream_name?: string;
     priority?: number;
   }): Promise<PumpFunSubscription> => {
-    const response = await api.post<PumpFunSubscription>('/live/subscribe', {
-      mint_id: mintId,
-      ...config,
+    return await pluginService.executeOperation('PumpFunPlugin', 'subscribe', {
+      collection_uri: mintId,
+      config: {
+        stream_id: mintId,
+        stream_name: config?.stream_name || mintId,
+        priority: config?.priority || 5
+      }
     });
-    return response.data;
   },
 
   // Unsubscribe from a PumpFun stream
   unsubscribe: async (mintId: string): Promise<{ message: string }> => {
-    const response = await api.delete<{ message: string }>(`/live/unsubscribe/${mintId}`);
-    return response.data;
+    return await pluginService.executeOperation('PumpFunPlugin', 'unsubscribe', { collection_id: mintId });
   },
 
   // Enable a subscription
   enableSubscription: async (mintId: string): Promise<{ message: string }> => {
-    const response = await api.patch<{ message: string }>(`/live/subscription/${mintId}`, {
-      enabled: true,
+    const subscription = await pumpfunService.getSubscription(mintId);
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+    
+    // Since we merged the backend to use plugin.config directly, 
+    // we need to re-subscribe to enable it
+    await pumpfunService.unsubscribe(mintId);
+    return await pumpfunService.subscribe(mintId, {
+      stream_name: subscription.stream_name,
+      priority: subscription.priority
     });
-    return response.data;
   },
 
   // Disable a subscription
   disableSubscription: async (mintId: string): Promise<{ message: string }> => {
-    const response = await api.patch<{ message: string }>(`/live/subscription/${mintId}`, {
-      enabled: false,
-    });
-    return response.data;
+    return await pumpfunService.unsubscribe(mintId);
   },
 
   // Update subscription
   updateSubscription: async (mintId: string, updates: {
     priority?: number;
   }): Promise<PumpFunSubscription> => {
-    const response = await api.patch<PumpFunSubscription>(`/live/subscription/${mintId}`, updates);
-    return response.data;
+    const subscription = await pumpfunService.getSubscription(mintId);
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+    
+    // Since we're using plugin.config directly, we need to re-subscribe with updated config
+    await pumpfunService.unsubscribe(mintId);
+    return await pumpfunService.subscribe(mintId, {
+      stream_name: subscription.stream_name,
+      priority: updates.priority ?? subscription.priority
+    });
   },
 
   // Get recording status for a stream

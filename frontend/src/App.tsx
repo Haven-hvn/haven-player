@@ -29,6 +29,8 @@ import {
 import DePinDashboard from "@/components/DePinDashboard";
 import PluginManagementPage from "@/components/Plugins/PluginManagementPage";
 import PluginSourcesView from "@/components/Plugins/PluginSourcesView";
+import PumpFunStreamsView from "@/components/LivestreamRecorder/PumpFunStreamsView";
+import usePumpFunSources from "@/hooks/usePumpFunSources";
 import {
   SettingsNavigationProvider,
   useSettingsNavigation,
@@ -1002,6 +1004,74 @@ const GlobalConfigurationModal: React.FC = () => {
   );
 };
 
+// Wrapper component for PumpFunPlugin streams view
+const PumpFunStreamsWrapper: React.FC = () => {
+  const {
+    streams,
+    subscriptions,
+    loading,
+    loadingStreams,
+    loadingSubscriptions,
+    error,
+    errorStreams,
+    errorSubscriptions,
+    refresh,
+    refreshStreams,
+    refreshSubscriptions,
+    subscribe,
+    unsubscribe,
+    updateSubscription,
+  } = usePumpFunSources({ pluginName: "PumpFunPlugin", autoRefresh: true, refreshInterval: 30000 });
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        height: "100vh",
+        backgroundColor: "#FFFFFF",
+        borderRadius: "16px",
+        overflow: "hidden",
+        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
+        margin: "8px",
+        border: "1px solid #F0F0F0",
+      }}
+    >
+      <Box
+        sx={{
+          background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
+          borderRight: "1px solid #E8E8E8",
+        }}
+      >
+        <Sidebar />
+      </Box>
+
+      <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+        <Box
+          sx={{
+            flexGrow: 1,
+            backgroundColor: "#FFFFFF",
+            padding: "16px",
+            height: "100%",
+            overflow: "auto",
+          }}
+        >
+          <PumpFunStreamsView
+            pluginName="PumpFunPlugin"
+            streams={streams}
+            subscriptions={subscriptions}
+            loading={loading}
+            error={errorStreams || errorSubscriptions}
+            onRefresh={refresh}
+            onSubscribe={subscribe}
+            onUnsubscribe={unsubscribe}
+            onUpdateSubscription={updateSubscription}
+          />
+        </Box>
+      </Box>
+    </Box>
+  );
+};
+
 const App: React.FC = () => {
   return (
     <SettingsNavigationProvider>
@@ -1137,6 +1207,10 @@ const App: React.FC = () => {
                     </Box>
                   </Box>
                 }
+              />
+              <Route
+                path="/plugins/PumpFunPlugin/sources"
+                element={<PumpFunStreamsWrapper />}
               />
               <Route path="/player/:videoPath" element={<VideoPlayer />} />
             </Routes>

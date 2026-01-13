@@ -320,7 +320,9 @@ export const pluginService = {
       operation,
       params: params || {}
     });
-    return response.data;
+    // Extract the actual result from the response wrapper
+    // Backend returns: { success, plugin, operation, result }
+    return response.data.result;
   },
 
   // ============================================

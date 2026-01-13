@@ -29,11 +29,13 @@ export default function usePumpFunSources({
     setError((prev) => ({ ...prev, streams: null }));
     try {
       const result = await pumpfunService.getStreams();
-      setStreams(result);
+      // Ensure result is an array
+      setStreams(Array.isArray(result) ? result : []);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load streams";
       setError((prev) => ({ ...prev, streams: errorMessage }));
       console.error("Error loading streams:", err);
+      setStreams([]); // Ensure streams is always an array on error
     } finally {
       setLoading((prev) => ({ ...prev, streams: false }));
     }
@@ -44,11 +46,13 @@ export default function usePumpFunSources({
     setError((prev) => ({ ...prev, subscriptions: null }));
     try {
       const result = await pumpfunService.getSubscriptions();
-      setSubscriptions(result);
+      // Ensure result is an array
+      setSubscriptions(Array.isArray(result) ? result : []);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load subscriptions";
       setError((prev) => ({ ...prev, subscriptions: errorMessage }));
       console.error("Error loading subscriptions:", err);
+      setSubscriptions([]); // Ensure subscriptions is always an array on error
     } finally {
       setLoading((prev) => ({ ...prev, subscriptions: false }));
     }

@@ -253,8 +253,64 @@ class TestPluginManager:
     async def test_restart_plugin_not_loaded(self, plugin_manager):
         """Test restarting a plugin that's not loaded."""
         success = await plugin_manager.restart_plugin("nonexistent")
-        
+
         assert success is False
+
+    @pytest.mark.asyncio
+    async def test_unload_plugin_deletes_jobs(self, plugin_manager, mock_plugin):
+        """Test that unloading a plugin deletes its associated jobs."""
+        # Register and load plugin
+        plugin_manager.plugin_classes["MockPlugin"] = MockPlugin
+
+        # Set up a mock job scheduler
+        mock_job_scheduler = Mock()
+        mock_job_scheduler.delete_jobs_for_plugin = AsyncMock(return_value=2)
+        plugin_manager.job_scheduler = mock_job_scheduler
+
+        await plugin_manager.load_plugin("MockPlugin", {})
+
+        # Unload the plugin
+        success = await plugin_manager.unload_plugin("mock-plugin")
+
+        assert success is True
+        assert "mock-plugin" not in plugin_manager.plugins
+        # Verify delete_jobs_for_plugin was called
+        mock_job_scheduler.delete_jobs_for_plugin.assert_called_once_with("mock-plugin")
+
+    @pytest.mark.asyncio
+    async def test_unload_plugin_without_job_scheduler(self, plugin_manager, mock_plugin):
+        """Test that unloading a plugin works without a job scheduler."""
+        # Register and load plugin without job scheduler
+        plugin_manager.plugin_classes["MockPlugin"] = MockPlugin
+        plugin_manager.job_scheduler = None
+
+        await plugin_manager.load_plugin("MockPlugin", {})
+
+        # Unload the plugin (should succeed even without job scheduler)
+        success = await plugin_manager.unload_plugin("mock-plugin")
+
+        assert success is True
+        assert "mock-plugin" not in plugin_manager.plugins
+
+    @pytest.mark.asyncio
+    async def test_unload_plugin_job_deletion_fails(self, plugin_manager, mock_plugin):
+        """Test that unloading a plugin continues even if job deletion fails."""
+        # Register and load plugin
+        plugin_manager.plugin_classes["MockPlugin"] = MockPlugin
+
+        # Set up a mock job scheduler that fails
+        mock_job_scheduler = Mock()
+        mock_job_scheduler.delete_jobs_for_plugin = AsyncMock(side_effect=Exception("DB error"))
+        plugin_manager.job_scheduler = mock_job_scheduler
+
+        await plugin_manager.load_plugin("MockPlugin", {})
+
+        # Unload should fail due to job deletion error
+        success = await plugin_manager.unload_plugin("mock-plugin")
+
+        assert success is False
+        # Verify delete_jobs_for_plugin was called
+        mock_job_scheduler.delete_jobs_for_plugin.assert_called_once_with("mock-plugin")
 
 
 class TestPluginInterface:

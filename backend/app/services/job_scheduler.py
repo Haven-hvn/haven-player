@@ -591,13 +591,56 @@ class JobScheduler:
         finally:
             db.close()
     
+    async def delete_jobs_for_plugin(self, plugin_name: str) -> int:
+        """
+        Delete all recurring jobs for a specific plugin.
+
+        Args:
+            plugin_name: Name of the plugin
+
+        Returns:
+            Number of jobs deleted
+        """
+        db = SessionLocal()
+        try:
+            # Query all jobs for the plugin
+            jobs = db.query(RecurringJob).filter(
+                RecurringJob.plugin_name == plugin_name
+            ).all()
+
+            deleted_count = 0
+            for job in jobs:
+                try:
+                    # Remove from scheduler
+                    job_key = f"job_{job.id}"
+                    if self.scheduler.get_job(job_key):
+                        self.scheduler.remove_job(job_key)
+
+                    # Remove from database
+                    db.delete(job)
+                    deleted_count += 1
+                    logger.info(f"Deleted job {job.job_name} for plugin {plugin_name}")
+                except Exception as e:
+                    logger.error(f"Failed to delete job {job.job_name}: {e}")
+
+            db.commit()
+            logger.info(f"Deleted {deleted_count} job(s) for plugin {plugin_name}")
+            return deleted_count
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to delete jobs for plugin {plugin_name}: {e}")
+            return 0
+        finally:
+            db.close()
+
     async def pause_job(self, job_id: int) -> bool:
         """
         Pause a recurring job.
-        
+
         Args:
             job_id: ID of the job to pause
-            
+
         Returns:
             True if paused successfully
         """
@@ -606,18 +649,18 @@ class JobScheduler:
             job = db.query(RecurringJob).filter(RecurringJob.id == job_id).first()
             if not job:
                 return False
-            
+
             job.enabled = False
             db.commit()
-            
+
             # Remove from scheduler
             job_key = f"job_{job_id}"
             if self.scheduler.get_job(job_key):
                 self.scheduler.pause_job(job_key)
-            
+
             logger.info(f"Paused job {job_id}")
             return True
-        
+
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to pause job {job_id}: {e}")

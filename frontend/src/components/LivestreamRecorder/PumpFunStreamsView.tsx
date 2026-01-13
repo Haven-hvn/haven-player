@@ -87,11 +87,15 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
     }
   };
 
+  // Ensure streams and subscriptions are arrays
+  const safeStreams = Array.isArray(streams) ? streams : [];
+  const safeSubscriptions = Array.isArray(subscriptions) ? subscriptions : [];
+
   const getSubscriptionForStream = (stream: PumpFunStream): PumpFunSubscription | undefined => {
-    return subscriptions.find((sub) => sub.stream_id === stream.stream_id);
+    return safeSubscriptions.find((sub) => sub.stream_id === stream.stream_id);
   };
 
-  const filteredStreams = streams.filter((stream) => {
+  const filteredStreams = safeStreams.filter((stream) => {
     // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -147,10 +151,10 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
   });
 
   // Statistics
-  const liveStreamsCount = streams.filter((s) => s.is_currently_live).length;
-  const subscribedStreamsCount = subscriptions.length;
-  const subscribedLiveCount = subscriptions.filter((sub) => {
-    const stream = streams.find((s) => s.stream_id === sub.stream_id);
+  const liveStreamsCount = safeStreams.filter((s) => s.is_currently_live).length;
+  const subscribedStreamsCount = safeSubscriptions.length;
+  const subscribedLiveCount = safeSubscriptions.filter((sub) => {
+    const stream = safeStreams.find((s) => s.stream_id === sub.stream_id);
     return stream?.is_currently_live;
   }).length;
 
@@ -243,8 +247,8 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
       {/* Subscriptions Tab */}
       {activeTab === "subscriptions" && (
         <SubscriptionsPanel
-          subscriptions={subscriptions}
-          streams={streams}
+          subscriptions={safeSubscriptions}
+          streams={safeStreams}
           onUpdateSubscription={onUpdateSubscription}
           onUnsubscribe={handleUnsubscribe}
           unsubscribingStreams={unsubscribingStreams}
@@ -329,7 +333,7 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
           </Box>
 
           {/* Streams Grid */}
-          {loading && streams.length === 0 ? (
+          {loading && safeStreams.length === 0 ? (
             <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", flexGrow: 1, minHeight: 400 }}>
               <CircularProgress />
             </Box>

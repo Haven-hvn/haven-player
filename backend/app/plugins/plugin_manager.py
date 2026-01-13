@@ -465,30 +465,37 @@ class PluginManager:
     async def unload_plugin(self, plugin_name: str) -> bool:
         """
         Unload a plugin.
-        
+
         If the plugin is running in worker mode, the worker process will be stopped.
-        
+        All jobs associated with the plugin will also be deleted.
+
         Args:
             plugin_name: Name of the plugin to unload
-            
+
         Returns:
             True if plugin unloaded successfully, False otherwise
         """
         if plugin_name not in self.plugins:
             logger.warning(f"Plugin {plugin_name} not loaded")
             return False
-        
+
         try:
             # Stop worker if running
             if self.is_worker_plugin(plugin_name):
                 logger.info(f"Stopping worker for {plugin_name}")
                 await self.worker_manager.stop_worker(plugin_name)
-            
+
+            # Delete all jobs for this plugin
+            if self.job_scheduler:
+                logger.info(f"Deleting jobs for plugin {plugin_name}")
+                deleted_count = await self.job_scheduler.delete_jobs_for_plugin(plugin_name)
+                logger.info(f"Deleted {deleted_count} job(s) for plugin {plugin_name}")
+
             # Remove plugin from registry
             del self.plugins[plugin_name]
             if plugin_name in self.plugin_configs:
                 del self.plugin_configs[plugin_name]
-            
+
             logger.info(f"Unloaded plugin: {plugin_name}")
             return True
         except Exception as e:

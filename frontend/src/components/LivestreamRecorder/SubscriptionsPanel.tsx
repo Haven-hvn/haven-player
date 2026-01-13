@@ -48,8 +48,12 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ stream: PumpFunStream; subscription: PumpFunSubscription } | null>(null);
 
+  // Ensure streams and subscriptions are arrays
+  const safeStreams = Array.isArray(streams) ? streams : [];
+  const safeSubscriptions = Array.isArray(subscriptions) ? subscriptions : [];
+
   const getStreamForSubscription = (subscription: PumpFunSubscription): PumpFunStream | undefined => {
-    return streams.find((stream) => stream.stream_id === subscription.stream_id);
+    return safeStreams.find((stream) => stream.stream_id === subscription.stream_id);
   };
 
   const handleEnableToggle = async (subscription: PumpFunSubscription) => {
@@ -86,7 +90,7 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
     }
   };
 
-  const sortedSubscriptions = [...subscriptions].sort((a, b) => {
+  const sortedSubscriptions = [...safeSubscriptions].sort((a, b) => {
     // Sort by recording status: recording first
     if (a.is_currently_recording && !b.is_currently_recording) return -1;
     if (!a.is_currently_recording && b.is_currently_recording) return 1;
@@ -105,8 +109,8 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
     return a.stream_name.localeCompare(b.stream_name);
   });
 
-  const recordingSubscriptions = subscriptions.filter((sub) => sub.is_currently_recording).length;
-  const enabledSubscriptions = subscriptions.filter((sub) => sub.enabled).length;
+  const recordingSubscriptions = safeSubscriptions.filter((sub) => sub.is_currently_recording).length;
+  const enabledSubscriptions = safeSubscriptions.filter((sub) => sub.enabled).length;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -116,9 +120,9 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
           <Typography variant="caption" color="text.secondary">
             Total Subscriptions
           </Typography>
-          <Typography variant="h4" sx={{ fontWeight: 600, mt: 0.5 }}>
-            {subscriptions.length}
-          </Typography>
+            <Typography variant="h4" sx={{ fontWeight: 600, mt: 0.5 }}>
+              {safeSubscriptions.length}
+            </Typography>
         </Card>
         <Card sx={{ flex: 1, minWidth: 200, p: 2, backgroundColor: "#D1FAE5" }}>
           <Typography variant="caption" color="text.secondary">
@@ -139,7 +143,7 @@ const SubscriptionsPanel: React.FC<SubscriptionsPanelProps> = ({
       </Box>
 
       {/* Subscriptions List */}
-      {subscriptions.length === 0 ? (
+      {safeSubscriptions.length === 0 ? (
         <Alert severity="info" sx={{ mt: 2 }}>
           You haven't subscribed to any streams yet. Browse the available streams and subscribe to start auto-recording.
         </Alert>

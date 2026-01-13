@@ -7,7 +7,7 @@ python-dotenv==1.2.1
 pytest==9.0.2
 pytest-cov==7.0.0
 httpx==0.28.1
-vlm-engine==0.5.8
+vlm-engine==0.6.0
 livekit==1.0.23
 # opencv-python==4.10.0.84
 ImageHash==4.3.2

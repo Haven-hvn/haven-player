@@ -75,7 +75,6 @@ async def initialize_pumpfun_automated_recording(
                 on_success="log_only",
                 config={},  # Empty config, plugin uses its own config
                 enabled=True,
-                description="Automatically records subscribed PumpFun streams in 30-second segments with keyframe-based rotation"
             )
             
             db.add(new_job)

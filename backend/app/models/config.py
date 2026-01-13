@@ -16,7 +16,7 @@ class AppConfig(Base):
     vlm_return_timestamps: Mapped[bool] = mapped_column(Boolean, default=True)
     vlm_return_confidence: Mapped[bool] = mapped_column(Boolean, default=True)
     # Multiplexer Configuration
-    vlm_multiplexer_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    vlm_multiplexer_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     vlm_multiplexer_endpoints: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
     # LLM Configuration
     llm_base_url: Mapped[str] = mapped_column(String, default="http://localhost:1234")

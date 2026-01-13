@@ -191,31 +191,42 @@ class JobScheduler:
         finally:
             db.close()
     
-    async def _schedule_job(self, job: RecurringJob) -> None:
+    async def schedule_job(self, job: RecurringJob) -> None:
         """
         Schedule a job with APScheduler.
-        
+
         Args:
             job: RecurringJob model instance
         """
         try:
             # Parse cron schedule
             parts = job.schedule.split()
-            if len(parts) != 5:
+
+            # Support both 5-part (minute hour day month weekday) and 6-part (second minute hour day month weekday) formats
+            if len(parts) == 6:
+                second, minute, hour, day, month, weekday = parts
+            elif len(parts) == 5:
+                minute, hour, day, month, weekday = parts
+                second = None
+            else:
                 logger.error(f"Invalid cron schedule for job {job.job_name}: {job.schedule}")
                 return
-            
-            minute, hour, day, month, weekday = parts
-            
+
             # Create cron trigger
-            trigger = CronTrigger(
-                minute=minute,
-                hour=hour,
-                day=day,
-                month=month,
-                day_of_week=weekday,
-                timezone='UTC'
-            )
+            trigger_kwargs = {
+                "minute": minute,
+                "hour": hour,
+                "day": day,
+                "month": month,
+                "day_of_week": weekday,
+                "timezone": 'UTC'
+            }
+
+            # Add seconds if specified
+            if second:
+                trigger_kwargs["second"] = second
+
+            trigger = CronTrigger(**trigger_kwargs)
             
             # Schedule the job using module-level function to avoid pickling issues
             self.scheduler.add_job(
@@ -419,18 +430,22 @@ class JobScheduler:
         
         return result
     
-    async def create_job(
+    async def ensure_job(
         self,
         plugin_name: str,
         job_name: str,
         schedule: str,
         method: str = "discover_sources",
         on_success: str = "log_only",
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        enabled: bool = True
     ) -> RecurringJob:
         """
-        Create a new recurring job.
-        
+        Ensure a job exists and is scheduled. Creates job if it doesn't exist.
+
+        This is useful for initialization scenarios where you want to ensure
+        a specific job exists without failing if it's already present.
+
         Args:
             plugin_name: Name of the plugin
             job_name: Unique name for the job
@@ -438,7 +453,66 @@ class JobScheduler:
             method: Plugin method to call
             on_success: What to do with results ("log_only", "archive_all", "archive_new")
             config: Additional configuration for the job
-            
+            enabled: Whether the job should be enabled
+
+        Returns:
+            The RecurringJob instance (existing or newly created)
+        """
+        db = SessionLocal()
+        try:
+            # Check if job already exists
+            existing_job = db.query(RecurringJob).filter(
+                RecurringJob.plugin_name == plugin_name,
+                RecurringJob.job_name == job_name
+            ).first()
+
+            if existing_job:
+                logger.info(f"Job already exists: {plugin_name}:{job_name} (id: {existing_job.id})")
+
+                # Ensure job is scheduled
+                if self.scheduler:
+                    scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
+                    if not scheduled_job:
+                        logger.info(f"Rescheduling existing job: {plugin_name}:{job_name}")
+                        await self.schedule_job(existing_job)
+
+                return existing_job
+
+            # Create new job
+            logger.info(f"Creating new job: {plugin_name}:{job_name}")
+            return await self.create_job(
+                plugin_name=plugin_name,
+                job_name=job_name,
+                schedule=schedule,
+                method=method,
+                on_success=on_success,
+                config=config
+            )
+        finally:
+            db.close()
+
+    async def create_job(
+        self,
+        plugin_name: str,
+        job_name: str,
+        schedule: str,
+        method: str = "discover_sources",
+        on_success: str = "log_only",
+        config: Optional[Dict[str, Any]] = None,
+        enabled: bool = True
+    ) -> RecurringJob:
+        """
+        Create a new recurring job.
+
+        Args:
+            plugin_name: Name of the plugin
+            job_name: Unique name for the job
+            schedule: Cron-like schedule (e.g., "0 * * * *")
+            method: Plugin method to call
+            on_success: What to do with results ("log_only", "archive_all", "archive_new")
+            config: Additional configuration for the job
+            enabled: Whether the job should be enabled
+
         Returns:
             Created RecurringJob instance
         """
@@ -462,7 +536,8 @@ class JobScheduler:
                 schedule=schedule,
                 method=method,
                 on_success=on_success,
-                config=sanitized_config
+                config=sanitized_config,
+                enabled=enabled
             )
             
             db.add(job)

@@ -99,24 +99,42 @@ async def lifespan(app: FastAPI):
     # Discover all plugins
     discovered = plugin_manager.discover_plugins()
     print(f"✅ Discovered {discovered} plugins")
-    
+
+    # Initialize job scheduler BEFORE loading plugins
+    # This allows plugins to create their default jobs during loading
+    global job_scheduler, upload_coordinator
+    job_scheduler = JobScheduler(plugin_manager)
+    await job_scheduler.start()
+    recurring_jobs.job_scheduler = job_scheduler
+
+    # Set job scheduler reference in plugin manager
+    plugin_manager.set_job_scheduler(job_scheduler)
+
+    # Set upload coordinator reference in API module
+    upload_coordinator = job_scheduler.upload_coordinator
+    upload_coordinator_config.upload_coordinator = upload_coordinator
+
+    print(f"✅ Job scheduler initialized")
+    print(f"✅ Upload coordinator initialized (enabled={upload_coordinator.config.get('enabled')})")
+
     # Load plugins from database configuration
+    # Default jobs will be created automatically during plugin loading
     enabled_plugins = db.query(PluginModel).filter(
         PluginModel.enabled == True
     ).all()
-    
+
     loaded_count = 0
     worker_count = 0
-    
+
     for db_plugin in enabled_plugins:
         try:
             config = db_plugin.config or {}
             success = await plugin_manager.load_plugin(db_plugin.name, config)
-            
+
             if success:
                 is_worker = plugin_manager.is_worker_plugin(db_plugin.name)
                 mode = "🔧 Data Plane (Worker)" if is_worker else "🎛️  Control Plane"
-                
+
                 print(f"  ✅ Loaded plugin: {db_plugin.name} ({mode})")
                 loaded_count += 1
                 if is_worker:
@@ -125,12 +143,12 @@ async def lifespan(app: FastAPI):
                 print(f"  ⚠️  Failed to load plugin: {db_plugin.name}")
         except Exception as e:
             print(f"  ❌ Error loading plugin {db_plugin.name}: {e}")
-    
+
     db.close()
-    
+
     # Set plugin manager in API module
     plugins.plugin_manager = plugin_manager
-    
+
     print(f"✅ Plugin manager initialized with {loaded_count} loaded plugins ({worker_count} in data plane)")
     
     # List active workers
@@ -140,18 +158,6 @@ async def lifespan(app: FastAPI):
         for worker in workers:
             print(f"  - {worker['plugin_name']}: PID={worker['pid']}, Alive={worker['is_alive']}")
     
-    # Initialize job scheduler
-    global job_scheduler, upload_coordinator
-    job_scheduler = JobScheduler(plugin_manager)
-    await job_scheduler.start()
-    recurring_jobs.job_scheduler = job_scheduler
-
-    # Set upload coordinator reference in API module
-    upload_coordinator = job_scheduler.upload_coordinator
-    upload_coordinator_config.upload_coordinator = upload_coordinator
-
-    print(f"✅ Job scheduler initialized")
-    print(f"✅ Upload coordinator initialized (enabled={upload_coordinator.config.get('enabled')})")
 
     # Initialize Arkiv sync worker
     global arkiv_sync_worker_task
@@ -162,14 +168,6 @@ async def lifespan(app: FastAPI):
     global vlm_analysis_worker_task
     vlm_analysis_worker_task = asyncio.create_task(run_vlm_analysis_worker())
     print("✅ VLM analysis worker initialized")
-
-    # Initialize PumpFun automated recording job
-    try:
-        from app.services.initialize_pumpfun_recording import initialize_pumpfun_automated_recording
-        await initialize_pumpfun_automated_recording(job_scheduler, plugin_manager)
-        print("✅ PumpFun automated recording job initialized")
-    except Exception as e:
-        print(f"⚠️  Failed to initialize PumpFun automated recording job: {e}")
 
     yield
     

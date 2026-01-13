@@ -19,6 +19,7 @@ from app.plugins.plugin_interface import (
     MediaSource,
     ArchiveResult,
     MediaType,
+    DefaultJobConfig,
 )
 from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 from app.models.database import get_db as get_db_session
@@ -65,6 +66,16 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 "get_config", "update_config", "get_default_config",
                 "manage_recordings",  # ADD THIS for automated segmented recording
             ],
+            default_jobs=[
+                DefaultJobConfig(
+                    job_name="auto_segmented_recordings",
+                    schedule="*/30 * * * * *",  # Every 30 seconds
+                    method="manage_recordings",
+                    on_success="log_only",
+                    config={},
+                    enabled=True
+                )
+            ]
         )
     
     async def initialize(self, config: Dict[str, Any]) -> bool:

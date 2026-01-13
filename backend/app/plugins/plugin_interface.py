@@ -106,6 +106,49 @@ class ArchiveResult:
         }
 
 
+class DefaultJobConfig:
+    """
+    Configuration for a default job that a plugin recommends.
+
+    These jobs are automatically created when the plugin is loaded/enabled.
+
+    Attributes:
+        job_name: Unique name for the job
+        schedule: Cron-like schedule (e.g., "0 * * * *")
+        method: Plugin method to call
+        on_success: What to do with results ("log_only", "archive_all", "archive_new")
+        config: Additional configuration for the job
+        enabled: Whether the job should be enabled by default
+    """
+
+    def __init__(
+        self,
+        job_name: str,
+        schedule: str,
+        method: str = "discover_sources",
+        on_success: str = "log_only",
+        config: Optional[Dict[str, Any]] = None,
+        enabled: bool = True
+    ):
+        self.job_name = job_name
+        self.schedule = schedule
+        self.method = method
+        self.on_success = on_success
+        self.config = config or {}
+        self.enabled = enabled
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "job_name": self.job_name,
+            "schedule": self.schedule,
+            "method": self.method,
+            "on_success": self.on_success,
+            "config": self.config,
+            "enabled": self.enabled
+        }
+
+
 class PluginMetadata:
     """
     Plugin metadata information.
@@ -126,6 +169,7 @@ class PluginMetadata:
         media_types: List[MediaType],
         author: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
+        default_jobs: Optional[List[DefaultJobConfig]] = None
     ):
         self.name = name
         self.version = version
@@ -133,6 +177,7 @@ class PluginMetadata:
         self.media_types = media_types
         self.author = author
         self.capabilities = capabilities or []
+        self.default_jobs = default_jobs or []
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
@@ -143,6 +188,7 @@ class PluginMetadata:
             "media_types": [t.value for t in self.media_types],
             "author": self.author,
             "capabilities": self.capabilities,
+            "default_jobs": [job.to_dict() for job in self.default_jobs]
         }
 
 

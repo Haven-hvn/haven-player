@@ -23,6 +23,7 @@ from app.plugins.plugin_interface import (
     MediaSource,
     ArchiveResult,
     MediaType,
+    DefaultJobConfig,
 )
 from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 
@@ -58,6 +59,16 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             description="Archives torrents from the Glitter protocol.",
             media_types=[MediaType.BITTORRENT],
             author="Haven Team",
+            default_jobs=[
+                DefaultJobConfig(
+                    job_name="poll_subscriptions",
+                    schedule="45 * * * *",  # 45th minute of every hour
+                    method="discover_sources",
+                    on_success="archive_all",
+                    config={},
+                    enabled=True
+                )
+            ]
         )
 
     async def initialize(self, config: Dict[str, Any]) -> bool:

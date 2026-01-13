@@ -11,6 +11,16 @@ from app.models.upload_queue import UploadQueue
 from app.services.vlm_config import create_engine_config, get_vlm_processing_params
 from vlm_engine import VLMEngine
 
+# Import decord for specific error handling
+try:
+    from decord._ffi.base import DECORDError
+    DECORD_AVAILABLE = True
+except ImportError:
+    DECORD_AVAILABLE = False
+    # Create a dummy exception for type checking
+    class DECORDError(Exception):
+        pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +49,10 @@ async def process_video_with_progress(
         
     Returns:
         Dictionary containing VLM analysis results
+        
+    Raises:
+        DECORDError: If decord encounters a decode error (corrupt/incompatible video)
+        Exception: For other processing errors
     """
     db = SessionLocal()
     try:
@@ -89,23 +103,43 @@ async def process_video_with_progress(
         
         # Process video directly with progress callback
         logger.info(f"Starting VLM processing for video: {video_path}")
-        results = await engine.process_video(
-            video_path,
-            progress_callback=wrapped_progress_callback,
-            frame_interval=frame_interval_val,
-            threshold=threshold_val,
-            return_timestamps=return_timestamps_val,
-            return_confidence=return_confidence_val,
-            vr_video=vr_video_val,
-            existing_json_data=None,
-            skipped_categories=None
-        )
-        
+
+        try:
+            results = await engine.process_video(
+                video_path,
+                progress_callback=wrapped_progress_callback,
+                frame_interval=frame_interval_val,
+                threshold=threshold_val,
+                return_timestamps=return_timestamps_val,
+                return_confidence=return_confidence_val,
+                vr_video=vr_video_val,
+                existing_json_data=None,
+                skipped_categories=None
+            )
+        except DECORDError as e:
+            error_msg = (
+                f"Decord decode error for video {video_path}: {str(e)}. "
+                f"This indicates the video file is corrupted, has an incompatible format, "
+                f"or contains streams decord cannot decode properly. "
+                f"Error originates in decord C++ extension, not Python code."
+            )
+            logger.error(error_msg, exc_info=True)
+            # Re-raise with more context
+            raise DECORDError(error_msg) from e
+            
         logger.info(f"Completed VLM processing for video: {video_path}")
         return results
         
     except Exception as e:
-        logger.error(f"Error processing video {video_path}: {str(e)}", exc_info=True)
+        error_msg = f"Error processing video {video_path}"
+
+        # Provide specific context for known error types
+        if isinstance(e, DECORDError):
+            # Already logged with context above
+            pass
+        else:
+            logger.error(f"{error_msg}: {str(e)}", exc_info=True)
+
         raise
     finally:
         db.close()
@@ -115,6 +149,10 @@ async def process_video_async(job_id: int, video_path: str):
     """
     Process a video asynchronously using VLM engine.
     Updates job progress and saves results to database.
+    
+    Args:
+        job_id: AnalysisJob ID
+        video_path: Path to the video file
     """
     try:
         # Process video with progress tracking using default parameters
@@ -154,6 +192,21 @@ async def process_video_async(job_id: int, video_path: str):
         finally:
             db.close()
             
+    except DECORDError as e:
+        logger.error(f"Decord decode error for video {video_path}: {str(e)}", exc_info=True)
+        db = SessionLocal()
+        try:
+            job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+            if job:
+                job.status = 'failed'
+                job.error = (
+                    f"Video decode error: {str(e)}\n\n"
+                    f"This video format is incompatible with the VLM engine. "
+                    f"The video may need to be transcoded to a standard format (e.g., H.264 in MP4 container)."
+                )
+                db.commit()
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error processing video {video_path}: {str(e)}", exc_info=True)
         db = SessionLocal()
@@ -175,6 +228,10 @@ async def process_video_for_queue(queue_id: int, video_path: str):
     Args:
         queue_id: Upload queue entry ID
         video_path: Path to the video file
+        
+    Raises:
+        DECORDError: If decord encounters a decode error
+        Exception: For other processing errors
     """
     try:
         # Process video without job progress tracking using default parameters
@@ -206,9 +263,18 @@ async def process_video_for_queue(queue_id: int, video_path: str):
         finally:
             db.close()
             
+    except DECORDError as e:
+        error_msg = f"Decord decode error for video {video_path}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        # Re-raise with helpful context
+        raise DECORDError(
+            f"{error_msg}\n\nThis video format is incompatible with the VLM engine. "
+            f"The video may need to be transcoded to a standard format (e.g., H.264 in MP4 container)."
+        ) from e
     except Exception as e:
-        logger.error(f"Error processing video {video_path} in queue: {str(e)}", exc_info=True)
-        # Note: Error status is updated by the worker, not here
+        error_msg = f"Error processing video {video_path} in queue: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        # Re-raise to let the caller handle status update
         raise
 
 

@@ -22,6 +22,10 @@ from app.plugins.plugin_interface import (
     ArchiveResult,
 )
 from app.plugins.plugin_worker_manager import PluginWorkerManager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.job_scheduler import JobScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,7 @@ class PluginManager:
     def __init__(self, plugin_dirs: Optional[List[str]] = None, max_workers: int = 4):
         """
         Initialize the plugin manager.
-        
+
         Args:
             plugin_dirs: List of directories to scan for plugins
             max_workers: Maximum number of worker processes for data plane
@@ -61,7 +65,8 @@ class PluginManager:
         self.plugins: Dict[str, ArchiverPlugin] = {}  # Loaded plugin instances
         self.plugin_classes: Dict[str, Type[ArchiverPlugin]] = {}  # Discovered plugin classes
         self.plugin_configs: Dict[str, Dict] = {}  # Plugin configurations
-        
+        self.job_scheduler: Optional['JobScheduler'] = None  # Job scheduler for creating default jobs
+
         # Control/Data plane: Worker manager for data plane operations
         self.worker_manager = PluginWorkerManager(max_workers=max_workers)
         
@@ -76,12 +81,55 @@ class PluginManager:
     def set_worker_plugins(self, plugin_names: List[str]) -> None:
         """
         Set which plugins should run in worker processes.
-        
+
         Args:
             plugin_names: List of plugin names that should use worker mode
         """
         self.worker_plugins = set(plugin_names)
         logger.info(f"Worker mode enabled for plugins: {plugin_names}")
+
+    def set_job_scheduler(self, job_scheduler: 'JobScheduler') -> None:
+        """
+        Set the job scheduler for creating default plugin jobs.
+
+        Args:
+            job_scheduler: JobScheduler instance
+        """
+        self.job_scheduler = job_scheduler
+        logger.info("Job scheduler set in plugin manager")
+
+    async def _create_default_jobs(self, plugin: ArchiverPlugin) -> None:
+        """
+        Create default jobs for a plugin.
+
+        Called after a plugin is loaded.
+
+        Args:
+            plugin: The loaded plugin instance
+        """
+        if not self.job_scheduler:
+            logger.debug("No job scheduler set, skipping default job creation")
+            return
+
+        metadata = plugin.get_metadata()
+        if not hasattr(metadata, 'default_jobs') or not metadata.default_jobs:
+            return
+
+        logger.info(f"Creating {len(metadata.default_jobs)} default job(s) for {metadata.name}...")
+        for job_config in metadata.default_jobs:
+            try:
+                await self.job_scheduler.ensure_job(
+                    plugin_name=metadata.name,
+                    job_name=job_config.job_name,
+                    schedule=job_config.schedule,
+                    method=job_config.method,
+                    on_success=job_config.on_success,
+                    config=job_config.config,
+                    enabled=job_config.enabled
+                )
+                logger.info(f"✅ Created default job: {job_config.job_name}")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to create default job {job_config.job_name}: {e}")
     
     def is_worker_plugin(self, plugin_name: str) -> bool:
         """
@@ -349,6 +397,10 @@ class PluginManager:
             # Register plugin
             self.plugins[metadata.name] = plugin
             logger.info(f"✅ Loaded plugin: {metadata.name} v{metadata.version} (control plane)")
+
+            # Create default jobs
+            await self._create_default_jobs(plugin)
+
             return True
         
         except Exception as e:
@@ -392,12 +444,16 @@ class PluginManager:
             
             # Store config
             self.plugin_configs[plugin_name] = config
-            
+
             # Register plugin in control plane
             self.plugins[plugin_name] = plugin
-            
+
             metadata = plugin.get_metadata()
             logger.info(f"✅ Loaded plugin: {metadata.name} v{metadata.version} (data plane)")
+
+            # Create default jobs
+            await self._create_default_jobs(plugin)
+
             return True
         
         except Exception as e:

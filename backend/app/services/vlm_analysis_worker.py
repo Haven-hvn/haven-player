@@ -149,9 +149,49 @@ class VLMAnalysisWorker:
             logger.info(f"✅ VLM analysis successful for {queue_entry.video_path}")
             return True
 
+        except asyncio.TimeoutError as e:
+            logger.error(f"VLM analysis timeout for {queue_id}: {e}")
+            await self.mark_vlm_analysis_failed(
+                queue_id,
+                (
+                    f"Processing timeout (VLM engine hung for >5 minutes).\n\n"
+                    f"This is caused by synchronous HTTP blocking in the single-endpoint client, NOT Decord.\n"
+                    f"Decord processes frames quickly; the synchronous requests.post() call blocks the Python\n"
+                    f"interpreter for 1+ minutes during LLM API calls, making backend APIs unavailable.\n"
+                    f"Enable multiplexer (VLM configuration) to use async httpx client instead.\n"
+                    f"Technical details: {str(e)}"
+                )
+            )
+            return False
         except Exception as e:
+            # Import DECORDError if available
+            from app.services.vlm_processor import DECORDError
+            
+            error_message = str(e)
+            
+            # Provide actionable guidance for common errors
+            if isinstance(e, DECORDError) or "DECORDError" in error_message or ("decord" in error_message.lower() and "Error sending packet" in error_message):
+                guidance = (
+                    f"Decord decode error - video format incompatible with VLM engine.\n\n"
+                    f"The video '{queue_entry.video_path}' uses a format or codec that the "
+                    f"decord/FFmpeg decoder cannot process. Common causes:\n"
+                    f"- Corrupt video file\n"
+                    f"- Non-standard codec or container format\n"
+                    f"- Video with multiple streams that confuse the decoder\n\n"
+                    f"Solution: Transcode the video to a standard format:\n"
+                    f"  ffmpeg -i \"{queue_entry.video_path}\" -c:v libx264 -c:a aac \"{queue_entry.video_path}_converted.mp4\"\n\n"
+                    f"Technical details: {error_message}"
+                )
+                await self.mark_vlm_analysis_failed(queue_id, guidance)
+            else:
+                generic_error = (
+                    f"VLM analysis failed: {error_message}\n\n"
+                    f"If this persists, the video may be in an incompatible format or "
+                    f"there may be an issue with the VLM engine configuration."
+                )
+                await self.mark_vlm_analysis_failed(queue_id, generic_error)
+            
             logger.error(f"VLM analysis failed for {queue_id}: {e}", exc_info=True)
-            await self.mark_vlm_analysis_failed(queue_id, str(e))
             return False
         finally:
             db.close()

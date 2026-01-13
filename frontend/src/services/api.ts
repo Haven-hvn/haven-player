@@ -462,13 +462,13 @@ export const pumpfunService = {
   },
 
   // Enable a subscription
-  enableSubscription: async (mintId: string): Promise<{ message: string }> => {
+  enableSubscription: async (mintId: string): Promise<PumpFunSubscription> => {
     const subscription = await pumpfunService.getSubscription(mintId);
     if (!subscription) {
       throw new Error('Subscription not found');
     }
-    
-    // Since we merged the backend to use plugin.config directly, 
+
+    // Since we merged the backend to use plugin.config directly,
     // we need to re-subscribe to enable it
     await pumpfunService.unsubscribe(mintId);
     return await pumpfunService.subscribe(mintId, {

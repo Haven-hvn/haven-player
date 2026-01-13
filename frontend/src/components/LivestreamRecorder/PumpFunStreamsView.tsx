@@ -348,7 +348,7 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
           ) : (
             <Grid container spacing={2}>
               {sortedStreams.map((stream) => (
-                <Grid item xs={12} sm={6} md={4} lg={3} key={stream.stream_id}>
+                <Grid xs={12} sm={6} md={4} lg={3} key={stream.stream_id}>
                   <PumpFunStreamCard
                     stream={stream}
                     subscription={getSubscriptionForStream(stream)}

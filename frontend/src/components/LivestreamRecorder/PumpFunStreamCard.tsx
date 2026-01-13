@@ -233,6 +233,7 @@ const PumpFunStreamCard: React.FC<PumpFunStreamCardProps> = ({
             )}
           </Box>
         )}
+      </CardContent>
 
       {/* Action buttons */}
       <Box sx={{ p: 1.5, borderTop: "1px solid #F0F0F0", display: "flex", gap: 1 }}>

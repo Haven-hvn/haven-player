@@ -183,10 +183,10 @@ class JobScheduler:
             jobs = db.query(RecurringJob).filter(
                 RecurringJob.enabled == True
             ).all()
-            
+
             for job in jobs:
-                await self._schedule_job(job)
-            
+                await self.schedule_job(job)
+
             logger.info(f"Loaded {len(jobs)} jobs from database")
         finally:
             db.close()
@@ -543,10 +543,10 @@ class JobScheduler:
             db.add(job)
             db.commit()
             db.refresh(job)
-            
+
             # Schedule the job
-            await self._schedule_job(job)
-            
+            await self.schedule_job(job)
+
             logger.info(f"Created job: {plugin_name}:{job_name}")
             return job
         
@@ -643,10 +643,10 @@ class JobScheduler:
             
             job.enabled = True
             db.commit()
-            
+
             # Reschedule in APScheduler
-            await self._schedule_job(job)
-            
+            await self.schedule_job(job)
+
             logger.info(f"Resumed job {job_id}")
             return True
         

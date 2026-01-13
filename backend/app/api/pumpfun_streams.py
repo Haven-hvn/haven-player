@@ -10,7 +10,7 @@ pumpfun_service = PumpFunService()
 
 
 class StreamInfo(BaseModel):
-    mint_id: str
+    stream_id: str
     name: str
     symbol: str
     description: Optional[str] = None
@@ -27,6 +27,7 @@ class StreamInfo(BaseModel):
     website: Optional[str] = None
     twitter: Optional[str] = None
     telegram: Optional[str] = None
+    uri: Optional[str] = None  # WebRTC URI format
 
 
 @router.get("/live", response_model=List[StreamInfo])
@@ -83,125 +84,125 @@ async def get_popular_streams(
         raise HTTPException(status_code=500, detail=f"Failed to get popular streams: {str(e)}")
 
 
-@router.get("/stream/{mint_id}", response_model=StreamInfo)
-async def get_stream_info(mint_id: str):
+@router.get("/stream/{stream_id}", response_model=StreamInfo)
+async def get_stream_info(stream_id: str):
     """
-    Get detailed information about a specific stream by mint_id.
-    
-    - **mint_id**: The mint ID of the coin/stream
+    Get detailed information about a specific stream by stream_id.
+
+    - **stream_id**: The stream ID of the coin/stream
     """
     try:
-        stream_info = await pumpfun_service.get_stream_info(mint_id)
-        
+        stream_info = await pumpfun_service.get_stream_info(stream_id)
+
         if not stream_info:
-            raise HTTPException(status_code=404, detail=f"Stream not found for mint_id: {mint_id}")
-        
+            raise HTTPException(status_code=404, detail=f"Stream not found for stream_id: {stream_id}")
+
         formatted_stream = pumpfun_service.format_stream_for_ui(stream_info)
         return formatted_stream
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stream info: {str(e)}")
 
 
-@router.get("/validate/{mint_id}")
-async def validate_stream(mint_id: str):
+@router.get("/validate/{stream_id}")
+async def validate_stream(stream_id: str):
     """
-    Validate if a mint_id corresponds to an active live stream.
-    
-    - **mint_id**: The mint ID to validate
+    Validate if a stream_id corresponds to an active live stream.
+
+    - **stream_id**: The stream ID to validate
     """
     try:
-        is_valid = await pumpfun_service.validate_mint_id(mint_id)
-        
+        is_valid = await pumpfun_service.validate_mint_id(stream_id)
+
         return {
-            "mint_id": mint_id,
+            "stream_id": stream_id,
             "is_valid": is_valid,
             "is_live": is_valid  # If valid, it's also live
         }
-        
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to validate mint_id: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to validate stream_id: {str(e)}")
 
 
-@router.get("/token/{mint_id}")
-async def get_stream_token(mint_id: str, livekit_url: str = "wss://pump-prod-tg2x8veh.livekit.cloud"):
+@router.get("/token/{stream_id}")
+async def get_stream_token(stream_id: str, livekit_url: str = "wss://pump-prod-tg2x8veh.livekit.cloud"):
     """
-    Get a LiveKit token for a specific mint_id stream.
-    
+    Get a LiveKit token for a specific stream_id stream.
+
     This is mainly for testing purposes. In normal operation,
     tokens are obtained automatically when starting a session.
-    
-    - **mint_id**: The mint ID of the coin/stream
+
+    - **stream_id**: The stream ID of the coin/stream
     - **livekit_url**: LiveKit server URL (optional, defaults to pump.fun)
     """
     try:
-        # Validate the mint_id first
-        is_valid = await pumpfun_service.validate_mint_id(mint_id)
+        # Validate the stream_id first
+        is_valid = await pumpfun_service.validate_mint_id(stream_id)
         if not is_valid:
-            raise HTTPException(status_code=404, detail=f"Stream not found or not live for mint_id: {mint_id}")
-        
+            raise HTTPException(status_code=404, detail=f"Stream not found or not live for stream_id: {stream_id}")
+
         # Get token
-        token = await pumpfun_service.get_livestream_token(mint_id, role="viewer", livekit_url=livekit_url)
-        
+        token = await pumpfun_service.get_livestream_token(stream_id, role="viewer", livekit_url=livekit_url)
+
         if not token:
-            raise HTTPException(status_code=500, detail=f"Failed to get token for mint_id: {mint_id}")
-        
+            raise HTTPException(status_code=500, detail=f"Failed to get token for stream_id: {stream_id}")
+
         return {
-            "mint_id": mint_id,
+            "stream_id": stream_id,
             "token": token,
             "livekit_url": livekit_url,
             "role": "viewer"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get token: {str(e)}")
 
 
-@router.get("/connection/{mint_id}")
-async def get_stream_connection_details(mint_id: str):
+@router.get("/connection/{stream_id}")
+async def get_stream_connection_details(stream_id: str):
     """
     Get complete LiveKit connection details for frontend recording.
-    
+
     This endpoint leverages the StreamManager to provide all necessary
     connection information for browser-side recording using RecordRTC.js.
-    
-    - **mint_id**: The mint ID of the coin/stream
+
+    - **stream_id**: The stream ID of the coin/stream
     """
     try:
         from app.services.stream_manager import StreamManager
-        
+
         # Initialize StreamManager
         stream_manager = StreamManager()
         await stream_manager.initialize()
-        
+
         # Start stream connection using StreamManager
-        stream_result = await stream_manager.start_stream(mint_id)
-        
+        stream_result = await stream_manager.start_stream(stream_id)
+
         if not stream_result.get("success"):
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"Failed to connect to stream: {stream_result.get('error', 'Unknown error')}"
             )
-        
+
         # Get LiveKit token for frontend connection
-        token = await pumpfun_service.get_livestream_token(mint_id, role="viewer")
-        
+        token = await pumpfun_service.get_livestream_token(stream_id, role="viewer")
+
         if not token:
-            raise HTTPException(status_code=500, detail=f"Failed to get token for mint_id: {mint_id}")
-        
+            raise HTTPException(status_code=500, detail=f"Failed to get token for stream_id: {stream_id}")
+
         # Get stream info from StreamManager
-        stream_info = await stream_manager.get_stream_info(mint_id)
-        
+        stream_info = await stream_manager.get_stream_info(stream_id)
+
         if not stream_info:
             raise HTTPException(status_code=500, detail="Stream info not available")
-        
+
         return {
             "success": True,
-            "mint_id": mint_id,
+            "stream_id": stream_id,
             "room_name": stream_info.room_name,
             "participant_sid": stream_info.participant_sid,
             "livekit_url": stream_info.stream_url,
@@ -210,44 +211,44 @@ async def get_stream_connection_details(mint_id: str):
             "stream_data": stream_info.stream_data,
             "connection_status": "active"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get connection details: {str(e)}")
 
 
-@router.post("/disconnect/{mint_id}")
-async def disconnect_stream(mint_id: str):
+@router.post("/disconnect/{stream_id}")
+async def disconnect_stream(stream_id: str):
     """
     Disconnect from a LiveKit stream.
-    
-    This endpoint cleans up the StreamManager connection for the given mint_id.
-    
-    - **mint_id**: The mint ID of the coin/stream to disconnect
+
+    This endpoint cleans up the StreamManager connection for the given stream_id.
+
+    - **stream_id**: The stream ID of the coin/stream to disconnect
     """
     try:
         from app.services.stream_manager import StreamManager
-        
+
         # Initialize StreamManager
         stream_manager = StreamManager()
         await stream_manager.initialize()
-        
+
         # Stop stream connection
-        result = await stream_manager.stop_stream(mint_id)
-        
+        result = await stream_manager.stop_stream(stream_id)
+
         if not result.get("success"):
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"Failed to disconnect stream: {result.get('error', 'Unknown error')}"
             )
-        
+
         return {
             "success": True,
-            "mint_id": mint_id,
+            "stream_id": stream_id,
             "message": "Stream disconnected successfully"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:

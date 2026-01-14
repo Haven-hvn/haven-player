@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, Protocol, Any
+from typing import Callable, Protocol, Any
 import mimetypes
 
 import requests
@@ -31,7 +31,7 @@ from web3.exceptions import Web3RPCError
 
 from app.utils.phash import calculate_phash
 from app.utils.video import get_video_duration
-from app.models.video import Timestamp, Video
+from app.models.video import Video
 from app.services.evm_utils import (
     InsufficientGasError,
     handle_evm_gas_error,
@@ -265,13 +265,14 @@ class ArkivClientProtocol(Protocol):
     arkiv: ArkivEntityClient
 
 
-def _build_attributes(video: Video, timestamps: Iterable[Timestamp]) -> dict[str, str | int]:
+def _build_attributes(video: Video) -> dict[str, str | int]:
     """
     Public attributes sent to Arkiv.
     For encrypted videos, encrypted_cid is stored in attributes (public) for privacy.
     The actual filecoin_root_cid is stored in the encrypted payload.
+    
+    Note: tags are NOT included here - they come from VLM JSON, not database timestamps.
     """
-    tag_names = sorted({ts.tag_name for ts in timestamps})
     attributes: dict[str, str | int] = {}
 
     if video.title:
@@ -280,8 +281,6 @@ def _build_attributes(video: Video, timestamps: Iterable[Timestamp]) -> dict[str
         attributes["creator_handle"] = video.creator_handle
     if video.mint_id:
         attributes["mint_id"] = video.mint_id
-    if tag_names:
-        attributes["tags"] = ",".join(tag_names)
     if video.is_encrypted:
         attributes["is_encrypted"] = 1
         # Store encrypted CID in public attributes (privacy - actual CID is hidden)
@@ -298,16 +297,17 @@ def _build_attributes(video: Video, timestamps: Iterable[Timestamp]) -> dict[str
     if video.updated_at:
         attributes["updated_at"] = video.updated_at.isoformat()
     # Note: duration, file_size, file_ext, codec are NOT included here as they can be recalculated from the video file
+    # Note: tags are NOT included here - they come from VLM JSON, not database timestamps
 
     return attributes
 
 
-def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
+def _build_payload(video: Video) -> dict:
     """
     Build optimized payload for Arkiv entity.
     
-    Now uses vlm_json_cid instead of embedding timestamps directly.
-    Database timestamps are still retrieved for backward compatibility but not used in payload.
+    Uses vlm_json_cid as the primary VLM archival method instead of database timestamps.
+    Database timestamps are no longer used in Arkiv sync.
     
     The payload should only contain:
     1. Encrypted/sensitive data (CIDs, encryption metadata) - not in public attributes
@@ -315,6 +315,7 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
     3. Essential fields needed for restore (backward compatibility)
     
     Fields already in attributes (title, duration, etc.) are excluded to reduce size.
+    Database timestamps are excluded - they come from VLM JSON during restore.
     """
 
     # Build minimal payload with only essential encrypted/sensitive data
@@ -360,6 +361,7 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
         payload["cid_hash"] = video.cid_hash
     
     # NEW: Include VLM JSON CID if available (primary VLM archival method)
+    # This is the main data source for Arkiv sync, replacing database timestamps
     if video.vlm_json_cid:
         payload["vlm_json_cid"] = video.vlm_json_cid
     
@@ -387,6 +389,70 @@ def _download_from_ipfs(cid: str, gateway_url: str = "https://ipfs.io/ipfs/") ->
     response = requests.get(url, timeout=60)
     response.raise_for_status()
     return response.content
+
+
+def _process_vlm_json_from_arkiv(vlm_json_cid: str, video_path: str, db_session: Session) -> bool:
+    """
+    Download and process VLM JSON from IPFS during Arkiv restore.
+    
+    This function downloads the VLM JSON file from IPFS using the CID stored in Arkiv,
+    then processes it to create timestamp entries in the database.
+    
+    Args:
+        vlm_json_cid: The IPFS CID of the VLM JSON file
+        video_path: The path of the video being restored
+        db_session: SQLAlchemy database session
+    
+    Returns:
+        True if VLM JSON was downloaded and processed successfully, False otherwise
+    """
+    if not vlm_json_cid:
+        logger.info("No VLM JSON CID available for video %s", video_path)
+        return False
+    
+    try:
+        logger.info("Downloading VLM JSON from IPFS for video %s (CID: %s)", video_path, vlm_json_cid)
+        
+        # Download VLM JSON from IPFS
+        vlm_json_content = _download_from_ipfs(vlm_json_cid)
+        vlm_data = json.loads(vlm_json_content.decode('utf-8'))
+        
+        # Process tags from VLM JSON (similar to process_ai_analysis_file logic)
+        tags = vlm_data.get('tags', {})
+        processed_count = 0
+        
+        for tag_name, tag_data in tags.items():
+            time_frames = tag_data.get('time_frames', [])
+            
+            for frame in time_frames:
+                start_time = frame.get('start', 0.0)
+                end_time = frame.get('end')  # May be None
+                confidence = frame.get('confidence', 0.0)
+                
+                # Create timestamp entry
+                from app.models.video import Timestamp  # Import here to avoid circular dependency
+                db_timestamp = Timestamp(
+                    video_path=video_path,
+                    tag_name=tag_name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    confidence=confidence
+                )
+                db_session.add(db_timestamp)
+                processed_count += 1
+        
+        if processed_count > 0:
+            db_session.commit()
+            logger.info("✅ Processed %d AI timestamps from VLM JSON for video %s", processed_count, video_path)
+            return True
+        else:
+            logger.info("No timestamps found in VLM JSON for video %s", video_path)
+            return False
+            
+    except Exception as e:
+        logger.error("❌ Error processing VLM JSON from Arkiv for video %s: %s", video_path, e)
+        db_session.rollback()
+        return False
 
 
 def _recalculate_video_metadata(
@@ -511,7 +577,7 @@ class ArkivSyncClient:
             # Field selection rationale:
             # - KEY: Required for entity identification
             # - ATTRIBUTES: Contains phash, title, encrypted_cid, etc. (essential for restore)
-            # - PAYLOAD: Contains JSON metadata (timestamps, encryption metadata, etc.)
+            # - PAYLOAD: Contains JSON metadata (VLM JSON CID, encryption metadata, etc.)
             # - CONTENT_TYPE: Verify payload format
             # - OWNER: Verify ownership (entities are scoped to account, but explicit is safer)
             # - CREATED_AT: Available and useful for ordering
@@ -717,28 +783,14 @@ class ArkivSyncClient:
                 if final_phash and not phash:
                     video_path = f"arkiv:phash:{final_phash}"
                 
-                # Prepare timestamps (video_path will be set after Video is created)
-                ts_payloads = payload.get("timestamps") or []
-                timestamps: list[Timestamp] = []
-                for ts in ts_payloads:
-                    try:
-                        timestamps.append(
-                            Timestamp(
-                                video_path="",  # Will be set to video_path after Video creation
-                                tag_name=ts.get("tag", "tag"),
-                                start_time=float(ts.get("start_time", 0.0)),
-                                end_time=ts.get("end_time"),
-                                confidence=float(ts.get("confidence", 0.0)),
-                            )
-                        )
-                    except Exception:
-                        continue
+                # Timestamps are no longer stored in Arkiv payload
+                # They come from VLM JSON during analysis, not from Arkiv restore
 
                 db_video = Video(
                     path=video_path,  # Required, non-nullable, unique
                     title=video_title,  # Required, non-nullable
                     duration=int(final_duration),  # Required (Mapped[int]) - from recalculation or default
-                    has_ai_data=bool(ts_payloads),
+                    has_ai_data=bool(vlm_json_cid),
                     thumbnail_path=None,  # Optional
                     position=0,  # Has default, but explicit is fine
                     phash=final_phash,  # Optional - from recalculation or attributes
@@ -760,30 +812,23 @@ class ArkivSyncClient:
                     cid_encryption_metadata=get_field("cid_encryption_metadata"),  # Store metadata to decrypt CID
                     is_encrypted=is_encrypted,  # Has default, but explicit is fine
                     lit_encryption_metadata=get_field("lit_encryption_metadata"),  # Optional
-                    vlm_json_cid=vlm_json_cid,  # NEW: Store VLM JSON CID from payload
+                    vlm_json_cid=vlm_json_cid,  # Store VLM JSON CID from Arkiv entity
                 )
 
                 # Determine what data is in this Arkiv entity for arkiv_data_completeness
                 has_filecoin = bool(db_video.filecoin_root_cid) or bool(get_field("encrypted_cid", "encrypted_cid"))
                 
-                # NEW: Check for JSON CID (primary VLM archival method)
-                vlm_json_cid = get_field("vlm_json_cid", None)  # NEW
+                # Extract VLM JSON CID from Arkiv entity (before creating video record)
+                vlm_json_cid = get_field("vlm_json_cid")
                 has_vlm_json = bool(vlm_json_cid)
                 
-                # Backward compatibility: still check database timestamps during migration
-                has_timestamps = bool(ts_payloads)
-                
-                # Update completeness based on VLM JSON (new primary method)
+                # Update completeness based on VLM JSON (primary method)
                 if has_filecoin and has_vlm_json:
                     db_video.arkiv_data_completeness = "filecoin_and_vlm"
                 elif has_filecoin:
                     db_video.arkiv_data_completeness = "filecoin_only"
                 elif has_vlm_json:
                     db_video.arkiv_data_completeness = "vlm_only"
-                elif has_timestamps:
-                    # Backward compatibility - old entities with embedded timestamps
-                    db_video.arkiv_data_completeness = "vlm_only"
-                    # Optionally migrate old entities by fetching JSON from IPFS in future
                 else:
                     db_video.arkiv_data_completeness = "none"
                 
@@ -805,12 +850,10 @@ class ArkivSyncClient:
                 db_session.add(db_video)
                 db_session.commit()
                 db_session.refresh(db_video)
-
-                # Update timestamps with video path reference (required: video_path is non-nullable)
-                for ts in timestamps:
-                    ts.video_path = db_video.path  # Set the actual video path (required field)
-                    db_session.add(ts)
-                db_session.commit()
+                
+                # Now process VLM JSON from Arkiv to restore timestamps
+                if vlm_json_cid:
+                    _process_vlm_json_from_arkiv(vlm_json_cid, db_video.path, db_session)
                 restored += 1
                 
             except Exception as exc:
@@ -848,7 +891,7 @@ class ArkivSyncClient:
         )
         return {"restored": restored, "skipped": skipped, "failed": failed}
 
-    def sync_video(self, db_session: Session, video: Video, timestamps: Iterable[Timestamp]) -> EntityKey | None:
+    def sync_video(self, db_session: Session, video: Video) -> EntityKey | None:
         """
         Push video metadata to Arkiv.
         Returns entity key if created/updated, otherwise None.
@@ -874,18 +917,18 @@ class ArkivSyncClient:
             "Entity Key: %s | "
             "Has Filecoin CID: %s | "
             "Is Encrypted: %s | "
-            "Timestamps: %d",
+            "Has VLM JSON CID: %s",
             video.path,
             video.arkiv_entity_key or "None (will create)",
             "Yes" if video.filecoin_root_cid else "No",
             "Yes" if video.is_encrypted else "No",
-            len(timestamps)
+            "Yes" if video.vlm_json_cid else "No"
         )
 
         client = self._get_client()
 
-        payload = _build_payload(video, timestamps)
-        attributes = _build_attributes(video, timestamps)
+        payload = _build_payload(video)
+        attributes = _build_attributes(video)
         payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         
         # Log payload size for debugging
@@ -949,7 +992,7 @@ class ArkivSyncClient:
                     "Entity Key: %s | "
                     "Payload size: %.2f KB | "
                     "RPC endpoint has a request size limit that was exceeded. "
-                    "This may occur with videos that have large encryption metadata or many timestamps. "
+                    "This may occur with videos that have large encryption metadata or large VLM JSON. "
                     "The video has been uploaded to Filecoin successfully, but Arkiv sync could not complete.",
                     video.path,
                     video.arkiv_entity_key or "None",

@@ -136,7 +136,7 @@ class ArkivSyncWorker:
             from app.services.arkiv_sync import ArkivSyncClient, build_arkiv_config
 
             client = ArkivSyncClient(build_arkiv_config())
-            entity_key = client.sync_video(db, video, timestamps)
+            entity_key = client.sync_video(db, video)
 
             if entity_key is None:
                 logger.info(f"Arkiv sync skipped for {queue_entry.video_path}")

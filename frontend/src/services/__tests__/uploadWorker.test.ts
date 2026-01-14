@@ -183,6 +183,14 @@ describe('UploadWorker', () => {
         arkiv_sync_started_at: null,
         arkiv_sync_completed_at: null,
         arkiv_sync_error: null,
+        vlm_analysis_status: null,
+        vlm_analysis_started_at: null,
+        vlm_analysis_completed_at: null,
+        vlm_analysis_error: null,
+        vlm_json_upload_status: null,
+        vlm_json_upload_started_at: null,
+        vlm_json_upload_completed_at: null,
+        vlm_json_upload_error: null,
       };
 
       mockFetch
@@ -367,6 +375,14 @@ describe('UploadWorker', () => {
         arkiv_sync_started_at: null,
         arkiv_sync_completed_at: null,
         arkiv_sync_error: null,
+        vlm_analysis_status: null,
+        vlm_analysis_started_at: null,
+        vlm_analysis_completed_at: null,
+        vlm_analysis_error: null,
+        vlm_json_upload_status: null,
+        vlm_json_upload_started_at: null,
+        vlm_json_upload_completed_at: null,
+        vlm_json_upload_error: null,
       };
 
       mockFetch
@@ -424,6 +440,14 @@ describe('UploadWorker', () => {
       arkiv_sync_started_at: null,
       arkiv_sync_completed_at: null,
       arkiv_sync_error: null,
+      vlm_analysis_status: null,
+      vlm_analysis_started_at: null,
+      vlm_analysis_completed_at: null,
+      vlm_analysis_error: null,
+      vlm_json_upload_status: null,
+      vlm_json_upload_started_at: null,
+      vlm_json_upload_completed_at: null,
+      vlm_json_upload_error: null,
     };
 
     it('should handle missing Filecoin config', async () => {

@@ -20,7 +20,7 @@ class AppConfig(Base):
     vlm_multiplexer_endpoints: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
     # LLM Configuration
     llm_base_url: Mapped[str] = mapped_column(String, default="http://localhost:1234")
-    llm_model: Mapped[str] = mapped_column(String, default="HuggingFaceTB/SmolVLM-Instruct")
+    llm_model: Mapped[str] = mapped_column(String, default="zai-org/glm-4.6v-flash")
     # Processing Configuration
     max_batch_size: Mapped[int] = mapped_column(Integer, default=1)
     # Recording Configuration

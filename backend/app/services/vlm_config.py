@@ -46,7 +46,7 @@ def get_vlm_config() -> Dict[str, Any]:
                     {
                         "base_url": config.llm_base_url,
                         "api_key": "dummy_api_key",  # Placeholder if not needed
-                        "name": "default_endpoint",
+                        "name": config.llm_model,
                         "weight": 1
                     }
                 ]

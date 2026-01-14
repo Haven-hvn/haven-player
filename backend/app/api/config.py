@@ -277,6 +277,6 @@ def get_available_models() -> dict:
     # For now, only one model is available
     # In the future, this could be dynamically loaded or configured
     models = [
-        "HuggingFaceTB/SmolVLM-Instruct"
+        "zai-org/glm-4.6v-flash"
     ]
     return {"models": models}

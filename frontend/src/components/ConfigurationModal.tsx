@@ -113,7 +113,7 @@ const defaultAppConfig: EditableAppConfig = {
   vlm_multiplexer_enabled: false,
   vlm_multiplexer_endpoints: null,
   llm_base_url: "http://localhost:1234",
-  llm_model: "HuggingFaceTB/SmolVLM-Instruct",
+  llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 1,
   download_directory: "downloads", /* Added default download directory */
 };
@@ -277,7 +277,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setAvailableModels(data.models);
     } catch (err) {
       console.error("Failed to load available models:", err);
-      setAvailableModels(["HuggingFaceTB/SmolVLM-Instruct"]);
+      setAvailableModels(["zai-org/glm-4.6v-flash"]);
     }
   };
 

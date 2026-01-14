@@ -31,7 +31,7 @@ def test_config_api():
         update_data = {
             "analysis_tags": "person,vehicle,animal,test",
             "llm_base_url": "http://localhost:8080",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct", 
+            "llm_model": "zai-org/glm-4.6v-flash", 
             "max_batch_size": 3
         }
         
@@ -71,7 +71,7 @@ def test_config_api():
         invalid_data = {
             "analysis_tags": "",  # Invalid: empty tags
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -106,7 +106,7 @@ def test_simple_functionality():
         config_update = {
             "analysis_tags": "person,car,bicycle,motorcycle,airplane,bus,train,truck,boat,traffic_light,stop_sign,walking,running,standing,sitting,talking,eating,drinking,phone,laptop,book,bag,umbrella,skateboard,surfboard,tennis_racket",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         

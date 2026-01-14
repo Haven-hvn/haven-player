@@ -76,7 +76,7 @@ class TestConfigAPI:
         assert data["id"] == 1
         assert "person,car,bicycle" in data["analysis_tags"]
         assert data["llm_base_url"] == "http://localhost:1234"
-        assert data["llm_model"] == "HuggingFaceTB/SmolVLM-Instruct"
+        assert data["llm_model"] == "zai-org/glm-4.6v-flash"
         assert data["max_batch_size"] == 1
         assert "updated_at" in data
         
@@ -111,7 +111,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person,vehicle,animal",
             "llm_base_url": "http://localhost:8080",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 3
         }
         
@@ -121,7 +121,7 @@ class TestConfigAPI:
         data = response.json()
         assert data["analysis_tags"] == "person,vehicle,animal"
         assert data["llm_base_url"] == "http://localhost:8080"
-        assert data["llm_model"] == "HuggingFaceTB/SmolVLM-Instruct"
+        assert data["llm_model"] == "zai-org/glm-4.6v-flash"
         assert data["max_batch_size"] == 3
         
         # Verify updated_at was set
@@ -133,7 +133,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": " person , vehicle,  animal , ",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -148,7 +148,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person",
             "llm_base_url": "  http://localhost:1234  ",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -163,7 +163,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "  HuggingFaceTB/SmolVLM-Instruct  ",
+            "llm_model": "  zai-org/glm-4.6v-flash  ",
             "max_batch_size": 1
         }
         
@@ -171,14 +171,14 @@ class TestConfigAPI:
         assert response.status_code == 200
         
         data = response.json()
-        assert data["llm_model"] == "HuggingFaceTB/SmolVLM-Instruct"
+        assert data["llm_model"] == "zai-org/glm-4.6v-flash"
 
     def test_update_config_validation_empty_tags(self, client: TestClient):
         """Test validation error for empty analysis tags"""
         update_data = {
             "analysis_tags": "",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -191,7 +191,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "   ,  ,   ",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -204,7 +204,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person",
             "llm_base_url": "",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -217,7 +217,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person",
             "llm_base_url": "   ",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -256,7 +256,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 0
         }
         
@@ -269,7 +269,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 11
         }
         
@@ -283,7 +283,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "person",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         
@@ -324,7 +324,7 @@ class TestConfigAPI:
         data = response.json()
         assert "models" in data
         assert isinstance(data["models"], list)
-        assert "HuggingFaceTB/SmolVLM-Instruct" in data["models"]
+        assert "zai-org/glm-4.6v-flash" in data["models"]
         assert len(data["models"]) > 0
 
     def test_config_persistence(self, client: TestClient):
@@ -333,7 +333,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "test,persistence",
             "llm_base_url": "http://test:9999",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 7
         }
         
@@ -365,7 +365,7 @@ class TestConfigAPI:
         update_data = {
             "analysis_tags": "updated,tags",
             "llm_base_url": "http://localhost:1234",
-            "llm_model": "HuggingFaceTB/SmolVLM-Instruct",
+            "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
         

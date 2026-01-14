@@ -10,7 +10,7 @@ export interface AiConfig {
 export const DEFAULT_AI_CONFIG: AiConfig = {
   analysis_tags: "",
   llm_base_url: "http://localhost:1234",
-  llm_model: "HuggingFaceTB/SmolVLM-Instruct",
+  llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 1,
 };
 

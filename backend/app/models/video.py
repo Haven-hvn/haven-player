@@ -58,6 +58,10 @@ class Video(Base):
     # Lit Protocol encryption metadata
     is_encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     lit_encryption_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # VLM JSON IPFS storage metadata
+    vlm_json_cid: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    vlm_json_uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Plugin metadata fields - generic storage for plugin-specific data
     # This allows plugins to store necessary metadata without creating their own tables
@@ -106,6 +110,8 @@ class Video(Base):
             'encrypted_filecoin_cid': self.encrypted_filecoin_cid,
             'is_encrypted': self.is_encrypted,
             'lit_encryption_metadata': self.lit_encryption_metadata,
+            'vlm_json_cid': self.vlm_json_cid,
+            'vlm_json_uploaded_at': self.vlm_json_uploaded_at.isoformat() if self.vlm_json_uploaded_at else None,
             'plugin_name': self.plugin_name,
             'plugin_source_id': self.plugin_source_id,
             'plugin_metadata': self.plugin_metadata,

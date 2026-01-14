@@ -118,24 +118,19 @@ class ArkivSyncWorker:
                 await self.mark_arkiv_sync_failed(queue_id, "Video not found in database")
                 return False
 
-            # CRITICAL: Arkiv sync can proceed if EITHER FileCoin uploaded OR timestamps exist
+            # CRITICAL: Arkiv sync can proceed if EITHER FileCoin uploaded OR VLM JSON exists
             # (supports parallel VLM + FileCoin execution)
+            # NEW: Check for JSON CID (primary VLM archival method)
             has_filecoin = bool(video.filecoin_root_cid)
-            has_timestamps = db.query(Timestamp).filter(
-                Timestamp.video_path == queue_entry.video_path
-            ).count() > 0
-
-            if not has_filecoin and not has_timestamps:
-                logger.info(f"Skipping Arkiv sync for {queue_entry.video_path} (no FileCoin CID or timestamps)")
-                await self.mark_arkiv_sync_skipped(queue_id, "No FileCoin CID or timestamps available")
+            has_vlm_json = bool(video.vlm_json_cid)
+            
+            # Can sync if EITHER FileCoin OR VLM JSON
+            if not has_filecoin and not has_vlm_json:
+                logger.info(f"Skipping Arkiv sync for {queue_entry.video_path} (no FileCoin CID or VLM data available)")
+                await self.mark_arkiv_sync_skipped(queue_id, "No FileCoin CID or VLM data available")
                 return False
 
-            # Get timestamps (optional - we can sync without timestamps)
-            timestamps = db.query(Timestamp).filter(
-                Timestamp.video_path == queue_entry.video_path
-            ).all()
-
-            logger.info(f"Starting Arkiv sync for {queue_entry.video_path} (filecoin={has_filecoin}, timestamps={len(timestamps)})")
+            logger.info(f"Starting Arkiv sync for {queue_entry.video_path} (filecoin={has_filecoin}, vlm_json={has_vlm_json})")
 
             # Perform Arkiv sync via existing service
             from app.services.arkiv_sync import ArkivSyncClient, build_arkiv_config

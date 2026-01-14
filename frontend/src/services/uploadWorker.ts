@@ -30,6 +30,18 @@ export interface UploadQueueEntry {
   arkiv_sync_started_at: string | null;
   arkiv_sync_completed_at: string | null;
   arkiv_sync_error: string | null;
+  
+  // VLM analysis status
+  vlm_analysis_status: string | null;
+  vlm_analysis_started_at: string | null;
+  vlm_analysis_completed_at: string | null;
+  vlm_analysis_error: string | null;
+  
+  // NEW: VLM JSON upload status
+  vlm_json_upload_status: string | null;
+  vlm_json_upload_started_at: string | null;
+  vlm_json_upload_completed_at: string | null;
+  vlm_json_upload_error: string | null;
 }
 
 export class UploadWorker {
@@ -77,7 +89,7 @@ export class UploadWorker {
   }
 
   async processQueue(): Promise<void> {
-    // Only process one upload at a time (concurrent uploads could be added later)
+    // Only process one upload (video OR JSON) at a time
     if (this.isProcessing) {
       return;
     }
@@ -87,7 +99,30 @@ export class UploadWorker {
     }
 
     try {
-      // Get next pending upload
+      // Priority 1: Process JSON upload jobs
+      const jsonResponse = await fetch('http://localhost:8000/api/upload-queue/vlm-json/pop');
+
+      if (jsonResponse.ok && jsonResponse.status !== 204) {
+        const jsonEntry: UploadQueueEntry | null = await jsonResponse.json();
+
+        if (jsonEntry && jsonEntry.video_path && jsonEntry.id) {
+          this.isProcessing = true;
+          console.log(`[UploadWorker] Processing JSON upload: ${jsonEntry.video_path} (id=${jsonEntry.id})`);
+
+          const success = await this.processJsonUpload(jsonEntry);
+
+          if (success) {
+            console.log(`[UploadWorker] JSON upload complete: ${jsonEntry.video_path}`);
+          } else {
+            console.log(`[UploadWorker] JSON upload failed: ${jsonEntry.video_path}`);
+          }
+
+          this.isProcessing = false;
+          return; // Process one job per cycle
+        }
+      }
+
+      // Priority 2: Process regular video uploads (existing logic)
       const response = await fetch('http://localhost:8000/api/upload-queue/pop');
 
       if (!response.ok || response.status === 204) {
@@ -113,15 +148,14 @@ export class UploadWorker {
       }
 
       this.isProcessing = true;
-
-      console.log(`[UploadWorker] Processing upload: ${queueEntry.video_path} (id=${queueEntry.id})`);
+      console.log(`[UploadWorker] Processing video upload: ${queueEntry.video_path} (id=${queueEntry.id})`);
 
       const success = await this.processUpload(queueEntry);
 
       if (success) {
-        console.log(`[UploadWorker] ✅ Upload complete: ${queueEntry.video_path}`);
+        console.log(`[UploadWorker] Video upload complete: ${queueEntry.video_path}`);
       } else {
-        console.log(`[UploadWorker] ❌ Upload failed: ${queueEntry.video_path}`);
+        console.log(`[UploadWorker] Video upload failed: ${queueEntry.video_path}`);
       }
 
     } catch (error) {
@@ -219,6 +253,85 @@ export class UploadWorker {
     }
   }
 
+  private async processJsonUpload(queueEntry: UploadQueueEntry): Promise<boolean> {
+    try {
+      // Load Filecoin config
+      const config = await this.loadFilecoinConfig();
+      if (!config) {
+        throw new Error('Filecoin config not available');
+      }
+
+      // Verify JSON file exists: {video_path}.AI.json
+      const jsonFilePath = `${queueEntry.video_path}.AI.json`;
+      if (!fs.existsSync(jsonFilePath)) {
+        throw new Error(`VLM JSON file not found: ${jsonFilePath}`);
+      }
+
+      // Read JSON file
+      const jsonFile = this.readFileAsFile(jsonFilePath);
+
+      console.log(`[UploadWorker] Starting VLM JSON upload for ${queueEntry.video_path}...`);
+      
+      // Upload JSON to FileCoin (skip encryption for JSON files)
+      const result = await uploadVideoToFilecoin({
+        file: jsonFile,
+        config: { ...config, encryptionEnabled: false }, // JSON files not encrypted
+        filePath: jsonFilePath,
+        onProgress: (progress) => {
+          if (progress.progress % 20 === 0 || progress.stage === 'completed') {
+            console.log(`[UploadWorker] JSON upload progress: ${progress.progress}% (${progress.stage})`);
+          }
+        },
+      });
+
+      console.log(`[UploadWorker] JSON upload successful: CID=${result.rootCid}`);
+
+      // Update status to completed with JSON CID
+      const updateResponse = await fetch(
+        `http://localhost:8000/api/upload-queue/${queueEntry.id}/vlm-json-upload`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vlm_json_upload_status: 'completed',
+            vlm_json_cid: result.rootCid,
+          }),
+        }
+      );
+
+      if (!updateResponse.ok) {
+        const errorText = await updateResponse.text();
+        console.error(`[UploadWorker] Failed to update JSON upload status: ${updateResponse.status} - ${errorText}`);
+        return false;
+      }
+
+      return true;
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`[UploadWorker] JSON upload failed for ${queueEntry.video_path}:`, error);
+
+      // Update status to failed
+      try {
+        await fetch(
+          `http://localhost:8000/api/upload-queue/${queueEntry.id}/vlm-json-upload`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              vlm_json_upload_status: 'failed',
+              vlm_json_upload_error: errorMessage,
+            }),
+          }
+        );
+      } catch (updateError) {
+        console.error('[UploadWorker] Failed to update JSON upload failed status:', updateError);
+      }
+
+      return false;
+    }
+  }
+
   private async loadFilecoinConfig(): Promise<FilecoinConfig | null> {
     try {
       // In main process, we can't use ipcRenderer
@@ -279,6 +392,7 @@ export class UploadWorker {
       '.webm': 'video/webm',
       '.mkv': 'video/x-matroska',
       '.ts': 'video/mp2t',
+      '.json': 'application/json',
     };
     return mimeTypes[ext] || 'application/octet-stream';
   }

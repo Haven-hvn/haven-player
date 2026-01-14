@@ -5,7 +5,7 @@ This module provides REST API endpoints for managing the FileCoin upload queue,
 including adding, listing, and updating upload jobs.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, field_serializer
@@ -47,6 +47,13 @@ class VLMAnalysisUpdate(BaseModel):
     vlm_analysis_error: Optional[str] = None
 
 
+class VLMJsonUploadUpdate(BaseModel):
+    """Request to update VLM JSON upload status."""
+    vlm_json_upload_status: str
+    vlm_json_upload_error: Optional[str] = None
+    vlm_json_cid: Optional[str] = None
+
+
 class UploadQueueResponse(BaseModel):
     """Response model for upload queue entry."""
     model_config = ConfigDict(from_attributes=True)
@@ -70,8 +77,14 @@ class UploadQueueResponse(BaseModel):
     vlm_analysis_started_at: Optional[datetime] = None
     vlm_analysis_completed_at: Optional[datetime] = None
     vlm_analysis_error: Optional[str] = None
+    
+    # NEW: VLM JSON upload status
+    vlm_json_upload_status: Optional[str] = None
+    vlm_json_upload_started_at: Optional[datetime] = None
+    vlm_json_upload_completed_at: Optional[datetime] = None
+    vlm_json_upload_error: Optional[str] = None
 
-    @field_serializer('created_at', 'started_at', 'completed_at', 'arkiv_sync_started_at', 'arkiv_sync_completed_at', 'vlm_analysis_started_at', 'vlm_analysis_completed_at')
+    @field_serializer('created_at', 'started_at', 'completed_at', 'arkiv_sync_started_at', 'arkiv_sync_completed_at', 'vlm_analysis_started_at', 'vlm_analysis_completed_at', 'vlm_json_upload_started_at', 'vlm_json_upload_completed_at')
     @classmethod
     def serialize_datetime(cls, dt: Optional[datetime]) -> Optional[str]:
         """Convert datetime to ISO format string."""
@@ -440,6 +453,40 @@ async def pop_vlm_analysis_job(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/upload-queue/vlm-json/pop", response_model=Optional[UploadQueueResponse])
+async def pop_vlm_json_upload_job(db: Session = Depends(get_db)):
+    """
+    Get next VLM JSON file for IPFS upload.
+    
+    Returns pending entries for JSON upload and marks them as processing.
+    Uses same priority ordering as video uploads.
+    """
+    try:
+        queue_entry = db.query(UploadQueue).filter(
+            UploadQueue.vlm_json_upload_status == 'pending',
+            UploadQueue.vlm_json_upload_started_at.is_(None)
+        ).order_by(
+            UploadQueue.priority.desc(),
+            UploadQueue.created_at.asc()
+        ).first()
+
+        if not queue_entry:
+            return None
+
+        queue_entry.vlm_json_upload_status = 'processing'
+        queue_entry.vlm_json_upload_started_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Popped video for VLM JSON upload: {queue_entry.video_path}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error getting next pending VLM JSON upload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/upload-queue/{queue_id}/vlm-analysis", response_model=UploadQueueResponse)
 async def update_vlm_analysis_status(
     queue_id: int,
@@ -524,6 +571,11 @@ async def update_vlm_analysis_status(
                         queue_entry.arkiv_sync_status = 'pending'
                         logger.info(f"Queued Arkiv sync for {queue_entry.video_path} after VLM analysis")
 
+                # NEW: Queue VLM JSON upload (this is the new primary method)
+                if queue_entry.vlm_json_upload_status not in ['processing', 'completed']:
+                    queue_entry.vlm_json_upload_status = 'pending'
+                    logger.info(f"VLM analysis completed, queuing JSON upload for {queue_entry.video_path}")
+
         db.commit()
         db.refresh(queue_entry)
 
@@ -535,6 +587,104 @@ async def update_vlm_analysis_status(
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating VLM analysis status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/upload-queue/{queue_id}/vlm-json-upload", response_model=UploadQueueResponse)
+async def update_vlm_json_upload_status(
+    queue_id: int,
+    update_data: VLMJsonUploadUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update VLM JSON upload status and handle Arkiv sync triggers.
+    
+    When JSON upload completes successfully:
+    1. Stores vlm_json_cid in Video model
+    2. Updates arkiv_data_completeness if this is the first VLM data
+    3. Queues Arkiv sync/update if needed
+    """
+    try:
+        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+        
+        if not queue_entry:
+            raise HTTPException(status_code=404, detail=f"Upload queue entry {queue_id} not found")
+
+        # Validate status
+        valid_statuses = ['pending', 'processing', 'completed', 'failed']
+        if update_data.vlm_json_upload_status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid vlm_json_upload_status: {update_data.vlm_json_upload_status}. Must be one of: {', '.join(valid_statuses)}"
+            )
+
+        # Update status
+        queue_entry.vlm_json_upload_status = update_data.vlm_json_upload_status
+
+        # Update timestamps for terminal states
+        if update_data.vlm_json_upload_status in ['completed', 'failed']:
+            from datetime import datetime, timezone
+            queue_entry.vlm_json_upload_completed_at = datetime.now(timezone.utc)
+
+        # Update error message if provided
+        if update_data.vlm_json_upload_error:
+            queue_entry.vlm_json_upload_error = update_data.vlm_json_upload_error
+
+        # If completed successfully, store CID and handle Arkiv sync
+        if (update_data.vlm_json_upload_status == 'completed' and 
+            update_data.vlm_json_cid):
+            from app.models.video import Video
+            
+            video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
+            if video:
+                # Store JSON CID
+                video.vlm_json_cid = update_data.vlm_json_cid
+                video.vlm_json_uploaded_at = datetime.now(timezone.utc)
+                
+                logger.info(f"Stored VLM JSON CID for {video.path}: {update_data.vlm_json_cid}")
+                
+                # Update arkiv_data_completeness to reflect VLM data is now available
+                if video.share_to_arkiv:
+                    has_filecoin = bool(video.filecoin_root_cid)
+                    has_vlm_json = bool(video.vlm_json_cid)
+                    
+                    if has_filecoin and has_vlm_json:
+                        video.arkiv_data_completeness = "filecoin_and_vlm"
+                    elif has_filecoin:
+                        video.arkiv_data_completeness = "filecoin_only"
+                    elif has_vlm_json:
+                        # This is new - we have VLM data via JSON
+                        video.arkiv_data_completeness = "vlm_only"
+                    else:
+                        video.arkiv_data_completeness = "none"
+                    
+                    logger.info(f"Updated arkiv_data_completeness for {video.path}: {video.arkiv_data_completeness}")
+                    
+                    # Queue Arkiv sync if needed
+                    if video.arkiv_entity_key:
+                        # Entity exists, queue UPDATE to add JSON CID
+                        if not queue_entry.arkiv_sync_status:
+                            queue_entry.arkiv_sync_status = 'pending'
+                            logger.info(f"VLM JSON ready, queuing Arkiv UPDATE for {video.path}")
+                    else:
+                        # No entity exists yet, queue initial sync if we have either FileCoin or VLM
+                        has_filecoin = bool(video.filecoin_root_cid)
+                        if has_filecoin or has_vlm_json:
+                            if not queue_entry.arkiv_sync_status:
+                                queue_entry.arkiv_sync_status = 'pending'
+                                logger.info(f"VLM JSON ready, queuing initial Arkiv sync for {video.path}")
+
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Updated VLM JSON upload status for entry {queue_id} to: {update_data.vlm_json_upload_status}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating VLM JSON upload status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

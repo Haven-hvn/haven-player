@@ -79,6 +79,16 @@ class UploadQueue(Base):
     vlm_analysis_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     vlm_analysis_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     vlm_analysis_error: Mapped[str] = mapped_column(Text, nullable=True)
+    
+    # VLM JSON file upload state tracking
+    # - pending: JSON file ready to upload to IPFS
+    # - processing: JSON upload in progress
+    # - completed: JSON uploaded successfully
+    # - failed: JSON upload failed
+    vlm_json_upload_status: Mapped[str] = mapped_column(String, nullable=True)
+    vlm_json_upload_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    vlm_json_upload_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    vlm_json_upload_error: Mapped[str] = mapped_column(Text, nullable=True)
 
     def to_dict(self) -> dict:
         """
@@ -107,6 +117,10 @@ class UploadQueue(Base):
             'vlm_analysis_started_at': self.vlm_analysis_started_at.isoformat() if self.vlm_analysis_started_at else None,
             'vlm_analysis_completed_at': self.vlm_analysis_completed_at.isoformat() if self.vlm_analysis_completed_at else None,
             'vlm_analysis_error': self.vlm_analysis_error,
+            'vlm_json_upload_status': self.vlm_json_upload_status,
+            'vlm_json_upload_started_at': self.vlm_json_upload_started_at.isoformat() if self.vlm_json_upload_started_at else None,
+            'vlm_json_upload_completed_at': self.vlm_json_upload_completed_at.isoformat() if self.vlm_json_upload_completed_at else None,
+            'vlm_json_upload_error': self.vlm_json_upload_error,
         }
 
     def can_retry(self) -> bool:
@@ -255,3 +269,39 @@ class UploadQueue(Base):
             True if vlm_analysis_status is 'skipped', False otherwise
         """
         return self.vlm_analysis_status == 'skipped'
+
+    def is_vlm_json_pending(self) -> bool:
+        """
+        Check if VLM JSON upload is pending.
+
+        Returns:
+            True if vlm_json_upload_status is 'pending', False otherwise
+        """
+        return self.vlm_json_upload_status == 'pending'
+
+    def is_vlm_json_processing(self) -> bool:
+        """
+        Check if VLM JSON upload is in progress.
+
+        Returns:
+            True if vlm_json_upload_status is 'processing', False otherwise
+        """
+        return self.vlm_json_upload_status == 'processing'
+
+    def is_vlm_json_completed(self) -> bool:
+        """
+        Check if VLM JSON upload completed successfully.
+
+        Returns:
+            True if vlm_json_upload_status is 'completed', False otherwise
+        """
+        return self.vlm_json_upload_status == 'completed'
+
+    def is_vlm_json_failed(self) -> bool:
+        """
+        Check if VLM JSON upload failed.
+
+        Returns:
+            True if vlm_json_upload_status is 'failed', False otherwise
+        """
+        return self.vlm_json_upload_status == 'failed'

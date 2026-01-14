@@ -306,22 +306,16 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
     """
     Build optimized payload for Arkiv entity.
     
+    Now uses vlm_json_cid instead of embedding timestamps directly.
+    Database timestamps are still retrieved for backward compatibility but not used in payload.
+    
     The payload should only contain:
     1. Encrypted/sensitive data (CIDs, encryption metadata) - not in public attributes
-    2. Data not available in attributes (timestamps with full details)
+    2. Data not available in attributes (VLM JSON CID for archival)
     3. Essential fields needed for restore (backward compatibility)
     
     Fields already in attributes (title, duration, etc.) are excluded to reduce size.
     """
-    tags = [
-        {
-            "tag": ts.tag_name,
-            "start_time": ts.start_time,
-            "end_time": ts.end_time,
-            "confidence": ts.confidence,
-        }
-        for ts in timestamps
-    ]
 
     # Build minimal payload with only essential encrypted/sensitive data
     payload: dict[str, Any] = {}
@@ -365,9 +359,9 @@ def _build_payload(video: Video, timestamps: Iterable[Timestamp]) -> dict:
     if video.cid_hash:
         payload["cid_hash"] = video.cid_hash
     
-    # Timestamps with full details (not in attributes as full objects)
-    if tags:
-        payload["timestamps"] = tags
+    # NEW: Include VLM JSON CID if available (primary VLM archival method)
+    if video.vlm_json_cid:
+        payload["vlm_json_cid"] = video.vlm_json_cid
     
     # Essential flag for restore
     payload["is_encrypted"] = video.is_encrypted
@@ -766,18 +760,30 @@ class ArkivSyncClient:
                     cid_encryption_metadata=get_field("cid_encryption_metadata"),  # Store metadata to decrypt CID
                     is_encrypted=is_encrypted,  # Has default, but explicit is fine
                     lit_encryption_metadata=get_field("lit_encryption_metadata"),  # Optional
+                    vlm_json_cid=vlm_json_cid,  # NEW: Store VLM JSON CID from payload
                 )
 
                 # Determine what data is in this Arkiv entity for arkiv_data_completeness
                 has_filecoin = bool(db_video.filecoin_root_cid) or bool(get_field("encrypted_cid", "encrypted_cid"))
+                
+                # NEW: Check for JSON CID (primary VLM archival method)
+                vlm_json_cid = get_field("vlm_json_cid", None)  # NEW
+                has_vlm_json = bool(vlm_json_cid)
+                
+                # Backward compatibility: still check database timestamps during migration
                 has_timestamps = bool(ts_payloads)
-
-                if has_filecoin and has_timestamps:
+                
+                # Update completeness based on VLM JSON (new primary method)
+                if has_filecoin and has_vlm_json:
                     db_video.arkiv_data_completeness = "filecoin_and_vlm"
                 elif has_filecoin:
                     db_video.arkiv_data_completeness = "filecoin_only"
-                elif has_timestamps:
+                elif has_vlm_json:
                     db_video.arkiv_data_completeness = "vlm_only"
+                elif has_timestamps:
+                    # Backward compatibility - old entities with embedded timestamps
+                    db_video.arkiv_data_completeness = "vlm_only"
+                    # Optionally migrate old entities by fetching JSON from IPFS in future
                 else:
                     db_video.arkiv_data_completeness = "none"
                 

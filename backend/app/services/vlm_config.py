@@ -34,9 +34,22 @@ def get_vlm_config() -> Dict[str, Any]:
         }
         
         # Add multiplexer configuration if enabled
-        if config.vlm_multiplexer_enabled and config.vlm_multiplexer_endpoints:
-            model_config["use_multiplexer"] = True
-            model_config["multiplexer_endpoints"] = config.vlm_multiplexer_endpoints
+        if config.vlm_multiplexer_enabled:
+            if config.vlm_multiplexer_endpoints:
+                # Use configured endpoints
+                model_config["use_multiplexer"] = True
+                model_config["multiplexer_endpoints"] = config.vlm_multiplexer_endpoints
+            elif config.llm_base_url:
+                # Create a single multiplexer endpoint from llm_base_url
+                model_config["use_multiplexer"] = True
+                model_config["multiplexer_endpoints"] = [
+                    {
+                        "base_url": config.llm_base_url,
+                        "api_key": "dummy_api_key",  # Placeholder if not needed
+                        "name": "default_endpoint",
+                        "weight": 1
+                    }
+                ]
         
         # Build the complete configuration
         return {

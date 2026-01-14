@@ -47,9 +47,19 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     
     def __init__(self):
         self.pumpfun_service = PumpFunService()
-        self.recording_service = WebRTCRecordingService()
+        self._recording_service = None  # Lazy-loaded recording service
+        self._recording_service_lock = asyncio.Lock()  # Thread-safe lazy loading
         self.config = {}
         self._initialized = False
+    
+    async def _get_recording_service(self) -> WebRTCRecordingService:
+        """Lazy-load the WebRTC recording service on demand."""
+        if self._recording_service is None:
+            async with self._recording_service_lock:
+                if self._recording_service is None:  # Double-check after acquiring lock
+                    self._recording_service = WebRTCRecordingService()
+                    logger.info("WebRTCRecordingService lazy-loaded for PumpFunPlugin")
+        return self._recording_service
     
     def get_metadata(self) -> PluginMetadata:
         """Return plugin metadata."""
@@ -251,7 +261,8 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             video_quality = self.config.get("video_quality", "best")
             
             # Start recording using existing service
-            result = await self.recording_service.start_recording(
+            recording_service = await self._get_recording_service()
+            result = await recording_service.start_recording(
                 mint_id=mint_id,
                 output_format=output_format,
                 video_quality=video_quality,
@@ -262,7 +273,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 await asyncio.sleep(2)
                 
                 # Get recording status
-                status = await self.recording_service.get_recording_status(mint_id)
+                status = await recording_service.get_recording_status(mint_id)
                 
                 output_path = result.get("output_path")
                 
@@ -321,7 +332,8 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         """
         try:
             logger.info(f"Stopping archiving for {source_id}")
-            result = await self.recording_service.stop_recording(source_id)
+            recording_service = await self._get_recording_service()
+            result = await recording_service.stop_recording(source_id)
             return result
         except Exception as e:
             logger.error(f"Error stopping archiving for {source_id}: {e}")
@@ -338,7 +350,8 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             Status dictionary
         """
         try:
-            return await self.recording_service.get_recording_status(source_id)
+            recording_service = await self._get_recording_service()
+            return await recording_service.get_recording_status(source_id)
         except Exception as e:
             logger.error(f"Error getting archiving status for {source_id}: {e}")
             return {"success": False, "error": str(e)}
@@ -351,7 +364,8 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             Dictionary with all active recordings
         """
         try:
-            return await self.recording_service.get_all_recordings()
+            recording_service = await self._get_recording_service()
+            return await recording_service.get_all_recordings()
         except Exception as e:
             logger.error(f"Error getting all archiving status: {e}")
             return {"success": False, "error": str(e)}

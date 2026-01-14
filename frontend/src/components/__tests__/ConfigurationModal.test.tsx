@@ -23,7 +23,7 @@ const theme = createTheme({ palette: { mode: "light" } });
 const mockConfigResponse = {
   id: 1,
   analysis_tags: "person,car,bicycle,motorcycle",
-  llm_base_url: "http://localhost:1234",
+  llm_base_url: "http://localhost:1234/v1",
   llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 2,
   updated_at: "2024-01-15T10:30:00Z",

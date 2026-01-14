@@ -112,7 +112,7 @@ const defaultAppConfig: EditableAppConfig = {
   vlm_return_confidence: true,
   vlm_multiplexer_enabled: false,
   vlm_multiplexer_endpoints: null,
-  llm_base_url: "http://localhost:1234",
+  llm_base_url: "http://localhost:1234/v1",
   llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 1,
   download_directory: "downloads", /* Added default download directory */
@@ -791,7 +791,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
                 llm_base_url: e.target.value,
               }))
             }
-            placeholder="http://localhost:1234"
+            placeholder="http://localhost:1234/v1"
           />
 
           <FormControl fullWidth>

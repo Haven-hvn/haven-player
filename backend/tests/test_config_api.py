@@ -75,7 +75,7 @@ class TestConfigAPI:
         data = response.json()
         assert data["id"] == 1
         assert "person,car,bicycle" in data["analysis_tags"]
-        assert data["llm_base_url"] == "http://localhost:1234"
+        assert data["llm_base_url"] == "http://localhost:1234/v1"
         assert data["llm_model"] == "zai-org/glm-4.6v-flash"
         assert data["max_batch_size"] == 1
         assert "updated_at" in data
@@ -132,7 +132,7 @@ class TestConfigAPI:
         """Test that tags are properly normalized (whitespace removed)"""
         update_data = {
             "analysis_tags": " person , vehicle,  animal , ",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
@@ -147,7 +147,7 @@ class TestConfigAPI:
         """Test that URL is properly normalized (whitespace removed)"""
         update_data = {
             "analysis_tags": "person",
-            "llm_base_url": "  http://localhost:1234  ",
+            "llm_base_url": "  http://localhost:1234/v1  ",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
@@ -156,13 +156,13 @@ class TestConfigAPI:
         assert response.status_code == 200
         
         data = response.json()
-        assert data["llm_base_url"] == "http://localhost:1234"
+        assert data["llm_base_url"] == "http://localhost:1234/v1"
 
     def test_update_config_normalizes_model(self, client: TestClient):
         """Test that model name is properly normalized (whitespace removed)"""
         update_data = {
             "analysis_tags": "person",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "  zai-org/glm-4.6v-flash  ",
             "max_batch_size": 1
         }
@@ -177,7 +177,7 @@ class TestConfigAPI:
         """Test validation error for empty analysis tags"""
         update_data = {
             "analysis_tags": "",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
@@ -190,7 +190,7 @@ class TestConfigAPI:
         """Test validation error for whitespace-only analysis tags"""
         update_data = {
             "analysis_tags": "   ,  ,   ",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
@@ -229,7 +229,7 @@ class TestConfigAPI:
         """Test validation error for empty LLM model"""
         update_data = {
             "analysis_tags": "person",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "",
             "max_batch_size": 1
         }
@@ -242,7 +242,7 @@ class TestConfigAPI:
         """Test validation error for whitespace-only LLM model"""
         update_data = {
             "analysis_tags": "person",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "   ",
             "max_batch_size": 1
         }
@@ -255,7 +255,7 @@ class TestConfigAPI:
         """Test validation error for batch size too small"""
         update_data = {
             "analysis_tags": "person",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 0
         }
@@ -268,7 +268,7 @@ class TestConfigAPI:
         """Test validation error for batch size too large"""
         update_data = {
             "analysis_tags": "person",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 11
         }
@@ -282,7 +282,7 @@ class TestConfigAPI:
         # Test min boundary
         update_data = {
             "analysis_tags": "person",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
@@ -364,7 +364,7 @@ class TestConfigAPI:
         
         update_data = {
             "analysis_tags": "updated,tags",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }

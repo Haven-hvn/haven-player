@@ -70,7 +70,7 @@ def test_config_api():
         print("\n4. Testing validation errors")
         invalid_data = {
             "analysis_tags": "",  # Invalid: empty tags
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }
@@ -105,7 +105,7 @@ def test_simple_functionality():
         # This mimics what the frontend was doing
         config_update = {
             "analysis_tags": "person,car,bicycle,motorcycle,airplane,bus,train,truck,boat,traffic_light,stop_sign,walking,running,standing,sitting,talking,eating,drinking,phone,laptop,book,bag,umbrella,skateboard,surfboard,tennis_racket",
-            "llm_base_url": "http://localhost:1234",
+            "llm_base_url": "http://localhost:1234/v1",
             "llm_model": "zai-org/glm-4.6v-flash",
             "max_batch_size": 1
         }

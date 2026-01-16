@@ -368,12 +368,14 @@ ipcMain.handle('get-filecoin-config', async () => {
       try {
         const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64') as Buffer;
         const privateKey = safeStorage.decryptString(encryptedBuffer);
-        return {
+        const loadedConfig = {
           privateKey,
           rpcUrl: config.rpcUrl,
           dataSetId: config.dataSetId,
           encryptionEnabled: config.encryptionEnabled ?? false,
         };
+        console.log(`[FilecoinConfig] Loaded config from ${configPath} - encryptionEnabled: ${loadedConfig.encryptionEnabled} (from file: ${config.encryptionEnabled}, type: ${typeof config.encryptionEnabled})`);
+        return loadedConfig;
       } catch (error) {
         console.error('Failed to decrypt private key:', error);
         return null;
@@ -447,14 +449,22 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
       throw new Error('Failed to encrypt private key');
     }
     
+    // Explicitly handle encryptionEnabled - if it's explicitly false, use false; otherwise default to false
+    // This ensures that when the user toggles it ON, it's saved as true
+    const encryptionEnabled = config.encryptionEnabled === true ? true : false;
+    
     const dataToSave = {
       encryptedPrivateKey,
       rpcUrl: config.rpcUrl,
       dataSetId: config.dataSetId,
-      encryptionEnabled: config.encryptionEnabled ?? false,
+      encryptionEnabled: encryptionEnabled,
     };
     
+    // Log what we're saving for debugging
+    console.log(`[FilecoinConfig] Saving config - encryptionEnabled: ${encryptionEnabled} (received: ${config.encryptionEnabled}, type: ${typeof config.encryptionEnabled})`);
+    
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
+    console.log(`[FilecoinConfig] ✅ Config saved to ${configPath}`);
     return { success: true };
   } catch (error) {
     console.error('Failed to save Filecoin config:', error);

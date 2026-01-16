@@ -224,15 +224,18 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setLoadingFilecoin(true);
       const savedConfig = await ipcRenderer.invoke("get-filecoin-config");
       if (savedConfig) {
-        setFilecoinConfig({
+        const loadedConfig = {
           privateKey: savedConfig.privateKey || "",
           rpcUrl:
             savedConfig.rpcUrl ||
             "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
           dataSetId: savedConfig.dataSetId,
           encryptionEnabled: savedConfig.encryptionEnabled ?? false,
-        });
+        };
+        console.log(`[ConfigurationModal] Loaded Filecoin config from JSON - encryptionEnabled: ${loadedConfig.encryptionEnabled} (from savedConfig: ${savedConfig.encryptionEnabled})`);
+        setFilecoinConfig(loadedConfig);
       } else {
+        console.log(`[ConfigurationModal] No saved config found, using defaults - encryptionEnabled: ${defaultFilecoinConfig.encryptionEnabled}`);
         setFilecoinConfig(defaultFilecoinConfig);
       }
     } catch (err) {
@@ -413,11 +416,14 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           setCheckingBalance(false);
         }
 
+        // Log what we're about to save
+        console.log(`[ConfigurationModal] Saving Filecoin config - encryptionEnabled: ${filecoinConfig.encryptionEnabled} (type: ${typeof filecoinConfig.encryptionEnabled})`);
+        
         await ipcRenderer.invoke("save-filecoin-config", {
           privateKey: filecoinConfig.privateKey,
           rpcUrl: filecoinConfig.rpcUrl,
           dataSetId: filecoinConfig.dataSetId,
-          encryptionEnabled: filecoinConfig.encryptionEnabled,
+          encryptionEnabled: filecoinConfig.encryptionEnabled ?? false, // Explicitly ensure boolean
         });
 
         await onSaveFilecoin(filecoinConfig);

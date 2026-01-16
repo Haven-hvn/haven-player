@@ -33,6 +33,7 @@ class UploadCoordinator:
             'YouTubePlugin': True,  # YouTube plugin enabled by default
             'BitTorrentPlugin': True,
             'PumpFunPlugin': True,  # ADD THIS
+            'OpenRingPlugin': True,
         },
         'priority': 0,  # Default priority for auto-uploads
     }

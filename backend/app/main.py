@@ -36,6 +36,7 @@ from app.services.upload_coordinator import UploadCoordinator
 from app.plugins.plugin_manager import PluginManager
 from app.services.arkiv_sync_worker import run_arkiv_sync_worker
 from app.services.vlm_analysis_worker import run_vlm_analysis_worker
+from app.services.openring_recording_manager import OpenRingRecordingManager
 
 # Global instances
 plugin_manager: Optional[PluginManager] = None
@@ -43,6 +44,7 @@ job_scheduler: Optional[JobScheduler] = None
 upload_coordinator: Optional[UploadCoordinator] = None
 arkiv_sync_worker_task: Optional[asyncio.Task] = None
 vlm_analysis_worker_task: Optional[asyncio.Task] = None
+openring_recording_manager: Optional[OpenRingRecordingManager] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -169,6 +171,10 @@ async def lifespan(app: FastAPI):
     vlm_analysis_worker_task = asyncio.create_task(run_vlm_analysis_worker())
     print("✅ VLM analysis worker initialized")
 
+    # Initialize OpenRing recording manager (for shutdown cleanup parity)
+    global openring_recording_manager
+    openring_recording_manager = OpenRingRecordingManager()
+
     yield
     
     # Shutdown
@@ -214,6 +220,14 @@ async def lifespan(app: FastAPI):
             print("  📹 No active recordings to stop")
     except Exception as e:
         print(f"  ❌ Error during shutdown cleanup: {e}")
+
+    # Stop any active OpenRing recordings (mirrors PumpFun cleanup)
+    if openring_recording_manager:
+        try:
+            await openring_recording_manager.stop_all()
+            print("✅ OpenRing recordings stopped")
+        except Exception as e:
+            print(f"  ❌ Error stopping OpenRing recordings: {e}")
     
     # Shutdown plugin manager (includes stopping all workers)
     if plugin_manager:

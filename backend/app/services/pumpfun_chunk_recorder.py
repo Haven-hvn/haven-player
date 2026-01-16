@@ -810,6 +810,15 @@ class PumpFunChunkRecorder:
         """
         # PyAV sets this flag on I-frame packets
         return (packet.flags & 0x0001) != 0
+
+    @staticmethod
+    def _get_plane_size(plane) -> int:
+        """Get plane size in bytes across LiveKit versions."""
+        if hasattr(plane, "buffer_size"):
+            return plane.buffer_size
+        if hasattr(plane, "nbytes"):
+            return plane.nbytes
+        return len(plane)
     
     async def _convert_video_frame_to_pyav(self, livekit_frame) -> av.VideoFrame:
         """
@@ -833,7 +842,7 @@ class PumpFunChunkRecorder:
         # Copy Y plane
         y_plane = livekit_frame.get_plane(0)
         pyav_y_data = bytearray(pyav_frame.planes[0].buffer_size)
-        y_stride = livekit_frame.get_plane(0).buffer_size // livekit_frame.height
+        y_stride = self._get_plane_size(y_plane) // livekit_frame.height
         for row in range(livekit_frame.height):
             src_start = row * y_stride
             pyav_y_data[row * pyav_frame.planes[0].line_size : (row + 1) * pyav_frame.planes[0].line_size] = \
@@ -844,7 +853,7 @@ class PumpFunChunkRecorder:
         chroma_height = livekit_frame.height // 2
         u_plane = livekit_frame.get_plane(1)
         pyav_u_data = bytearray(pyav_frame.planes[1].buffer_size)
-        u_stride = livekit_frame.get_plane(1).buffer_size // chroma_height
+        u_stride = self._get_plane_size(u_plane) // chroma_height
         chroma_width = livekit_frame.width // 2
         for row in range(chroma_height):
             src_start = row * u_stride
@@ -855,7 +864,7 @@ class PumpFunChunkRecorder:
         # Copy V plane
         v_plane = livekit_frame.get_plane(2)
         pyav_v_data = bytearray(pyav_frame.planes[2].buffer_size)
-        v_stride = livekit_frame.get_plane(2).buffer_size // chroma_height
+        v_stride = self._get_plane_size(v_plane) // chroma_height
         for row in range(chroma_height):
             src_start = row * v_stride
             pyav_v_data[row * pyav_frame.planes[2].line_size : (row + 1) * pyav_frame.planes[2].line_size] = \

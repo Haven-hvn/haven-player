@@ -201,3 +201,25 @@ async def test_subscribe_and_unsubscribe_tracks_handles_errors(monkeypatch) -> N
 
     await recorder._subscribe_to_tracks(participant)
     await recorder._unsubscribe_from_tracks(participant)
+
+
+def test_get_plane_size_prefers_buffer_size() -> None:
+    class Plane:
+        buffer_size = 12
+
+    assert PumpFunChunkRecorder._get_plane_size(Plane()) == 12
+
+
+def test_get_plane_size_falls_back_to_nbytes() -> None:
+    class Plane:
+        nbytes = 16
+
+    assert PumpFunChunkRecorder._get_plane_size(Plane()) == 16
+
+
+def test_get_plane_size_falls_back_to_len() -> None:
+    class Plane:
+        def __len__(self) -> int:
+            return 24
+
+    assert PumpFunChunkRecorder._get_plane_size(Plane()) == 24

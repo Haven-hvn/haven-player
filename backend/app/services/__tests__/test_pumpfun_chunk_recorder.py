@@ -279,3 +279,63 @@ def test_detect_keyframe_defaults_false() -> None:
     )
 
     assert recorder._detect_keyframe_in_packet(Packet()) is False
+
+
+@pytest.mark.asyncio
+async def test_check_and_rotate_container_sets_flag(monkeypatch) -> None:
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+        segment_duration=30,
+    )
+
+    base_time = 1000.0
+    recorder._current_segment_start = base_time
+
+    monkeypatch.setattr(recorder_module.time, "time", lambda: base_time + 31.0)
+
+    await recorder._check_and_rotate_container(video_frame_index=10)
+
+    assert recorder._rotation_requested is True
+
+
+@pytest.mark.asyncio
+async def test_encode_video_frame_triggers_rotation(monkeypatch) -> None:
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+    recorder._rotation_requested = True
+
+    class DummyPacket:
+        is_keyframe = True
+
+    class DummyStream:
+        def encode(self, _frame=None):
+            return [DummyPacket()]
+
+    class DummyContainer:
+        def mux(self, _packet):
+            return None
+
+    async def fake_convert(_frame):
+        return object()
+
+    rotated = {"called": False}
+
+    async def fake_rotate():
+        rotated["called"] = True
+
+    recorder._video_stream = DummyStream()
+    recorder._output_container = DummyContainer()
+    recorder._convert_video_frame_to_pyav = fake_convert
+    recorder._rotate_container = fake_rotate
+
+    await recorder._encode_video_frame_sync(frame=object(), frame_index=1)
+
+    assert rotated["called"] is True
+    assert recorder._rotation_requested is False

@@ -83,6 +83,7 @@ class PumpFunChunkRecorder:
         self._current_segment_index: int = 0
         self._current_segment_start: float = 0
         self._current_segment_path: Optional[Path] = None
+        self._rotation_requested: bool = False
         
         # Keyframe tracking
         self._frames_since_last_keyframe: int = 0
@@ -440,6 +441,7 @@ class PumpFunChunkRecorder:
         # Reset stream initialization flags
         self._video_stream_initialized = False
         self._audio_stream_initialized = False
+        self._rotation_requested = False
         
         # Create segment metadata for real-time tracking
         await self._create_segment_metadata()
@@ -608,26 +610,16 @@ class PumpFunChunkRecorder:
         """
         Check if container rotation is needed.
         
-        Rotation occurs when:
-        1. At least 25 seconds have elapsed (to ensure keyframe soon)
-        2. We have a keyframe available (recently created)
+        Rotation is requested after the target duration and executed
+        on the next keyframe.
         """
         elapsed = time.time() - self._current_segment_start
-        
-        if elapsed >= 25:  # Check as soon as we're approaching 30s
-            # Check if encoder should have created a keyframe by now
-            # With kf-max-dist=30, keyframes appear every 1 second
-            frames_in_current_segment = video_frame_index - self._last_keyframe_frame_index
-            
-            if frames_in_current_segment >= 25:
-                # Should have a keyframe now - trigger rotation
-                await self._rotate_container()
-        
-        # Alternative: Check actual time directly
-        if elapsed >= 27 and self._frames_since_last_keyframe < 35:
-            # We're approaching 30s milestone
-            # Force keyframe check on next encode
-            pass
+
+        if not self._rotation_requested and elapsed >= self.segment_duration:
+            logger.info(
+                f"Rotation requested after {elapsed:.2f}s (segment {self._current_segment_index})"
+            )
+            self._rotation_requested = True
     
     async def _rotate_container(self) -> None:
         """
@@ -643,19 +635,15 @@ class PumpFunChunkRecorder:
             f"(segment {self._current_segment_index})"
         )
         
-        # 1. Flush encoder to get remaining packets
-        await self._flush_video_encoder()
-        await self._flush_audio_encoder()
-        
-        # 2. Close current container
+        # 1. Close current container
         previous_segment_path = self._current_segment_path
         await self._close_current_container()
         
-        # 3. Enqueue completed segment
+        # 2. Enqueue completed segment
         if previous_segment_path and previous_segment_path.exists():
             await self._enqueue_completed_segment(previous_segment_path)
         
-        # 4. Start new segment
+        # 3. Start new segment
         await self._start_new_segment()
         
         # Reset keyframe tracking
@@ -776,10 +764,14 @@ class PumpFunChunkRecorder:
         # Convert LiveKit VideoFrame to PyAV VideoFrame
         pyav_frame = await self._convert_video_frame_to_pyav(frame)
         
+        rotation_keyframe_seen = False
+
         # Encode frame to packets
         for packet in self._video_stream.encode(pyav_frame):
             # Detect keyframe in this packet
             is_keyframe = self._detect_keyframe_in_packet(packet)
+            if is_keyframe:
+                rotation_keyframe_seen = True
             
             # Mux to current container
             self._output_container.mux(packet)
@@ -793,6 +785,10 @@ class PumpFunChunkRecorder:
             else:
                 self._frames_since_last_keyframe += 1
         
+        if self._rotation_requested and rotation_keyframe_seen:
+            await self._rotate_container()
+            self._rotation_requested = False
+
         # Release frame memory immediately
         del pyav_frame
     

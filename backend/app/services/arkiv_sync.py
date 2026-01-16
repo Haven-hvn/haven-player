@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -89,6 +90,8 @@ def _extract_transaction_hash(receipt: Any) -> str | None:
     - receipt.transactionHash
     - receipt.hash
     - receipt.txHash
+    - receipt.tx_hash (TransactionReceipt from web3)
+    - receipt.transaction_hash
     - Or nested in receipt.receipt.transactionHash
     
     Returns the transaction hash as a string, or None if not found.
@@ -96,27 +99,49 @@ def _extract_transaction_hash(receipt: Any) -> str | None:
     if not receipt:
         return None
     
-    # Try common attribute names
-    for attr_name in ['transactionHash', 'hash', 'txHash', 'transaction_hash']:
+    # First, try to inspect the actual object structure for debugging
+    # Log available attributes if extraction fails (will be logged in _log_transaction_info)
+    
+    # Try common attribute names (including tx_hash for TransactionReceipt objects)
+    for attr_name in ['transactionHash', 'hash', 'txHash', 'tx_hash', 'transaction_hash']:
         if hasattr(receipt, attr_name):
-            value = getattr(receipt, attr_name)
-            if value:
-                return str(value)
+            try:
+                value = getattr(receipt, attr_name)
+                if value:
+                    return str(value)
+            except Exception:
+                # Attribute exists but accessing it failed, continue to next
+                continue
     
     # Try dictionary access if receipt is dict-like
     if isinstance(receipt, dict):
-        for key in ['transactionHash', 'hash', 'txHash', 'transaction_hash']:
+        for key in ['transactionHash', 'hash', 'txHash', 'tx_hash', 'transaction_hash']:
             if key in receipt and receipt[key]:
                 return str(receipt[key])
     
-    # Try nested receipt object
-    if hasattr(receipt, 'receipt'):
-        nested_receipt = receipt.receipt
-        for attr_name in ['transactionHash', 'hash', 'txHash', 'transaction_hash']:
-            if hasattr(nested_receipt, attr_name):
-                value = getattr(nested_receipt, attr_name)
+    # Try accessing as dict-like object (some objects support [] access)
+    try:
+        for key in ['transactionHash', 'hash', 'txHash', 'tx_hash', 'transaction_hash']:
+            if key in receipt:
+                value = receipt[key]
                 if value:
                     return str(value)
+    except (TypeError, KeyError):
+        # Object doesn't support dict-like access
+        pass
+    
+    # Try nested receipt object
+    if hasattr(receipt, 'receipt'):
+        try:
+            nested_receipt = receipt.receipt
+            for attr_name in ['transactionHash', 'hash', 'txHash', 'tx_hash', 'transaction_hash']:
+                if hasattr(nested_receipt, attr_name):
+                    value = getattr(nested_receipt, attr_name)
+                    if value:
+                        return str(value)
+        except Exception:
+            # Nested receipt access failed
+            pass
     
     return None
 
@@ -135,6 +160,19 @@ def _log_transaction_info(receipt: Any, rpc_url: str, operation: str, entity_key
     """
     transaction_hash = _extract_transaction_hash(receipt)
     
+    # If extraction failed, try to extract from string representation as fallback
+    if not transaction_hash and receipt:
+        receipt_str = str(receipt)
+        # Look for transaction hash pattern in string (0x followed by 64 hex chars)
+        tx_hash_match = re.search(r'tx_hash=[\'"]?([0-9a-fA-Fx]{66})', receipt_str)
+        if tx_hash_match:
+            transaction_hash = tx_hash_match.group(1)
+        else:
+            # Try other patterns
+            tx_hash_match = re.search(r'transactionHash=[\'"]?([0-9a-fA-Fx]{66})', receipt_str)
+            if tx_hash_match:
+                transaction_hash = tx_hash_match.group(1)
+    
     if transaction_hash:
         # Determine network from RPC URL for helpful logging
         network_hint = "unknown network"
@@ -144,6 +182,10 @@ def _log_transaction_info(receipt: Any, rpc_url: str, operation: str, entity_key
             network_hint = "Sepolia testnet"
         elif "mainnet" in rpc_url.lower() or "ethereum" in rpc_url.lower():
             network_hint = "Ethereum mainnet"
+        elif "mendoza" in rpc_url.lower():
+            network_hint = "Arkiv Mendoza (mainnet)"
+        elif "arkiv" in rpc_url.lower():
+            network_hint = "Arkiv network"
         
         logger.info(
             "✅ Arkiv %s transaction confirmed | "
@@ -159,12 +201,39 @@ def _log_transaction_info(receipt: Any, rpc_url: str, operation: str, entity_key
             entity_key or "N/A"
         )
     else:
+        # Log full receipt details for debugging, including actual object attributes
+        receipt_str = str(receipt)[:500] if receipt else "None"
+        
+        # Inspect actual object attributes to help debug
+        available_attrs = []
+        if receipt:
+            try:
+                # Get all non-private attributes
+                available_attrs = [attr for attr in dir(receipt) if not attr.startswith('_')]
+                # Try to get values for common hash-related attributes
+                attr_values = {}
+                for attr in ['transactionHash', 'hash', 'txHash', 'tx_hash', 'transaction_hash', 'transactionHash', 'blockNumber', 'block_number']:
+                    if hasattr(receipt, attr):
+                        try:
+                            value = getattr(receipt, attr)
+                            if value is not None:
+                                attr_values[attr] = str(value)[:100]  # Truncate long values
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        
         logger.warning(
             "⚠️ Arkiv %s transaction completed but could not extract transaction hash from receipt. "
-            "Receipt type: %s | Receipt: %s",
+            "Receipt type: %s | Receipt: %s | "
+            "Available attributes: %s | "
+            "Attribute values: %s | "
+            "Please check the receipt string above for tx_hash or transactionHash",
             operation,
             type(receipt).__name__,
-            str(receipt)[:200] if receipt else "None"
+            receipt_str,
+            ', '.join(available_attrs[:20]) if available_attrs else "unknown",
+            attr_values if 'attr_values' in locals() else {}
         )
 
 

@@ -646,16 +646,21 @@ async def update_vlm_json_upload_status(
                     # Queue Arkiv sync if needed
                     if video.arkiv_entity_key:
                         # Entity exists, queue UPDATE to add JSON CID
-                        if not queue_entry.arkiv_sync_status:
+                        # Allow re-queuing if status is 'completed', 'failed', 'skipped', or None
+                        # (don't re-queue if already 'pending' or 'syncing')
+                        previous_status = queue_entry.arkiv_sync_status
+                        if previous_status not in ['pending', 'syncing']:
                             queue_entry.arkiv_sync_status = 'pending'
-                            logger.info(f"VLM JSON ready, queuing Arkiv UPDATE for {video.path}")
+                            logger.info(f"VLM JSON ready, queuing Arkiv UPDATE for {video.path} (previous status: {previous_status or 'None'})")
                     else:
                         # No entity exists yet, queue initial sync if we have either FileCoin or VLM
                         has_filecoin = bool(video.filecoin_root_cid)
                         if has_filecoin or has_vlm_json:
-                            if not queue_entry.arkiv_sync_status:
+                            # Allow re-queuing if status is 'completed', 'failed', 'skipped', or None
+                            previous_status = queue_entry.arkiv_sync_status
+                            if previous_status not in ['pending', 'syncing']:
                                 queue_entry.arkiv_sync_status = 'pending'
-                                logger.info(f"VLM JSON ready, queuing initial Arkiv sync for {video.path}")
+                                logger.info(f"VLM JSON ready, queuing initial Arkiv sync for {video.path} (previous status: {previous_status or 'None'})")
 
         db.commit()
         db.refresh(queue_entry)

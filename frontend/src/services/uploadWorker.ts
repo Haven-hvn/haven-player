@@ -212,7 +212,7 @@ export class UploadWorker {
               data_set_id: result.dataSetId,
               transaction_hash: result.transactionHash,
               is_encrypted: result.isEncrypted ?? false,
-              encryption_metadata: result.encryptionMetadata,
+              lit_encryption_metadata: result.encryptionMetadata,
               encrypted_root_cid: result.encryptedRootCid,
               cid_encryption_metadata: result.cidEncryptionMetadata,
             },

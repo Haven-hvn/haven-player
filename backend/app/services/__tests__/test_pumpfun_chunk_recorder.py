@@ -14,6 +14,12 @@ class FakeFrameEvent:
     frame: object
 
 
+@dataclass
+class FakeParticipant:
+    identity: str
+    sid: str
+
+
 class FakeVideoStream:
     def __init__(self, events: list[FakeFrameEvent]):
         self._events = events
@@ -35,7 +41,8 @@ class FakeVideoStream:
 
 
 class DummyRoom:
-    remote_participants: dict[str, object] = {}
+    def __init__(self, remote_participants: dict[str, object] | None = None):
+        self.remote_participants = remote_participants or {}
 
 
 @pytest.mark.asyncio
@@ -105,3 +112,17 @@ async def test_wait_for_first_video_frame_timeout() -> None:
 
     with pytest.raises(TimeoutError):
         await recorder._wait_for_first_video_frame()
+
+
+def test_find_participant_matches_identity_or_sid() -> None:
+    participant = FakeParticipant(identity="identity", sid="sid")
+    room = DummyRoom(remote_participants={"sid": participant})
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=room,
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+
+    assert recorder._find_participant("identity") is participant
+    assert recorder._find_participant("sid") is participant

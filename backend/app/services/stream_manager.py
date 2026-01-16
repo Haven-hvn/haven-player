@@ -77,7 +77,11 @@ class StreamManager:
             if not config:
                 raise ValueError("No configuration found in database")
             self.config = config
-            print(f"StreamManager initialized with config: {config.livekit_url}")
+            livekit_url = getattr(config, "livekit_url", None)
+            if livekit_url:
+                print(f"StreamManager initialized with config: {livekit_url}")
+            else:
+                print("StreamManager initialized with AppConfig (no livekit_url)")
         finally:
             db.close()
 

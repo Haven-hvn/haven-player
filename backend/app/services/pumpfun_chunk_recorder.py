@@ -255,9 +255,9 @@ class PumpFunChunkRecorder:
         return stats
     
     def _find_participant(self, identity: str) -> Optional[RemoteParticipant]:
-        """Find participant by identity in current room."""
+        """Find participant by identity or SID in current room."""
         for participant in self.room.remote_participants.values():
-            if participant.identity == identity:
+            if participant.identity == identity or participant.sid == identity:
                 return participant
         return None
     

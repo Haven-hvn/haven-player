@@ -1075,12 +1075,16 @@ class ArkivSyncClient:
             "Entity Key: %s | "
             "Has Filecoin CID: %s | "
             "Is Encrypted: %s | "
-            "Has VLM JSON CID: %s",
+            "Has VLM JSON CID: %s | "
+            "Has Lit Metadata: %s | "
+            "Has Encrypted CID: %s",
             video.path,
             video.arkiv_entity_key or "None (will create)",
             "Yes" if video.filecoin_root_cid else "No",
             "Yes" if video.is_encrypted else "No",
-            "Yes" if video.vlm_json_cid else "No"
+            "Yes" if video.vlm_json_cid else "No",
+            "Yes" if video.lit_encryption_metadata else "No",
+            "Yes" if video.encrypted_filecoin_cid else "No"
         )
 
         client = self._get_client()
@@ -1089,6 +1093,25 @@ class ArkivSyncClient:
             segment_payload = _load_segment_payload(db_session, video)
         payload = _build_payload(video, segment_payload)
         attributes = _build_attributes(video)
+        
+        # Log what's being included in the sync
+        logger.info(
+            "📦 Arkiv sync payload contents for %s | "
+            "Payload keys: %s | "
+            "Has VLM JSON CID: %s | "
+            "Has Lit Metadata: %s | "
+            "Has CID Encryption Metadata: %s | "
+            "Attributes keys: %s | "
+            "Has Encrypted CID in attributes: %s",
+            video.path,
+            list(payload.keys()),
+            "Yes" if "vlm_json_cid" in payload else "No",
+            "Yes" if "lit_encryption_metadata" in payload else "No",
+            "Yes" if "cid_encryption_metadata" in payload else "No",
+            list(attributes.keys()),
+            "Yes" if "encrypted_cid" in attributes else "No"
+        )
+        
         payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         
         # Log payload size for debugging

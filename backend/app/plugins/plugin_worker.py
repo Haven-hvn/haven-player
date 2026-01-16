@@ -313,6 +313,27 @@ def worker_main(
     signal.signal(signal.SIGTERM, signal_handler)
     
     try:
+        # Import all models to ensure SQLAlchemy relationships are properly configured
+        # This must happen before any database queries to avoid relationship resolution errors
+        from app.models import (
+            Base,
+            AppConfig,
+            AnalysisJob,
+            Video,
+            Timestamp,
+            LiveSession,
+            Plugin,
+        )
+        # Import SegmentMetadata separately since it's not in __init__.py
+        from app.models.segment_metadata import SegmentMetadata
+        from app.models.recurring_job import RecurringJob
+        from app.models.upload_queue import UploadQueue
+        from app.models.pumpfun_coin import PumpFunCoin
+        
+        # Initialize database to ensure all tables exist and relationships are configured
+        from app.models.base import init_db
+        init_db()
+        
         # Import plugin module
         import importlib
         plugin_module_name = _get_plugin_module_name(plugin_name)

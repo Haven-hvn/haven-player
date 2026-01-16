@@ -136,9 +136,30 @@ async def load_plugin(
         db_plugin = db.query(PluginModel).filter(
             PluginModel.name == plugin_name
         ).first()
-        
-        if db_plugin and config:
-            db_plugin.config = config
+
+        persisted_config: Dict[str, object] = config.copy() if config else {}
+
+        if not persisted_config:
+            plugin = plugin_mgr.get_plugin(plugin_name)
+            if plugin and hasattr(plugin, "get_default_config"):
+                try:
+                    persisted_config = plugin.get_default_config()
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to load default config for {plugin_name}: {e}"
+                    )
+
+        if not db_plugin:
+            db_plugin = PluginModel(
+                name=plugin_name,
+                enabled=True,
+                config=persisted_config if persisted_config else None,
+            )
+            db.add(db_plugin)
+            db.commit()
+            db.refresh(db_plugin)
+        elif persisted_config:
+            db_plugin.config = persisted_config
             db_plugin.updated_at = datetime.utcnow()
             db.commit()
         

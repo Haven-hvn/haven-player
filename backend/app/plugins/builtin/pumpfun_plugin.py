@@ -806,6 +806,10 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                     logger.info("Auto recording is disabled in plugin config")
                     return {"status": "disabled", "message": "Auto recording is disabled"}
                 
+                livekit_url = plugin.config.get("livekit_url")
+                if livekit_url:
+                    manager.set_livekit_url(livekit_url)
+
                 segment_duration = plugin.config.get("segment_duration", 30)
                 logger.info(f"Managing recordings for {len(enabled_streams)} enabled streams, segment duration: {segment_duration}s")
                 

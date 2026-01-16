@@ -171,6 +171,35 @@ class TestPumpFunPluginConfig:
             assert subscription is None
 
     @pytest.mark.asyncio
+    async def test_manage_recordings_sets_livekit_url(self, pumpfun_plugin):
+        """Test that manage_recordings forwards livekit_url to manager."""
+        mock_session = Mock()
+        mock_plugin = Mock(spec=PluginModel)
+        mock_plugin.config = {
+            "streams": [],
+            "auto_recording_enabled": True,
+            "livekit_url": "wss://custom.livekit",
+            "segment_duration": 30,
+        }
+
+        mock_result = Mock()
+        mock_result.scalar_one_or_none.return_value = mock_plugin
+        mock_session.execute.return_value = mock_result
+
+        manager = Mock()
+        manager.manage_subscriptions = AsyncMock(return_value={"active": 0})
+
+        with patch('app.plugins.builtin.pumpfun_plugin.get_db_session') as mock_get_db:
+            mock_get_db.return_value = iter([mock_session])
+            with patch('app.plugins.builtin.pumpfun_plugin.PumpFunRecordingManager') as mock_manager:
+                mock_manager.return_value = manager
+                with patch('app.plugins.builtin.pumpfun_plugin.StreamManager'):
+                    result = await pumpfun_plugin.manage_recordings()
+
+        manager.set_livekit_url.assert_called_once_with("wss://custom.livekit")
+        assert result["status"] == "success"
+
+    @pytest.mark.asyncio
     async def test_discover_sources_with_subscribed_streams(self, pumpfun_plugin, mock_db_session):
         """Test that discover_sources checks subscribed streams for live status."""
         with patch('app.plugins.builtin.pumpfun_plugin.get_db_session') as mock_get_db:

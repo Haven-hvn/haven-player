@@ -41,6 +41,7 @@ class PumpFunChunkRecorder:
         video_quality: str = "high",
         audio_codec: str = "opus",
         audio_bitrate: str = "256k",
+        first_frame_timeout: float = 30.0,
     ):
         """
         Initialize custom chunk recorder.
@@ -69,11 +70,13 @@ class PumpFunChunkRecorder:
         self.video_quality = video_quality
         self.audio_codec = audio_codec
         self.audio_bitrate = self._parse_bitrate(audio_bitrate)
+        self._first_frame_timeout = first_frame_timeout
         
         # Recording state
         self._is_recording: bool = False
         self._participant_identity: Optional[str] = None
         self._participant: Optional[RemoteParticipant] = None
+        self._first_video_frame_event = asyncio.Event()
         
         # Segment management
         self._segment_count: int = 0
@@ -169,7 +172,7 @@ class PumpFunChunkRecorder:
         self._participant_identity = participant_identity
         self._participant = participant
         self._is_recording = True
-        self._stats["recording_start_time"] = time.time()
+        self._first_video_frame_event.clear()
         
         try:
             # Subscribe to tracks
@@ -177,6 +180,10 @@ class PumpFunChunkRecorder:
             
             # Start frame capture
             await self._start_frame_capture()
+
+            # Wait for first frame before starting the segment timer
+            await self._wait_for_first_video_frame()
+            self._stats["recording_start_time"] = time.time()
             
             # Start first segment
             first_segment_path = await self._start_new_segment()
@@ -315,6 +322,30 @@ class PumpFunChunkRecorder:
         
         # Wait a moment for streams to initialize
         await asyncio.sleep(0.5)
+
+    async def _wait_for_first_video_frame(self) -> None:
+        """Wait for the first video frame before starting segments."""
+        if self._first_video_frame_event.is_set():
+            return
+
+        logger.info(
+            f"Waiting for first video frame before starting segments "
+            f"(timeout {self._first_frame_timeout}s)"
+        )
+        try:
+            await asyncio.wait_for(
+                self._first_video_frame_event.wait(),
+                timeout=self._first_frame_timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            logger.error(
+                f"Timed out waiting for first video frame after "
+                f"{self._first_frame_timeout}s"
+            )
+            raise TimeoutError(
+                f"Timed out waiting for first video frame after "
+                f"{self._first_frame_timeout}s"
+            ) from exc
     
     async def _capture_video_frames(self) -> None:
         """Capture video frames from VideoStream and queue them."""
@@ -325,7 +356,13 @@ class PumpFunChunkRecorder:
             async for frame_event in self._video_capture_stream:
                 if not self._is_recording:
                     break
-                
+                if not self._first_video_frame_event.is_set():
+                    self._first_video_frame_event.set()
+                    logger.info(
+                        f"First video frame received for {self.mint_id}; "
+                        f"starting segment timer"
+                    )
+
                 await self._video_queue.put(frame_event)
                 self._stats["frames_captured"] += 1
                 

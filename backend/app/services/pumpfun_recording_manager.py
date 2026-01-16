@@ -11,7 +11,7 @@ import asyncio
 import time
 
 from app.services.pumpfun_chunk_recorder import PumpFunChunkRecorder
-from app.services.stream_manager import StreamManager
+from app.services.stream_manager import StreamManager, StreamInfo
 from app.services.upload_coordinator import UploadCoordinator
 
 logger = logging.getLogger(__name__)
@@ -38,11 +38,19 @@ class PumpFunRecordingManager:
             self.active_recordings: Dict[str, PumpFunChunkRecorder] = {}
             self.stream_manager: Optional[StreamManager] = None
             self.upload_coordinator = UploadCoordinator()
+            self._manage_lock = asyncio.Lock()
+            self._stream_wait_timeout_seconds = 180.0
+            self._stream_retry_interval_seconds = 15.0
+            self._livekit_url: Optional[str] = None
             self._initialized = True
     
     def set_stream_manager(self, stream_manager: StreamManager):
         """Set stream manager instance (dependency injection)."""
         self.stream_manager = stream_manager
+
+    def set_livekit_url(self, livekit_url: Optional[str]) -> None:
+        """Set LiveKit URL for stream startup."""
+        self._livekit_url = livekit_url
     
     async def manage_subscriptions(
         self, 
@@ -60,48 +68,117 @@ class PumpFunRecordingManager:
         if not self.stream_manager:
             logger.error("StreamManager not set")
             return {"status": "error", "error": "StreamManager not initialized"}
+
+        if self._manage_lock.locked():
+            logger.info(
+                "Recording manager busy; skipping overlapping schedule tick"
+            )
+            return {
+                "status": "busy",
+                "message": "Recording manager already running",
+                "subscribed": len(subscriptions),
+                "active": len(self.active_recordings),
+                "started": 0,
+                "stopped": 0,
+                "rotations": 0,
+                "errors": 0,
+            }
         
-        stats = {
-            "subscribed": len(subscriptions),
-            "active": 0,
-            "started": 0,
-            "stopped": 0,
-            "rotations": 0,
-            "errors": 0
-        }
-        
-        for subscription in subscriptions:
-            if not subscription.get("enabled", False):
-                continue
-            
-            mint_id = subscription.get("stream_id")
-            if not mint_id:
-                continue
-            
+        async with self._manage_lock:
+            logger.info("Recording manager lock acquired")
+            stats = {
+                "status": "ok",
+                "subscribed": len(subscriptions),
+                "active": 0,
+                "started": 0,
+                "stopped": 0,
+                "rotations": 0,
+                "errors": 0,
+            }
+
+            for subscription in subscriptions:
+                if not subscription.get("enabled", False):
+                    continue
+
+                mint_id = subscription.get("stream_id")
+                if not mint_id:
+                    continue
+
+                try:
+                    # Check if stream is live
+                    is_live = await self._check_stream_live(mint_id)
+
+                    if is_live and mint_id not in self.active_recordings:
+                        # Start new recording
+                        success = await self._start_recording(mint_id)
+                        if success:
+                            stats["started"] += 1
+                            logger.info(f"Started recording for {mint_id}")
+
+                    elif not is_live and mint_id in self.active_recordings:
+                        # Stop recording
+                        success = await self._stop_recording(mint_id)
+                        if success:
+                            stats["stopped"] += 1
+                            logger.info(f"Stopped recording for {mint_id}")
+
+                except Exception as e:
+                    logger.error(f"Error managing subscription {mint_id}: {e}")
+                    stats["errors"] += 1
+
+            stats["active"] = len(self.active_recordings)
+            return stats
+
+    async def _wait_for_stream_info(self, mint_id: str) -> Optional[StreamInfo]:
+        if not self.stream_manager:
+            logger.error("StreamManager not set")
+            return None
+
+        deadline = time.time() + self._stream_wait_timeout_seconds
+        attempt = 0
+
+        while True:
+            stream_info = await self.stream_manager.get_stream_info(mint_id)
+            if stream_info:
+                return stream_info
+
+            if time.time() >= deadline:
+                logger.error(
+                    f"Timed out waiting for stream info for {mint_id} "
+                    f"after {self._stream_wait_timeout_seconds}s"
+                )
+                return None
+
+            attempt += 1
             try:
-                # Check if stream is live
-                is_live = await self._check_stream_live(mint_id)
-                
-                if is_live and mint_id not in self.active_recordings:
-                    # Start new recording
-                    success = await self._start_recording(mint_id)
-                    if success:
-                        stats["started"] += 1
-                        logger.info(f"Started recording for {mint_id}")
-                
-                elif not is_live and mint_id in self.active_recordings:
-                    # Stop recording
-                    success = await self._stop_recording(mint_id)
-                    if success:
-                        stats["stopped"] += 1
-                        logger.info(f"Stopped recording for {mint_id}")
-                
+                if self._livekit_url:
+                    start_result: Dict[str, object] = await self.stream_manager.start_stream(
+                        mint_id,
+                        livekit_url=self._livekit_url,
+                    )
+                else:
+                    start_result = await self.stream_manager.start_stream(mint_id)
+                logger.info(
+                    f"Start stream attempt {attempt} for {mint_id}: {start_result}"
+                )
             except Exception as e:
-                logger.error(f"Error managing subscription {mint_id}: {e}")
-                stats["errors"] += 1
-        
-        stats["active"] = len(self.active_recordings)
-        return stats
+                logger.error(
+                    f"Start stream attempt {attempt} failed for {mint_id}: {e}"
+                )
+
+            stream_info = await self.stream_manager.get_stream_info(mint_id)
+            if stream_info:
+                return stream_info
+
+            remaining_seconds = max(
+                0, int(deadline - time.time())
+            )
+            logger.info(
+                f"Stream info not available for {mint_id}; "
+                f"retrying in {self._stream_retry_interval_seconds}s "
+                f"(remaining {remaining_seconds}s)"
+            )
+            await asyncio.sleep(self._stream_retry_interval_seconds)
     
     async def _check_stream_live(self, mint_id: str) -> bool:
         """
@@ -115,7 +192,7 @@ class PumpFunRecordingManager:
         """
         try:
             # Get stream info from stream manager
-            stream_info = await self.stream_manager.get_stream_info(mint_id)
+            stream_info = await self._wait_for_stream_info(mint_id)
             return stream_info is not None
         except Exception as e:
             logger.error(f"Error checking if stream {mint_id} is live: {e}")
@@ -135,9 +212,9 @@ class PumpFunRecordingManager:
         
         try:
             # Get LiveKit room
-            stream_info = await self.stream_manager.get_stream_info(mint_id)
+            stream_info = await self._wait_for_stream_info(mint_id)
             if not stream_info:
-                logger.error(f"No room found for {mint_id}")
+                logger.error(f"No stream info found for {mint_id}")
                 return False
             
             room = self.stream_manager.get_room(mint_id)

@@ -12,6 +12,7 @@ import asyncio
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.plugins.plugin_interface import (
     ArchiverPlugin,
@@ -393,6 +394,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
           }
         }
         """
+        db = None
         try:
             db = next(get_db_session())
             
@@ -402,10 +404,9 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             plugin = plugin_result.scalar_one_or_none()
             
             if not plugin:
-                return {
-                    "success": False,
-                    "error": "PumpFun plugin not found"
-                }
+                error_msg = "PumpFun plugin not found in database"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
             
             # Extract configuration
             config = config or {}
@@ -413,18 +414,17 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             stream_name = config.get("stream_name", stream_id)
             priority = config.get("priority", 5)
             
-            # Get current streams list
+            # Get current streams list - handle None config
+            if plugin.config is None:
+                plugin.config = {}
             streams = plugin.config.get("streams", [])
             
             # Check if already subscribed
             for stream in streams:
                 if stream.get("stream_id") == stream_id:
-                    return {
-                        "success": False,
-                        "error": "Already subscribed to this stream",
-                        "stream_id": stream_id,
-                        "stream_name": stream.get("stream_name", stream_id),
-                    }
+                    error_msg = f"Already subscribed to stream: {stream_id}"
+                    logger.warning(error_msg)
+                    raise ValueError(error_msg)
             
             # Add new stream subscription
             new_stream = {
@@ -437,32 +437,39 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             
             streams.append(new_stream)
             
-            # Update plugin config
-            config_copy = plugin.config.copy()
+            # Update plugin config - ensure we create a new dict to trigger SQLAlchemy change detection
+            config_copy = plugin.config.copy() if plugin.config else {}
             config_copy["streams"] = streams
             plugin.config = config_copy
             
+            # Explicitly flag the config field as modified so SQLAlchemy detects the change
+            flag_modified(plugin, "config")
+            
             db.commit()
+            db.refresh(plugin)  # Refresh to ensure we have the latest data
             
-            logger.info(f"Subscribed to PumpFun stream: {new_stream['stream_name']}")
+            logger.info(f"Successfully subscribed to PumpFun stream: {new_stream['stream_name']} (stream_id: {stream_id})")
             
+            # Return subscription in format expected by frontend (PumpFunSubscription)
             return {
-                "success": True,
                 "stream_id": new_stream["stream_id"],
                 "stream_name": new_stream["stream_name"],
                 "enabled": new_stream["enabled"],
                 "priority": new_stream["priority"],
                 "created_at": new_stream["created_at"],
+                "is_currently_recording": False,
+                "recording_status": "idle",
             }
         
         except Exception as e:
-            logger.error(f"Error subscribing to PumpFun stream: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-            }
+            logger.error(f"Error subscribing to PumpFun stream: {e}", exc_info=True)
+            if db:
+                db.rollback()
+            # Re-raise the exception so the execute endpoint can handle it properly
+            raise
         finally:
-            db.close()
+            if db:
+                db.close()
     
     async def unsubscribe(self, collection_id: str) -> Dict[str, Any]:
         """
@@ -475,6 +482,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
           "params": {"collection_id": "my-stream-id"}
         }
         """
+        db = None
         try:
             db = next(get_db_session())
             
@@ -484,12 +492,13 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             plugin = plugin_result.scalar_one_or_none()
             
             if not plugin:
-                return {
-                    "success": False,
-                    "error": "PumpFun plugin not found"
-                }
+                error_msg = "PumpFun plugin not found in database"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
             
-            # Get current streams list
+            # Get current streams list - handle None config
+            if plugin.config is None:
+                plugin.config = {}
             streams = plugin.config.get("streams", [])
             
             # Find and remove the stream
@@ -497,33 +506,36 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             filtered_streams = [s for s in streams if s.get("stream_id") != collection_id]
             
             if len(filtered_streams) == original_count:
-                return {
-                    "success": False,
-                    "error": "Stream subscription not found",
-                }
+                error_msg = f"Stream subscription not found: {collection_id}"
+                logger.warning(error_msg)
+                raise ValueError(error_msg)
             
-            # Update plugin config
-            config_copy = plugin.config.copy()
+            # Update plugin config - ensure we create a new dict to trigger SQLAlchemy change detection
+            config_copy = plugin.config.copy() if plugin.config else {}
             config_copy["streams"] = filtered_streams
             plugin.config = config_copy
             
-            db.commit()
+            # Explicitly flag the config field as modified so SQLAlchemy detects the change
+            flag_modified(plugin, "config")
             
-            logger.info(f"Unsubscribed from PumpFun stream: {collection_id}")
+            db.commit()
+            db.refresh(plugin)  # Refresh to ensure we have the latest data
+            
+            logger.info(f"Successfully unsubscribed from PumpFun stream: {collection_id}")
             
             return {
-                "success": True,
                 "message": f"Unsubscribed from {collection_id}",
             }
         
         except Exception as e:
-            logger.error(f"Error unsubscribing from stream: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-            }
+            logger.error(f"Error unsubscribing from stream: {e}", exc_info=True)
+            if db:
+                db.rollback()
+            # Re-raise the exception so the execute endpoint can handle it properly
+            raise
         finally:
-            db.close()
+            if db:
+                db.close()
     
     async def list_subscriptions(self) -> List[Dict[str, Any]]:
         """
@@ -536,6 +548,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
           "params": {}
         }
         """
+        db = None
         try:
             db = next(get_db_session())
             
@@ -545,17 +558,22 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             plugin = plugin_result.scalar_one_or_none()
             
             if not plugin:
+                logger.warning("PumpFun plugin not found in database")
                 return []
             
-            # Return streams list directly from config
+            # Return streams list directly from config - handle None config
+            if plugin.config is None:
+                return []
+            
             streams = plugin.config.get("streams", [])
             return streams
         
         except Exception as e:
-            logger.error(f"Error listing PumpFun subscriptions: {e}")
+            logger.error(f"Error listing PumpFun subscriptions: {e}", exc_info=True)
             return []
         finally:
-            db.close()
+            if db:
+                db.close()
     
     async def get_subscription(self, collection_id: str) -> Dict[str, Any]:
         """
@@ -568,6 +586,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
           "params": {"collection_id": "my-stream-id"}
         }
         """
+        db = None
         try:
             db = next(get_db_session())
             
@@ -577,9 +596,13 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             plugin = plugin_result.scalar_one_or_none()
             
             if not plugin:
+                logger.warning("PumpFun plugin not found in database")
                 return None
             
-            # Find stream in config
+            # Find stream in config - handle None config
+            if plugin.config is None:
+                return None
+            
             streams = plugin.config.get("streams", [])
             for stream in streams:
                 if stream.get("stream_id") == collection_id:
@@ -588,10 +611,11 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             return None
         
         except Exception as e:
-            logger.error(f"Error getting PumpFun subscription: {e}")
+            logger.error(f"Error getting PumpFun subscription: {e}", exc_info=True)
             return None
         finally:
-            db.close()
+            if db:
+                db.close()
     
     async def discover_from_subscription(self, collection_id: str) -> List[MediaSource]:
         """

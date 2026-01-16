@@ -184,10 +184,25 @@ class JobScheduler:
                 RecurringJob.enabled == True
             ).all()
 
+            scheduled_count = 0
+            skipped_count = 0
             for job in jobs:
-                await self.schedule_job(job)
+                # Check if plugin is loaded before scheduling
+                plugin = self.plugin_manager.get_plugin(job.plugin_name)
+                if plugin:
+                    await self.schedule_job(job)
+                    scheduled_count += 1
+                else:
+                    logger.warning(
+                        f"Skipping job {job.job_name} for plugin {job.plugin_name}: "
+                        f"plugin is not loaded"
+                    )
+                    skipped_count += 1
 
-            logger.info(f"Loaded {len(jobs)} jobs from database")
+            logger.info(
+                f"Loaded {scheduled_count} jobs from database "
+                f"({skipped_count} skipped - plugin not loaded)"
+            )
         finally:
             db.close()
     
@@ -271,6 +286,14 @@ class JobScheduler:
                 logger.info(f"Job {job.job_name} is disabled, skipping")
                 return
             
+            # Check if plugin is loaded before executing
+            plugin = self.plugin_manager.get_plugin(job.plugin_name)
+            if not plugin:
+                logger.warning(
+                    f"Job {job.job_name} skipped: plugin {job.plugin_name} is not loaded"
+                )
+                return
+            
             # Update job status
             job.is_running = True
             job.total_runs += 1
@@ -280,10 +303,6 @@ class JobScheduler:
             logger.info(f"Executing job: {job.plugin_name}:{job.job_name}")
             
             try:
-                # Get plugin instance
-                plugin = self.plugin_manager.get_plugin(job.plugin_name)
-                if not plugin:
-                    raise Exception(f"Plugin {job.plugin_name} not loaded")
                 
                 # Execute plugin method based on method type
                 if job.method == "discover_sources":

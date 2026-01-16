@@ -203,3 +203,181 @@ class TestJobSchedulerDeleteJobsForPlugin:
 
         # Should still have deleted at least one job
         assert deleted_count >= 1
+
+
+class TestJobSchedulerPluginAvailability:
+    """Test cases for job scheduling with unloaded plugins."""
+
+    @pytest.mark.asyncio
+    async def test_load_jobs_from_db_skips_unloaded_plugins(self, job_scheduler, in_memory_db):
+        """Test that jobs for unloaded plugins are skipped when loading from database."""
+        job_scheduler.db_url = "sqlite:///:memory:"
+
+        # Mock plugin manager to return None for unloaded plugin
+        mock_plugin_manager = Mock()
+        mock_plugin_manager.get_plugin = Mock(side_effect=lambda name: None if name == "UnloadedPlugin" else Mock())
+        job_scheduler.plugin_manager = mock_plugin_manager
+
+        # Mock scheduler to track scheduled jobs
+        mock_scheduler = Mock(spec=AsyncIOScheduler)
+        mock_scheduler.add_job = Mock()
+        job_scheduler.scheduler = mock_scheduler
+
+        # Create jobs in the database
+        Session = in_memory_db
+        db = Session()
+        try:
+            loaded_job = RecurringJob(
+                plugin_name="LoadedPlugin",
+                job_name="loaded_job",
+                schedule="0 * * * *",
+                method="discover_sources",
+                enabled=True
+            )
+            unloaded_job = RecurringJob(
+                plugin_name="UnloadedPlugin",
+                job_name="unloaded_job",
+                schedule="30 * * * *",
+                method="discover_sources",
+                enabled=True
+            )
+            db.add_all([loaded_job, unloaded_job])
+            db.commit()
+        finally:
+            db.close()
+
+        # Load jobs from database
+        await job_scheduler._load_jobs_from_db()
+
+        # Verify only the loaded plugin's job was scheduled
+        assert mock_scheduler.add_job.call_count == 1
+        # Verify the scheduled job is for LoadedPlugin
+        call_args = mock_scheduler.add_job.call_args
+        assert call_args[1]["name"] == "LoadedPlugin:loaded_job"
+
+    @pytest.mark.asyncio
+    async def test_load_jobs_from_db_schedules_loaded_plugins(self, job_scheduler, in_memory_db):
+        """Test that jobs for loaded plugins are scheduled correctly."""
+        job_scheduler.db_url = "sqlite:///:memory:"
+
+        # Mock plugin manager to return plugin for loaded plugin
+        mock_plugin = Mock()
+        mock_plugin_manager = Mock()
+        mock_plugin_manager.get_plugin = Mock(return_value=mock_plugin)
+        job_scheduler.plugin_manager = mock_plugin_manager
+
+        # Mock scheduler to track scheduled jobs
+        mock_scheduler = Mock(spec=AsyncIOScheduler)
+        mock_scheduler.add_job = Mock()
+        job_scheduler.scheduler = mock_scheduler
+
+        # Create job in the database
+        Session = in_memory_db
+        db = Session()
+        try:
+            job = RecurringJob(
+                plugin_name="LoadedPlugin",
+                job_name="test_job",
+                schedule="0 * * * *",
+                method="discover_sources",
+                enabled=True
+            )
+            db.add(job)
+            db.commit()
+        finally:
+            db.close()
+
+        # Load jobs from database
+        await job_scheduler._load_jobs_from_db()
+
+        # Verify job was scheduled
+        assert mock_scheduler.add_job.call_count == 1
+        call_args = mock_scheduler.add_job.call_args
+        assert call_args[1]["name"] == "LoadedPlugin:test_job"
+
+    @pytest.mark.asyncio
+    async def test_execute_job_skips_when_plugin_not_loaded(self, job_scheduler, in_memory_db):
+        """Test that job execution is skipped when plugin is not loaded."""
+        job_scheduler.db_url = "sqlite:///:memory:"
+
+        # Mock plugin manager to return None (plugin not loaded)
+        mock_plugin_manager = Mock()
+        mock_plugin_manager.get_plugin = Mock(return_value=None)
+        job_scheduler.plugin_manager = mock_plugin_manager
+
+        # Create job in the database
+        Session = in_memory_db
+        db = Session()
+        try:
+            job = RecurringJob(
+                plugin_name="UnloadedPlugin",
+                job_name="test_job",
+                schedule="0 * * * *",
+                method="discover_sources",
+                enabled=True,
+                total_runs=0
+            )
+            db.add(job)
+            db.commit()
+            job_id = job.id
+        finally:
+            db.close()
+
+        # Execute the job
+        await job_scheduler._execute_job(job_id)
+
+        # Verify job status was not updated (no execution occurred)
+        db = Session()
+        try:
+            job_after = db.query(RecurringJob).filter(RecurringJob.id == job_id).first()
+            assert job_after.total_runs == 0
+            assert job_after.is_running is False
+        finally:
+            db.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_job_runs_when_plugin_loaded(self, job_scheduler, in_memory_db):
+        """Test that job execution proceeds when plugin is loaded."""
+        job_scheduler.db_url = "sqlite:///:memory:"
+
+        # Mock plugin with discover_sources method
+        mock_plugin = Mock()
+        mock_plugin.discover_sources = AsyncMock(return_value=[])
+        mock_plugin_manager = Mock()
+        mock_plugin_manager.get_plugin = Mock(return_value=mock_plugin)
+        job_scheduler.plugin_manager = mock_plugin_manager
+
+        # Create job in the database
+        Session = in_memory_db
+        db = Session()
+        try:
+            job = RecurringJob(
+                plugin_name="LoadedPlugin",
+                job_name="test_job",
+                schedule="0 * * * *",
+                method="discover_sources",
+                on_success="log_only",
+                enabled=True,
+                total_runs=0
+            )
+            db.add(job)
+            db.commit()
+            job_id = job.id
+        finally:
+            db.close()
+
+        # Execute the job
+        await job_scheduler._execute_job(job_id)
+
+        # Verify job was executed
+        db = Session()
+        try:
+            job_after = db.query(RecurringJob).filter(RecurringJob.id == job_id).first()
+            assert job_after.total_runs == 1
+            assert job_after.is_running is False
+            assert job_after.last_run_at is not None
+        finally:
+            db.close()
+
+        # Verify plugin method was called
+        mock_plugin.discover_sources.assert_called_once()

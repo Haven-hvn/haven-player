@@ -223,3 +223,59 @@ def test_get_plane_size_falls_back_to_len() -> None:
             return 24
 
     assert PumpFunChunkRecorder._get_plane_size(Plane()) == 24
+
+
+def test_detect_keyframe_prefers_is_keyframe() -> None:
+    class Packet:
+        is_keyframe = True
+
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+
+    assert recorder._detect_keyframe_in_packet(Packet()) is True
+
+
+def test_detect_keyframe_falls_back_to_keyframe() -> None:
+    class Packet:
+        keyframe = False
+
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+
+    assert recorder._detect_keyframe_in_packet(Packet()) is False
+
+
+def test_detect_keyframe_falls_back_to_flags() -> None:
+    class Packet:
+        flags = 0x0001
+
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+
+    assert recorder._detect_keyframe_in_packet(Packet()) is True
+
+
+def test_detect_keyframe_defaults_false() -> None:
+    class Packet:
+        pass
+
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+
+    assert recorder._detect_keyframe_in_packet(Packet()) is False

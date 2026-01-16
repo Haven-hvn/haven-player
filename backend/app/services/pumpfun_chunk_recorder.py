@@ -808,8 +808,14 @@ class PumpFunChunkRecorder:
         Returns:
             True if packet contains a keyframe, False otherwise
         """
-        # PyAV sets this flag on I-frame packets
-        return (packet.flags & 0x0001) != 0
+        # Prefer higher-level PyAV properties when available.
+        if hasattr(packet, "is_keyframe"):
+            return bool(packet.is_keyframe)
+        if hasattr(packet, "keyframe"):
+            return bool(packet.keyframe)
+        if hasattr(packet, "flags"):
+            return (packet.flags & 0x0001) != 0
+        return False
 
     @staticmethod
     def _get_plane_size(plane) -> int:

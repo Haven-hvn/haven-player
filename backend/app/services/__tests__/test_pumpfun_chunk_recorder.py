@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
 from app.services.pumpfun_chunk_recorder import PumpFunChunkRecorder
+from app.services import pumpfun_chunk_recorder as recorder_module
 
 
 @dataclass
@@ -18,6 +19,27 @@ class FakeFrameEvent:
 class FakeParticipant:
     identity: str
     sid: str
+
+
+@dataclass
+class FakePublication:
+    kind: object
+    subscribed: bool = False
+    calls: list[bool] = field(default_factory=list)
+
+    def set_subscribed(self, value: bool) -> None:
+        self.subscribed = value
+        self.calls.append(value)
+
+
+@dataclass
+class FakeParticipantWithPublications:
+    track_publications: dict[str, FakePublication]
+
+
+class FakePublicationError(FakePublication):
+    def set_subscribed(self, value: bool) -> None:
+        raise RuntimeError("subscription failed")
 
 
 class FakeVideoStream:
@@ -126,3 +148,56 @@ def test_find_participant_matches_identity_or_sid() -> None:
 
     assert recorder._find_participant("identity") is participant
     assert recorder._find_participant("sid") is participant
+
+
+@pytest.mark.asyncio
+async def test_subscribe_and_unsubscribe_tracks(monkeypatch) -> None:
+    async def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(recorder_module.asyncio, "sleep", no_sleep)
+
+    publications = {
+        "video": FakePublication(kind=recorder_module.rtc.TrackKind.KIND_VIDEO),
+        "audio": FakePublication(kind=recorder_module.rtc.TrackKind.KIND_AUDIO),
+    }
+    participant = FakeParticipantWithPublications(track_publications=publications)
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+
+    await recorder._subscribe_to_tracks(participant)
+
+    assert publications["video"].subscribed is True
+    assert publications["audio"].subscribed is True
+
+    await recorder._unsubscribe_from_tracks(participant)
+
+    assert publications["video"].subscribed is False
+    assert publications["audio"].subscribed is False
+
+
+@pytest.mark.asyncio
+async def test_subscribe_and_unsubscribe_tracks_handles_errors(monkeypatch) -> None:
+    async def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(recorder_module.asyncio, "sleep", no_sleep)
+
+    publications = {
+        "video": FakePublicationError(kind=recorder_module.rtc.TrackKind.KIND_VIDEO),
+        "audio": FakePublicationError(kind=recorder_module.rtc.TrackKind.KIND_AUDIO),
+    }
+    participant = FakeParticipantWithPublications(track_publications=publications)
+    recorder = PumpFunChunkRecorder(
+        mint_id="mint",
+        room=DummyRoom(),
+        output_dir=".",
+        first_frame_timeout=0.1,
+    )
+
+    await recorder._subscribe_to_tracks(participant)
+    await recorder._unsubscribe_from_tracks(participant)

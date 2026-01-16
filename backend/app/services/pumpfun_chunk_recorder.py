@@ -263,14 +263,20 @@ class PumpFunChunkRecorder:
     
     async def _subscribe_to_tracks(self, participant: RemoteParticipant) -> None:
         """Subscribe to video and audio tracks of participant."""
-        # Subscribe to video track
+        # Subscribe to video/audio tracks when auto_subscribe=False
         for publication in participant.track_publications.values():
             if publication.kind == rtc.TrackKind.KIND_VIDEO:
-                await self.room.local_participant.subscribe(publication.track.sid)
-                logger.info(f"Subscribed to video track {publication.track.sid}")
+                try:
+                    publication.set_subscribed(True)
+                    logger.info("Subscribed to video track")
+                except Exception as e:
+                    logger.error(f"Failed to subscribe to video track: {e}")
             elif publication.kind == rtc.TrackKind.KIND_AUDIO:
-                await self.room.local_participant.subscribe(publication.track.sid)
-                logger.info(f"Subscribed to audio track {publication.track.sid}")
+                try:
+                    publication.set_subscribed(True)
+                    logger.info("Subscribed to audio track")
+                except Exception as e:
+                    logger.error(f"Failed to subscribe to audio track: {e}")
         
         # Wait a moment for subscription to take effect
         await asyncio.sleep(0.5)
@@ -279,8 +285,11 @@ class PumpFunChunkRecorder:
         """Unsubscribe from all tracks."""
         for publication in participant.track_publications.values():
             if publication.subscribed:
-                await self.room.local_participant.unsubscribe(publication.track.sid)
-                logger.info(f"Unsubscribed from track {publication.track.sid}")
+                try:
+                    publication.set_subscribed(False)
+                    logger.info("Unsubscribed from track")
+                except Exception as e:
+                    logger.error(f"Failed to unsubscribe from track: {e}")
     
     async def _start_frame_capture(self) -> None:
         """Start VideoStream and AudioStream capture from LiveKit tracks."""

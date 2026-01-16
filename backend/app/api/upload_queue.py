@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.upload_queue import UploadQueue
 from app.models.video import Video
+from app.models.segment_metadata import SegmentMetadata
 from app.utils.video.video_file_validator import is_video_content
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,20 @@ class VLMJsonUploadUpdate(BaseModel):
     vlm_json_cid: Optional[str] = None
 
 
+class SegmentMetadataResponse(BaseModel):
+    """Segment ordering metadata for Arkiv sync."""
+    segment_index: int
+    start_timestamp: datetime
+    end_timestamp: Optional[datetime] = None
+    mint_id: str
+    recording_session_id: Optional[str] = None
+
+    @field_serializer('start_timestamp', 'end_timestamp')
+    @classmethod
+    def serialize_datetime(cls, dt: Optional[datetime]) -> Optional[str]:
+        return dt.isoformat() if dt else None
+
+
 class UploadQueueResponse(BaseModel):
     """Response model for upload queue entry."""
     model_config = ConfigDict(from_attributes=True)
@@ -83,6 +98,7 @@ class UploadQueueResponse(BaseModel):
     vlm_json_upload_started_at: Optional[datetime] = None
     vlm_json_upload_completed_at: Optional[datetime] = None
     vlm_json_upload_error: Optional[str] = None
+    segment_metadata: Optional[SegmentMetadataResponse] = None
 
     @field_serializer('created_at', 'started_at', 'completed_at', 'arkiv_sync_started_at', 'arkiv_sync_completed_at', 'vlm_analysis_started_at', 'vlm_analysis_completed_at', 'vlm_json_upload_started_at', 'vlm_json_upload_completed_at')
     @classmethod
@@ -315,7 +331,21 @@ async def pop_arkiv_sync_job(db: Session = Depends(get_db)):
         db.refresh(queue_entry)
 
         logger.info(f"Popped video for Arkiv sync: {queue_entry.video_path}")
-        return UploadQueueResponse.model_validate(queue_entry)
+        response = UploadQueueResponse.model_validate(queue_entry)
+        video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
+        if video:
+            segment = db.query(SegmentMetadata).filter(SegmentMetadata.video_id == video.id).first()
+            if segment:
+                response = response.model_copy(update={
+                    "segment_metadata": SegmentMetadataResponse(
+                        segment_index=segment.segment_index,
+                        start_timestamp=segment.start_timestamp,
+                        end_timestamp=segment.end_timestamp,
+                        mint_id=segment.mint_id,
+                        recording_session_id=segment.recording_session_id
+                    )
+                })
+        return response
 
     except Exception as e:
         db.rollback()

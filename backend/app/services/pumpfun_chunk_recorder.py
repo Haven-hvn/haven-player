@@ -656,7 +656,10 @@ class PumpFunChunkRecorder:
         """Enqueue completed segment to UploadCoordinator for processing."""
         try:
             # Update segment metadata to show completion
-            await self._update_segment_metadata("finalizing")
+            await self._update_segment_metadata("finalizing", segment_path=segment_path)
+
+            # Ensure a Video row exists and SegmentMetadata is linked
+            self._ensure_segment_video(segment_path)
             
             from app.services.upload_coordinator import UploadCoordinator
             upload_coordinator = UploadCoordinator()
@@ -668,14 +671,19 @@ class PumpFunChunkRecorder:
 
             if enqueued:
                 # Update segment metadata to show it's been queued for upload
-                await self._update_segment_metadata("upload_queued")
+                await self._update_segment_metadata("upload_queued", segment_path=segment_path)
                 logger.info(f"Enqueued segment: {segment_path.name}")
 
         except Exception as e:
             logger.error(f"Failed to enqueue segment {segment_path}: {e}")
-            await self._update_segment_metadata("failed", str(e))
+            await self._update_segment_metadata("failed", str(e), segment_path=segment_path)
     
-    async def _update_segment_metadata(self, status: str, error_message: Optional[str] = None) -> None:
+    async def _update_segment_metadata(
+        self,
+        status: str,
+        error_message: Optional[str] = None,
+        segment_path: Optional[Path] = None
+    ) -> None:
         """Update real-time segment metadata during recording."""
         try:
             from app.models.segment_metadata import SegmentMetadata
@@ -684,8 +692,9 @@ class PumpFunChunkRecorder:
             db = SessionLocal()
             try:
                 # Find existing segment metadata by path
+                target_path = str(segment_path or self._current_segment_path)
                 segment = db.query(SegmentMetadata).filter(
-                    SegmentMetadata.segment_path == str(self._current_segment_path)
+                    SegmentMetadata.segment_path == target_path
                 ).first()
                 
                 if segment:
@@ -696,6 +705,12 @@ class PumpFunChunkRecorder:
                     segment.bytes_written = self._stats.get("bytes_written", 0)
                     segment.frames_captured = self._stats.get("frames_captured", 0)
                     segment.packets_written = self._stats.get("packets_written", 0)
+                    if not segment.mint_id:
+                        segment.mint_id = self.mint_id
+                    if segment.segment_index is None:
+                        segment.segment_index = self._current_segment_index
+                    if not segment.start_timestamp:
+                        segment.start_timestamp = datetime.now(timezone.utc)
                     
                     if error_message:
                         segment.error_message = error_message
@@ -708,6 +723,67 @@ class PumpFunChunkRecorder:
         except Exception as e:
             # Log but don't propagate - this is just for monitoring
             logger.error(f"Failed to update segment metadata: {e}")
+
+    def _ensure_segment_video(self, segment_path: Path) -> None:
+        """Ensure a Video row exists and SegmentMetadata is linked."""
+        try:
+            from app.models.segment_metadata import SegmentMetadata
+            from app.models.video import Video
+            from app.models.database import SessionLocal
+
+            db = SessionLocal()
+            try:
+                segment = db.query(SegmentMetadata).filter(
+                    SegmentMetadata.segment_path == str(segment_path)
+                ).first()
+                if not segment:
+                    raise RuntimeError(f"Segment metadata not found for {segment_path}")
+
+                video = db.query(Video).filter(Video.path == str(segment_path)).first()
+                if not video:
+                    duration_seconds = self.segment_duration
+                    if segment.start_timestamp and segment.end_timestamp:
+                        duration_seconds = int(
+                            (segment.end_timestamp - segment.start_timestamp).total_seconds()
+                        )
+                    if duration_seconds <= 0:
+                        duration_seconds = self.segment_duration
+
+                    plugin_metadata: dict[str, str | int | None] = {
+                        "segment_index": segment.segment_index,
+                        "recording_session_id": segment.recording_session_id,
+                        "segment_start_timestamp": segment.start_timestamp.isoformat()
+                        if segment.start_timestamp else None,
+                        "segment_end_timestamp": segment.end_timestamp.isoformat()
+                        if segment.end_timestamp else None,
+                    }
+
+                    video = Video(
+                        path=str(segment_path),
+                        title=f"PumpFun segment {segment.segment_index} ({self.mint_id})",
+                        duration=duration_seconds,
+                        mint_id=self.mint_id,
+                        parent_mint_id=segment.recording_session_id or self.mint_id,
+                        plugin_name="PumpFunPlugin",
+                        plugin_source_id=self.mint_id,
+                        plugin_metadata=plugin_metadata,
+                    )
+                    db.add(video)
+                    db.commit()
+                    db.refresh(video)
+
+                if segment.video_id != video.id:
+                    segment.video_id = video.id
+                if not segment.mint_id:
+                    segment.mint_id = self.mint_id
+                if segment.recording_session_id is None:
+                    segment.recording_session_id = self.mint_id
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to ensure segment video for {segment_path}: {e}")
+            raise
     
     async def _create_segment_metadata(self) -> None:
         """Create segment metadata record for real-time tracking."""

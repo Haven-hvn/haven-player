@@ -6,11 +6,14 @@ statistics. After upload, Permanent information is stored in the Video model.
 """
 
 from datetime import datetime, timezone
-from typing import Optional
-from sqlalchemy import Integer, String, Float, Boolean, DateTime
-from sqlalchemy.orm import Mapped, mapped_column
+from typing import Optional, TYPE_CHECKING
+from sqlalchemy import Integer, String, Float, Boolean, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.video import Video
 
 
 class SegmentMetadata(Base):
@@ -35,7 +38,8 @@ class SegmentMetadata(Base):
     segment_path: Mapped[str] = mapped_column(String, nullable=False)
     
     # Link to video (created when segment is enqueued to UploadCoordinator)
-    video_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    video_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey('videos.id'), nullable=True)
+    video: Mapped[Optional['Video']] = relationship('Video', back_populates='segment_metadata')
     
     # Timing (real-time during recording)
     start_timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -83,6 +87,7 @@ class SegmentMetadata(Base):
             'recording_session_id': self.recording_session_id,
             'segment_index': self.segment_index,
             'segment_path': self.segment_path,
+            'video_id': self.video_id,
             'segment_timestamp': self.start_timestamp.strftime('%Y%m%d_%H%M%S') if self.start_timestamp else None,
             'segment_duration': self.end_timestamp and (self.end_timestamp - self.start_timestamp).total_seconds() or None,
             'expected_duration': self.expected_duration,

@@ -122,16 +122,17 @@ def make_timestamp(tag: str) -> Timestamp:
 
 def test_build_payload_excludes_path_and_optimized_structure() -> None:
     video = make_video()
-    payload = _build_payload(video, [make_timestamp("car")])
+    payload = _build_payload(video)
     assert "path" not in payload
     # Optimized payload only includes essential fields
     assert "cid_hash" in payload  # Always included for deduplication
     assert "is_encrypted" in payload
-    assert "timestamps" in payload
-    assert payload["timestamps"][0]["tag"] == "car"
-    # For non-encrypted videos, encrypted CID fields are not included
+    # Timestamps are no longer in payload - they come from VLM JSON (vlm_json_cid)
+    assert "timestamps" not in payload
+    # For non-encrypted videos, filecoin_root_cid is included in payload
+    assert "filecoin_root_cid" in payload
+    # Encrypted CID fields are not included for non-encrypted videos
     assert "encrypted_cid" not in payload
-    assert "filecoin_root_cid" not in payload
     assert "lit_encryption_metadata" not in payload
     # Redundant fields (already in attributes or recalculatable) are excluded
     assert "title" not in payload
@@ -141,10 +142,11 @@ def test_build_payload_excludes_path_and_optimized_structure() -> None:
 
 def test_build_attributes_flat_and_typed() -> None:
     video = make_video()
-    attributes = _build_attributes(video, [make_timestamp("car"), make_timestamp("tree")])
+    attributes = _build_attributes(video)
     assert attributes["title"] == "Sample"
     assert "path" not in attributes
-    assert attributes["tags"] == "car,tree"
+    # Tags are no longer in attributes - they come from VLM JSON, not database timestamps
+    assert "tags" not in attributes
     assert attributes["phash"] == "ffee"
     assert "cid_hash" not in attributes
     # Recalculatable fields should NOT be in attributes
@@ -159,7 +161,7 @@ def test_sync_disabled_when_no_key() -> None:
     client = ArkivSyncClient(config, arkiv_factory=lambda *_args, **_kwargs: DummyArkivClient())
     video = make_video()
     session = DummySession()
-    result = client.sync_video(session, video, [])
+    result = client.sync_video(session, video)
     assert result is None
     assert not session.committed
 
@@ -175,7 +177,7 @@ def test_sync_creates_entity_and_persists_key() -> None:
     video = make_video(arkiv_entity_key=None)
     session = DummySession()
 
-    result = client.sync_video(session, video, [make_timestamp("car")])
+    result = client.sync_video(session, video)
 
     assert result == EntityKey("0xabc")
     assert video.arkiv_entity_key == "0xabc"
@@ -189,10 +191,12 @@ def test_sync_creates_entity_and_persists_key() -> None:
     # Optimized payload structure
     assert "cid_hash" in payload_dict  # Always included for deduplication
     assert "is_encrypted" in payload_dict
-    assert "timestamps" in payload_dict
+    # Timestamps are no longer in payload - they come from VLM JSON (vlm_json_cid)
+    assert "timestamps" not in payload_dict
+    # For non-encrypted videos, filecoin_root_cid is included in payload
+    assert "filecoin_root_cid" in payload_dict
     # Encrypted fields not included when not encrypted
     assert "encrypted_cid" not in payload_dict
-    assert "filecoin_root_cid" not in payload_dict
     assert "lit_encryption_metadata" not in payload_dict
 
 
@@ -203,7 +207,7 @@ def test_sync_skips_local_only() -> None:
     video = make_video(share_to_arkiv=False)
     session = DummySession()
 
-    result = client.sync_video(session, video, [])
+    result = client.sync_video(session, video)
 
     assert result is None
     assert not dummy_client.arkiv.created
@@ -263,7 +267,7 @@ def test_sync_handles_413_error_gracefully() -> None:
     video = make_video(arkiv_entity_key="0x123")
     session = DummySession()
     
-    result = client.sync_video(session, video, [])
+    result = client.sync_video(session, video)
     
     # Should return None gracefully instead of raising
     assert result is None
@@ -281,7 +285,7 @@ def test_build_payload_removes_ciphertext_from_metadata() -> None:
             "chain": "ethereum"
         })
     )
-    payload = _build_payload(video, [])
+    payload = _build_payload(video)
     
     assert "lit_encryption_metadata" in payload
     metadata = json.loads(payload["lit_encryption_metadata"])
@@ -356,7 +360,7 @@ def test_sync_video_uses_expires_in_from_config() -> None:
     video = make_video(arkiv_entity_key=None)
     session = DummySession()
     
-    result = client.sync_video(session, video, [make_timestamp("car")])
+    result = client.sync_video(session, video)
     
     assert result == EntityKey("0xabc")
     assert dummy_client.arkiv.created, "create_entity should be called"
@@ -383,7 +387,7 @@ def test_sync_video_uses_expires_in_when_updating() -> None:
     video = make_video(arkiv_entity_key="0x123")
     session = DummySession()
     
-    result = client.sync_video(session, video, [make_timestamp("car")])
+    result = client.sync_video(session, video)
     
     assert result == EntityKey("0x123")
     assert dummy_client.arkiv.updated, "update_entity should be called"

@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Protocol, Any
+from typing import Callable, Protocol, Any, TypedDict
 import mimetypes
 
 import requests
@@ -32,6 +32,7 @@ from web3.exceptions import Web3RPCError
 from app.utils.phash import calculate_phash
 from app.utils.video import get_video_duration
 from app.models.video import Video
+from app.models.segment_metadata import SegmentMetadata
 from app.services.evm_utils import (
     InsufficientGasError,
     handle_evm_gas_error,
@@ -39,6 +40,14 @@ from app.services.evm_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SegmentOrderingPayload(TypedDict):
+    segment_index: int
+    start_timestamp: str
+    end_timestamp: str | None
+    mint_id: str
+    recording_session_id: str | None
 
 
 def _is_413_error(exc: Exception) -> bool:
@@ -302,7 +311,30 @@ def _build_attributes(video: Video) -> dict[str, str | int]:
     return attributes
 
 
-def _build_payload(video: Video) -> dict:
+def _build_segment_payload(segment: SegmentMetadata) -> SegmentOrderingPayload:
+    """Build ordering payload for a single segment."""
+    return {
+        "segment_index": segment.segment_index,
+        "start_timestamp": segment.start_timestamp.isoformat(),
+        "end_timestamp": segment.end_timestamp.isoformat() if segment.end_timestamp else None,
+        "mint_id": segment.mint_id,
+        "recording_session_id": segment.recording_session_id,
+    }
+
+
+def _load_segment_payload(db_session: Session, video: Video) -> SegmentOrderingPayload | None:
+    """Load segment ordering payload from SegmentMetadata using video_id."""
+    if video.id is None:
+        return None
+    segment = db_session.query(SegmentMetadata).filter(
+        SegmentMetadata.video_id == video.id
+    ).first()
+    if not segment:
+        return None
+    return _build_segment_payload(segment)
+
+
+def _build_payload(video: Video, segment_payload: SegmentOrderingPayload | None) -> dict:
     """
     Build optimized payload for Arkiv entity.
     
@@ -319,7 +351,7 @@ def _build_payload(video: Video) -> dict:
     """
 
     # Build minimal payload with only essential encrypted/sensitive data
-    payload: dict[str, Any] = {}
+    payload: dict[str, object] = {}
     
     # For encrypted videos: encrypted_cid is in attributes (public), actual CID is decrypted during restore
     # Store CID encryption metadata in payload so we can decrypt encrypted_cid during restore
@@ -367,6 +399,9 @@ def _build_payload(video: Video) -> dict:
     
     # Essential flag for restore
     payload["is_encrypted"] = video.is_encrypted
+
+    if segment_payload:
+        payload["segment_metadata"] = segment_payload
     
     return payload
 
@@ -389,6 +424,15 @@ def _download_from_ipfs(cid: str, gateway_url: str = "https://ipfs.io/ipfs/") ->
     response = requests.get(url, timeout=60)
     response.raise_for_status()
     return response.content
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _process_vlm_json_from_arkiv(vlm_json_cid: str, video_path: str, db_session: Session) -> bool:
@@ -850,6 +894,46 @@ class ArkivSyncClient:
                 db_session.add(db_video)
                 db_session.commit()
                 db_session.refresh(db_video)
+
+                segment_payload = payload.get("segment_metadata")
+                if isinstance(segment_payload, dict):
+                    segment_index = segment_payload.get("segment_index")
+                    start_timestamp_value = segment_payload.get("start_timestamp")
+                    mint_id_value = segment_payload.get("mint_id")
+                    if (
+                        isinstance(segment_index, int)
+                        and isinstance(start_timestamp_value, str)
+                        and isinstance(mint_id_value, str)
+                    ):
+                        end_timestamp_value = segment_payload.get("end_timestamp")
+                        recording_session_id_value = segment_payload.get("recording_session_id")
+                        start_timestamp = _parse_iso_datetime(start_timestamp_value)
+                        end_timestamp = _parse_iso_datetime(end_timestamp_value) if isinstance(end_timestamp_value, str) else None
+                        recording_session_id = (
+                            recording_session_id_value
+                            if isinstance(recording_session_id_value, str) else None
+                        )
+                        if start_timestamp:
+                            expected_duration = 30.0
+                            if end_timestamp and end_timestamp > start_timestamp:
+                                expected_duration = (end_timestamp - start_timestamp).total_seconds()
+                            db_segment = SegmentMetadata(
+                                mint_id=mint_id_value,
+                                recording_session_id=recording_session_id or mint_id_value,
+                                segment_index=segment_index,
+                                segment_path=db_video.path,
+                                video_id=db_video.id,
+                                start_timestamp=start_timestamp,
+                                end_timestamp=end_timestamp,
+                                expected_duration=expected_duration,
+                                video_bitrate=0,
+                                video_fps=0,
+                                audio_bitrate=0,
+                                recording_status="completed",
+                                auto_recorded=True
+                            )
+                            db_session.add(db_segment)
+                            db_session.commit()
                 
                 # Now process VLM JSON from Arkiv to restore timestamps
                 if vlm_json_cid:
@@ -891,7 +975,12 @@ class ArkivSyncClient:
         )
         return {"restored": restored, "skipped": skipped, "failed": failed}
 
-    def sync_video(self, db_session: Session, video: Video) -> EntityKey | None:
+    def sync_video(
+        self,
+        db_session: Session,
+        video: Video,
+        segment_payload: SegmentOrderingPayload | None = None
+    ) -> EntityKey | None:
         """
         Push video metadata to Arkiv.
         Returns entity key if created/updated, otherwise None.
@@ -927,7 +1016,9 @@ class ArkivSyncClient:
 
         client = self._get_client()
 
-        payload = _build_payload(video)
+        if segment_payload is None:
+            segment_payload = _load_segment_payload(db_session, video)
+        payload = _build_payload(video, segment_payload)
         attributes = _build_attributes(video)
         payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         

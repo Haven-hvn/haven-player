@@ -6,6 +6,7 @@ from app.models.base import Base
 
 if TYPE_CHECKING:
     from app.models.analysis_job import AnalysisJob
+    from app.models.segment_metadata import SegmentMetadata
 
 class Video(Base):
     __tablename__ = 'videos'
@@ -72,6 +73,11 @@ class Video(Base):
     plugin_auto_downloaded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # Was this auto-downloaded by a job?
     plugin_subscriptions: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # List of subscription identifiers that link to this video
 
+    segment_metadata: Mapped[Optional['SegmentMetadata']] = relationship(
+        'SegmentMetadata',
+        back_populates='video',
+        uselist=False
+    )
     timestamps: Mapped[List['Timestamp']] = relationship('Timestamp', back_populates='video', cascade='all, delete-orphan')
     analysis_jobs: Mapped[List['AnalysisJob']] = relationship('AnalysisJob', back_populates='video', cascade='all, delete-orphan')
 

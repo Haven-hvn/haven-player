@@ -366,7 +366,7 @@ async def create_video(video: VideoCreate, db: Session = Depends(get_db)) -> Vid
     
     arkiv_client = ArkivSyncClient(arkiv_config)
     try:
-        arkiv_client.sync_video(db, db_video, [])
+        arkiv_client.sync_video(db, db_video)
     except InsufficientGasError as gas_err:
         # Log the gas error with wallet address and chain info
         logger.error(
@@ -471,7 +471,7 @@ def update_share_preference(
     if video.share_to_arkiv:
         arkiv_client = ArkivSyncClient(build_arkiv_config())
         try:
-            arkiv_client.sync_video(db, video, video.timestamps)
+            arkiv_client.sync_video(db, video)
         except InsufficientGasError as gas_err:
             logger.error(
                 "❌ Arkiv sync failed due to insufficient gas after enabling share for video %s | "
@@ -626,7 +626,7 @@ def update_filecoin_metadata(
     
     arkiv_client = ArkivSyncClient(arkiv_config)
     try:
-        arkiv_client.sync_video(db, video, video.timestamps)
+        arkiv_client.sync_video(db, video)
     except InsufficientGasError as gas_err:
         logger.error(
             "❌ Arkiv sync failed due to insufficient gas after Filecoin update for video %s | "

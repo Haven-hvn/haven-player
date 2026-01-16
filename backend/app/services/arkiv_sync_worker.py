@@ -6,7 +6,7 @@ It handles the synchronization of video timestamps with the Arkiv blockchain.
 """
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TypedDict
 import asyncio
 import httpx
 
@@ -15,6 +15,42 @@ from app.models.upload_queue import UploadQueue
 from app.models.video import Video, Timestamp
 
 logger = logging.getLogger(__name__)
+
+
+class SegmentOrderingPayload(TypedDict):
+    segment_index: int
+    start_timestamp: str
+    end_timestamp: str | None
+    mint_id: str
+    recording_session_id: str | None
+
+
+def _segment_payload_from_queue(queue_data: dict) -> SegmentOrderingPayload | None:
+    segment_metadata = queue_data.get("segment_metadata")
+    if not isinstance(segment_metadata, dict):
+        return None
+
+    segment_index = segment_metadata.get("segment_index")
+    start_timestamp = segment_metadata.get("start_timestamp")
+    mint_id = segment_metadata.get("mint_id")
+    if not isinstance(segment_index, int) or not isinstance(start_timestamp, str) or not isinstance(mint_id, str):
+        return None
+
+    end_timestamp = segment_metadata.get("end_timestamp")
+    if end_timestamp is not None and not isinstance(end_timestamp, str):
+        end_timestamp = None
+
+    recording_session_id = segment_metadata.get("recording_session_id")
+    if recording_session_id is not None and not isinstance(recording_session_id, str):
+        recording_session_id = None
+
+    return {
+        "segment_index": segment_index,
+        "start_timestamp": start_timestamp,
+        "end_timestamp": end_timestamp,
+        "mint_id": mint_id,
+        "recording_session_id": recording_session_id,
+    }
 
 
 class ArkivSyncWorker:
@@ -75,10 +111,11 @@ class ArkivSyncWorker:
                         break
 
                     queue_id = queue_data['id']
+                    segment_payload = _segment_payload_from_queue(queue_data)
                     logger.info(f"Processing Arkiv sync job {queue_id}: {queue_data['video_path']}")
 
                     # Process the job
-                    success = await self.process_arkiv_sync_job(queue_id)
+                    success = await self.process_arkiv_sync_job(queue_id, segment_payload)
 
                     if success:
                         processed += 1
@@ -91,7 +128,11 @@ class ArkivSyncWorker:
 
         return processed
 
-    async def process_arkiv_sync_job(self, queue_id: int) -> bool:
+    async def process_arkiv_sync_job(
+        self,
+        queue_id: int,
+        segment_payload: SegmentOrderingPayload | None = None
+    ) -> bool:
         """
         Process a single Arkiv sync job.
 
@@ -136,7 +177,7 @@ class ArkivSyncWorker:
             from app.services.arkiv_sync import ArkivSyncClient, build_arkiv_config
 
             client = ArkivSyncClient(build_arkiv_config())
-            entity_key = client.sync_video(db, video)
+            entity_key = client.sync_video(db, video, segment_payload=segment_payload)
 
             if entity_key is None:
                 logger.info(f"Arkiv sync skipped for {queue_entry.video_path}")

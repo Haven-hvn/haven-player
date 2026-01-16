@@ -755,7 +755,7 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             "livekit_url": "wss://pump-prod-tg2x8veh.livekit.cloud",
             "output_format": "webm",
             "video_quality": "best",
-            "auto_recording_enabled": False,
+            "auto_recording_enabled": True,
             "segment_duration": 30,
         }
     

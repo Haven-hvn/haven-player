@@ -67,16 +67,16 @@ class UploadCoordinator:
             merged_config = self.DEFAULT_CONFIG.copy()
 
             # Override with database values
-            db_config = {}
             if config.upload_coordinator_enabled is not None:
-                db_config['enabled'] = config.upload_coordinator_enabled
-            if config.upload_coordinator_plugin_overrides:
-                db_config['plugin_overrides'] = config.upload_coordinator_plugin_overrides
+                merged_config['enabled'] = config.upload_coordinator_enabled
             if config.upload_coordinator_priority is not None:
-                db_config['priority'] = config.upload_coordinator_priority
+                merged_config['priority'] = config.upload_coordinator_priority
 
-            # Merge database config into defaults (only override what's explicitly set)
-            merged_config.update(db_config)
+            # Merge plugin overrides so new plugins inherit defaults
+            plugin_overrides = self.DEFAULT_CONFIG['plugin_overrides'].copy()
+            if config.upload_coordinator_plugin_overrides is not None:
+                plugin_overrides.update(config.upload_coordinator_plugin_overrides)
+            merged_config['plugin_overrides'] = plugin_overrides
 
             # Auto-detect if enabled is None
             if merged_config['enabled'] is None:

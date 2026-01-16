@@ -6,11 +6,9 @@ checking configuration, and providing methods for plugin integration.
 """
 import logging
 from typing import Optional, Dict, Any
-from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
-from app.models.upload_queue import UploadQueue
-from app.models.video import Video
+from app.services.upload_queue_service import enqueue_video_for_upload
 from app.models.config import AppConfig
 from app.models.database import SessionLocal
 
@@ -219,51 +217,35 @@ class UploadCoordinator:
                 )
                 return False
 
-            # Check if video exists in database
             db = SessionLocal()
             try:
-                video = db.query(Video).filter(Video.path == video_path).first()
-                if not video:
+                result = enqueue_video_for_upload(
+                    db=db,
+                    video_path=video_path,
+                    priority=self.get_plugin_priority(plugin_name),
+                    source="plugin",
+                    require_video=True,
+                )
+                if result.status == "video_missing":
                     logger.warning(f"Video not found in database: {video_path}")
                     return False
-
-                # Check if already uploaded
-                if video.filecoin_root_cid:
+                if result.status == "already_uploaded":
                     logger.info(f"Video already uploaded to FileCoin: {video_path}")
                     return False
+                if result.status == "already_processing":
+                    logger.info(f"Video already being uploaded: {video_path}")
+                    return True
+                if result.status == "already_completed":
+                    logger.info(f"Video already in upload queue: {video_path}")
+                    return True
 
+                logger.info(
+                    f"✅ Enqueued video for auto-upload: {video_path} "
+                    f"(plugin={plugin_name}, priority={self.get_plugin_priority(plugin_name)})"
+                )
+                return True
             finally:
                 db.close()
-
-            # Add to upload queue via API
-            queue_data = {
-                'video_path': video_path,
-                'priority': self.get_plugin_priority(plugin_name),
-                'source': 'plugin',
-            }
-
-            # Make internal API call to add to queue
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    'http://localhost:8000/api/upload-queue',
-                    json=queue_data,
-                    headers={'Content-Type': 'application/json'}
-                ) as response:
-                    if response.status == 201:
-                        logger.info(
-                            f"✅ Enqueued video for auto-upload: {video_path} "
-                            f"(plugin={plugin_name}, priority={queue_data['priority']})"
-                        )
-                        return True
-                    elif response.status == 409:
-                        # Already in queue
-                        logger.info(f"Video already in upload queue: {video_path}")
-                        return True
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Failed to enqueue video: {response.status} - {error_text}")
-                        return False
 
         except Exception as e:
             logger.error(f"Error enqueueing video {video_path}: {e}")
@@ -283,38 +265,30 @@ class UploadCoordinator:
         try:
             db = SessionLocal()
             try:
-                video = db.query(Video).filter(Video.path == video_path).first()
-                if not video:
+                result = enqueue_video_for_upload(
+                    db=db,
+                    video_path=video_path,
+                    priority=priority,
+                    source="manual",
+                    require_video=True,
+                )
+                if result.status == "video_missing":
                     logger.warning(f"Video not found in database: {video_path}")
                     return False
-
-                # Check if already uploaded
-                if video.filecoin_root_cid:
+                if result.status == "already_uploaded":
                     logger.info(f"Video already uploaded to FileCoin: {video_path}")
                     return False
+                if result.status == "already_processing":
+                    logger.info(f"Video already being uploaded: {video_path}")
+                    return True
+                if result.status == "already_completed":
+                    logger.info(f"Video already in upload queue: {video_path}")
+                    return True
 
+                logger.info(f"✅ Manually enqueued video: {video_path}")
+                return True
             finally:
                 db.close()
-
-            # Add to upload queue
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    'http://localhost:8000/api/upload-queue',
-                    json={
-                        'video_path': video_path,
-                        'priority': priority,
-                        'source': 'manual',
-                    },
-                    headers={'Content-Type': 'application/json'}
-                ) as response:
-                    if response.status in [201, 409]:
-                        logger.info(f"✅ Manually enqueued video: {video_path}")
-                        return True
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Failed to enqueue manual upload: {response.status} - {error_text}")
-                        return False
 
         except Exception as e:
             logger.error(f"Error enqueuing manual upload: {e}")

@@ -622,6 +622,10 @@ async def update_vlm_json_upload_status(
                         previous_status = queue_entry.arkiv_sync_status
                         if previous_status not in ['pending', 'syncing']:
                             queue_entry.arkiv_sync_status = 'pending'
+                            # Reset timestamp fields so job can be picked up again
+                            queue_entry.arkiv_sync_started_at = None
+                            queue_entry.arkiv_sync_completed_at = None
+                            queue_entry.arkiv_sync_error = None
                             logger.info(f"VLM JSON ready, queuing Arkiv UPDATE for {video.path} (previous status: {previous_status or 'None'})")
                     else:
                         # No entity exists yet, queue initial sync if we have either FileCoin or VLM
@@ -631,6 +635,10 @@ async def update_vlm_json_upload_status(
                             previous_status = queue_entry.arkiv_sync_status
                             if previous_status not in ['pending', 'syncing']:
                                 queue_entry.arkiv_sync_status = 'pending'
+                                # Reset timestamp fields so job can be picked up again
+                                queue_entry.arkiv_sync_started_at = None
+                                queue_entry.arkiv_sync_completed_at = None
+                                queue_entry.arkiv_sync_error = None
                                 logger.info(f"VLM JSON ready, queuing initial Arkiv sync for {video.path} (previous status: {previous_status or 'None'})")
 
         db.commit()
@@ -727,18 +735,26 @@ async def update_upload_status(
                     # Case 1: Arkiv entity exists but only has VLM data (not FileCoin) - incremental update
                     if (video.arkiv_entity_key and
                         video.arkiv_data_completeness == "vlm_only" and
-                        not queue_entry.arkiv_sync_status):
+                        queue_entry.arkiv_sync_status not in ['pending', 'syncing']):
 
                         # Queue Arkiv sync as UPDATE operation
                         queue_entry.arkiv_sync_status = 'pending'
+                        # Reset timestamp fields so job can be picked up again
+                        queue_entry.arkiv_sync_started_at = None
+                        queue_entry.arkiv_sync_completed_at = None
+                        queue_entry.arkiv_sync_error = None
                         logger.info(f"FileCoin completed, queuing Arkiv UPDATE to add CID for {queue_entry.video_path}")
 
                     # Case 2: Arkiv entity doesn't exist yet (original logic)
                     elif (not video.arkiv_entity_key and
-                          (not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped')):
+                          queue_entry.arkiv_sync_status not in ['pending', 'syncing']):
                         # CRITICAL: Arkiv sync can proceed if FileCoin completes (parallel execution)
                         # regardless of VLM analysis status
                         queue_entry.arkiv_sync_status = 'pending'
+                        # Reset timestamp fields so job can be picked up again
+                        queue_entry.arkiv_sync_started_at = None
+                        queue_entry.arkiv_sync_completed_at = None
+                        queue_entry.arkiv_sync_error = None
                         logger.info(f"Queued Arkiv sync for {queue_entry.video_path} (FileCoin completed)")
                     else:
                         logger.debug(f"Arkiv sync already queued ({queue_entry.arkiv_sync_status}) for {queue_entry.video_path}")

@@ -153,8 +153,13 @@ class JobScheduler:
         _global_scheduler = self
 
         # Start the scheduler
+        # Note: APScheduler automatically loads jobs from its persistent store
         self.scheduler.start()
         self.running = True
+
+        # Clean up any jobs in APScheduler that shouldn't be running
+        # (e.g., jobs for disabled/unloaded plugins)
+        await self._cleanup_invalid_jobs()
 
         # Load all enabled jobs from database
         await self._load_jobs_from_db()
@@ -176,6 +181,109 @@ class JobScheduler:
 
         logger.info("✅ Job scheduler stopped")
     
+    async def _cleanup_invalid_jobs(self) -> None:
+        """
+        Clean up jobs in APScheduler that shouldn't be running.
+        
+        This removes jobs for plugins that are:
+        - Not loaded in the plugin manager
+        - Disabled in the database
+        """
+        db = SessionLocal()
+        try:
+            # Get all jobs currently in APScheduler
+            aps_jobs = self.scheduler.get_jobs()
+            
+            if not aps_jobs:
+                return
+            
+            removed_count = 0
+            for aps_job in aps_jobs:
+                try:
+                    # Extract job_id from job name (format: "plugin_name:job_name")
+                    # or from job id (format: "job_{job_id}")
+                    job_id = None
+                    if aps_job.id and aps_job.id.startswith("job_"):
+                        try:
+                            job_id = int(aps_job.id.replace("job_", ""))
+                        except ValueError:
+                            pass
+                    
+                    # If we can't get job_id from job id, try to parse from name
+                    if job_id is None and aps_job.name:
+                        # Name format: "plugin_name:job_name"
+                        parts = aps_job.name.split(":", 1)
+                        if len(parts) == 2:
+                            plugin_name = parts[0]
+                            job_name = parts[1]
+                            
+                            # Find job in database
+                            job = db.query(RecurringJob).filter(
+                                RecurringJob.plugin_name == plugin_name,
+                                RecurringJob.job_name == job_name
+                            ).first()
+                            
+                            if job:
+                                job_id = job.id
+                    
+                    # If we still don't have job_id, skip this job
+                    if job_id is None:
+                        logger.warning(f"Could not determine job_id for APScheduler job: {aps_job.id}")
+                        continue
+                    
+                    # Get job from database
+                    job = db.query(RecurringJob).filter(RecurringJob.id == job_id).first()
+                    
+                    if not job:
+                        # Job doesn't exist in database, remove from scheduler
+                        logger.info(f"Removing orphaned job from scheduler: {aps_job.id}")
+                        self.scheduler.remove_job(aps_job.id)
+                        removed_count += 1
+                        continue
+                    
+                    # Check if plugin is loaded
+                    plugin = self.plugin_manager.get_plugin(job.plugin_name)
+                    if not plugin:
+                        logger.info(
+                            f"Removing job {job.job_name} from scheduler: "
+                            f"plugin {job.plugin_name} is not loaded"
+                        )
+                        self.scheduler.remove_job(aps_job.id)
+                        removed_count += 1
+                        continue
+                    
+                    # Check if plugin is enabled in database
+                    db_plugin = db.query(PluginModel).filter(
+                        PluginModel.name == job.plugin_name
+                    ).first()
+                    
+                    if db_plugin and not db_plugin.enabled:
+                        logger.info(
+                            f"Removing job {job.job_name} from scheduler: "
+                            f"plugin {job.plugin_name} is disabled"
+                        )
+                        self.scheduler.remove_job(aps_job.id)
+                        removed_count += 1
+                        continue
+                    
+                    # Check if job is disabled
+                    if not job.enabled:
+                        logger.info(
+                            f"Removing job {job.job_name} from scheduler: job is disabled"
+                        )
+                        self.scheduler.remove_job(aps_job.id)
+                        removed_count += 1
+                        continue
+                        
+                except Exception as e:
+                    logger.error(f"Error checking APScheduler job {aps_job.id}: {e}")
+                    continue
+            
+            if removed_count > 0:
+                logger.info(f"Cleaned up {removed_count} invalid job(s) from scheduler")
+        finally:
+            db.close()
+    
     async def _load_jobs_from_db(self) -> None:
         """Load all enabled jobs from database and schedule them."""
         db = SessionLocal()
@@ -187,21 +295,36 @@ class JobScheduler:
             scheduled_count = 0
             skipped_count = 0
             for job in jobs:
-                # Check if plugin is loaded before scheduling
+                # Check if plugin is loaded
                 plugin = self.plugin_manager.get_plugin(job.plugin_name)
-                if plugin:
-                    await self.schedule_job(job)
-                    scheduled_count += 1
-                else:
+                if not plugin:
                     logger.warning(
                         f"Skipping job {job.job_name} for plugin {job.plugin_name}: "
                         f"plugin is not loaded"
                     )
                     skipped_count += 1
+                    continue
+                
+                # Check if plugin is enabled in database
+                db_plugin = db.query(PluginModel).filter(
+                    PluginModel.name == job.plugin_name
+                ).first()
+                
+                if db_plugin and not db_plugin.enabled:
+                    logger.warning(
+                        f"Skipping job {job.job_name} for plugin {job.plugin_name}: "
+                        f"plugin is disabled"
+                    )
+                    skipped_count += 1
+                    continue
+                
+                # Plugin is loaded and enabled, schedule the job
+                await self.schedule_job(job)
+                scheduled_count += 1
 
             logger.info(
                 f"Loaded {scheduled_count} jobs from database "
-                f"({skipped_count} skipped - plugin not loaded)"
+                f"({skipped_count} skipped - plugin not loaded or disabled)"
             )
         finally:
             db.close()
@@ -291,6 +414,17 @@ class JobScheduler:
             if not plugin:
                 logger.warning(
                     f"Job {job.job_name} skipped: plugin {job.plugin_name} is not loaded"
+                )
+                return
+            
+            # Check if plugin is enabled in database
+            db_plugin = db.query(PluginModel).filter(
+                PluginModel.name == job.plugin_name
+            ).first()
+            
+            if db_plugin and not db_plugin.enabled:
+                logger.warning(
+                    f"Job {job.job_name} skipped: plugin {job.plugin_name} is disabled"
                 )
                 return
             

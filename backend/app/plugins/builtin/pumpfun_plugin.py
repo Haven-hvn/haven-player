@@ -25,6 +25,7 @@ from app.plugins.plugin_interface import (
 from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
 from app.models.database import get_db as get_db_session
 from app.models.plugin import Plugin as PluginModel
+from app.models.config import AppConfig
 from app.services.pumpfun_service import PumpFunService
 from app.services.webrtc_recording_service import WebRTCRecordingService
 from app.services.stream_manager import StreamManager
@@ -58,8 +59,20 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         if self._recording_service is None:
             async with self._recording_service_lock:
                 if self._recording_service is None:  # Double-check after acquiring lock
-                    self._recording_service = WebRTCRecordingService()
-                    logger.info("WebRTCRecordingService lazy-loaded for PumpFunPlugin")
+                    # Get global download directory from AppConfig
+                    db = next(get_db_session())
+                    try:
+                        app_config = db.query(AppConfig).first()
+                        if app_config and app_config.download_directory:
+                            output_dir = app_config.download_directory
+                        else:
+                            logger.warning("Global download_directory not configured, using default 'recordings'")
+                            output_dir = "recordings"
+                    finally:
+                        db.close()
+                    
+                    self._recording_service = WebRTCRecordingService(output_dir=output_dir)
+                    logger.info(f"WebRTCRecordingService lazy-loaded for PumpFunPlugin with output_dir: {output_dir}")
         return self._recording_service
     
     def get_metadata(self) -> PluginMetadata:

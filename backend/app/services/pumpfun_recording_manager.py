@@ -9,10 +9,13 @@ import logging
 from typing import Dict, Any, List, Optional
 import asyncio
 import time
+import os
 
 from app.services.pumpfun_chunk_recorder import PumpFunChunkRecorder
 from app.services.stream_manager import StreamManager, StreamInfo
 from app.services.upload_coordinator import UploadCoordinator
+from app.models.config import AppConfig
+from app.models.database import get_db as get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -222,8 +225,22 @@ class PumpFunRecordingManager:
                 logger.error(f"No LiveKit room found for {mint_id}")
                 return False
             
+            # Get global download directory from AppConfig
+            db = next(get_db_session())
+            try:
+                app_config = db.query(AppConfig).first()
+                if not app_config or not app_config.download_directory:
+                    logger.error("Global download_directory not configured in AppConfig")
+                    return False
+                download_dir = app_config.download_directory
+            finally:
+                db.close()
+            
+            # Create output directory path using global download_directory
+            output_dir = os.path.join(download_dir, "pumpfun")
+            os.makedirs(output_dir, exist_ok=True)
+            
             # Create custom chunk recorder
-            output_dir = "recordings/pumpfun"
             recorder = PumpFunChunkRecorder(
                 mint_id=mint_id,
                 room=room,

@@ -281,32 +281,85 @@ async def process_video_for_queue(queue_id: int, video_path: str):
 def save_results_to_db(video_path: str, results: Dict[str, Any], db: Session):
     """
     Save VLM processing results to database.
+    
+    Handles the actual VLM engine results structure:
+    - json_result.timespans.{category}.{tag_name}: Array of {start, confidence}
+    - video_tag_info.tag_timespans.{category}.{tag_name}: Array of {start, end, totalConfidence}
+    
+    Priority: tag_timespans (has end times) > timespans (no end times)
     """
     try:
         # Clear existing timestamps for this video
         db.query(Timestamp).filter(Timestamp.video_path == video_path).delete()
         
-        # Extract tags from results
-        tags = results.get('tags', {})
+        timestamp_count = 0
         
-        for tag_name, tag_data in tags.items():
-            time_frames = tag_data.get('time_frames', [])
+        # Track which tags we've processed from tag_timespans to avoid duplicates
+        processed_tags_from_tag_timespans: Dict[str, set] = {}
+        
+        # First, extract tags from video_tag_info.tag_timespans (has start, end, confidence)
+        video_tag_info = results.get('video_tag_info', {})
+        tag_timespans = video_tag_info.get('tag_timespans', {})
+        
+        for category, category_tags in tag_timespans.items():
+            if category not in processed_tags_from_tag_timespans:
+                processed_tags_from_tag_timespans[category] = set()
             
-            for frame in time_frames:
-                timestamp = Timestamp(
-                    video_path=video_path,
-                    tag_name=tag_name,
-                    start_time=frame.get('start', 0.0),
-                    end_time=frame.get('end'),
-                    confidence=frame.get('confidence', 0.0)
-                )
-                db.add(timestamp)
+            for tag_name, time_frames in category_tags.items():
+                if not isinstance(time_frames, list):
+                    continue
+                
+                processed_tags_from_tag_timespans[category].add(tag_name)
+                    
+                for frame in time_frames:
+                    if not isinstance(frame, dict):
+                        continue
+                        
+                    timestamp = Timestamp(
+                        video_path=video_path,
+                        tag_name=tag_name,
+                        start_time=float(frame.get('start', 0.0)),
+                        end_time=float(frame.get('end')) if frame.get('end') is not None else None,
+                        confidence=float(frame.get('totalConfidence', frame.get('confidence', 0.0)))
+                    )
+                    db.add(timestamp)
+                    timestamp_count += 1
+        
+        # Then, extract tags from json_result.timespans (has start, confidence, but no end)
+        # Only add tags that weren't already added from tag_timespans
+        json_result = results.get('json_result', {})
+        timespans = json_result.get('timespans', {})
+        
+        for category, category_tags in timespans.items():
+            for tag_name, time_frames in category_tags.items():
+                if not isinstance(time_frames, list):
+                    continue
+                
+                # Skip if we already processed this tag from tag_timespans
+                if (category in processed_tags_from_tag_timespans and 
+                    tag_name in processed_tags_from_tag_timespans[category]):
+                    continue
+                
+                # Add all timestamps from timespans (these don't have end times)
+                for frame in time_frames:
+                    if not isinstance(frame, dict):
+                        continue
+                        
+                    timestamp = Timestamp(
+                        video_path=video_path,
+                        tag_name=tag_name,
+                        start_time=float(frame.get('start', 0.0)),
+                        end_time=None,  # No end time in timespans structure
+                        confidence=float(frame.get('confidence', 0.0))
+                    )
+                    db.add(timestamp)
+                    timestamp_count += 1
         
         db.commit()
-        logger.info(f"Saved {len(tags)} tags to database for video: {video_path}")
+        logger.info(f"Saved {timestamp_count} timestamps to database for video: {video_path}")
         
     except Exception as e:
-        logger.error(f"Error saving results to database: {str(e)}")
+        logger.error(f"Error saving results to database: {str(e)}", exc_info=True)
         db.rollback()
         raise
 

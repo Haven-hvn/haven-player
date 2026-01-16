@@ -518,45 +518,16 @@ async def update_vlm_analysis_status(
         if update_data.vlm_analysis_error:
             queue_entry.vlm_analysis_error = update_data.vlm_analysis_error
 
-        # If VLM analysis completed, check if Arkiv sync should be queued
+        # If VLM analysis completed, queue VLM JSON upload
+        # NOTE: Arkiv sync is NOT queued here - it will be queued when:
+        # 1. FileCoin upload completes (checks for filecoin_root_cid)
+        # 2. VLM JSON CID is stored (checks for vlm_json_cid)
+        # This avoids timing issues where sync is queued before data is available
         if update_data.vlm_analysis_status == 'completed':
-            from app.models.video import Video, Timestamp
-            video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
-
-            if video and video.share_to_arkiv:
-                # Case 1: Arkiv entity exists but only has FileCoin data (not VLM) - incremental update
-                if (video.arkiv_entity_key and
-                    video.arkiv_data_completeness in ["filecoin_only", "none"] and
-                    not queue_entry.arkiv_sync_status):
-
-                    # Check if we now have timestamps to update
-                    has_timestamps = db.query(Timestamp).filter(
-                        Timestamp.video_path == queue_entry.video_path
-                    ).count() > 0
-
-                    if has_timestamps:
-                        # Queue Arkiv sync as UPDATE operation
-                        queue_entry.arkiv_sync_status = 'pending'
-                        logger.info(f"VLM completed, queuing Arkiv UPDATE to add timestamps for {queue_entry.video_path}")
-
-                # Case 2: Arkiv entity doesn't exist yet (original logic)
-                elif (not video.arkiv_entity_key and
-                      (not queue_entry.arkiv_sync_status or queue_entry.arkiv_sync_status == 'skipped')):
-
-                    # Check if we should queue Arkiv sync
-                    has_filecoin = bool(video.filecoin_root_cid)
-                    has_timestamps = db.query(Timestamp).filter(
-                        Timestamp.video_path == queue_entry.video_path
-                    ).count() > 0
-
-                    if has_filecoin or has_timestamps:
-                        # Queue Arkiv sync as next step
-                        queue_entry.arkiv_sync_status = 'pending'
-                        logger.info(f"Queued Arkiv sync for {queue_entry.video_path} after VLM analysis")
-
-                # NEW: Queue VLM JSON upload (this is the new primary method)
-                if queue_entry.vlm_json_upload_status not in ['processing', 'completed']:
-                    queue_entry.vlm_json_upload_status = 'pending'
+            # Queue VLM JSON upload (this is the primary VLM archival method)
+            # Arkiv sync will be queued automatically when JSON CID is stored
+            if queue_entry.vlm_json_upload_status not in ['processing', 'completed']:
+                queue_entry.vlm_json_upload_status = 'pending'
                     logger.info(f"VLM analysis completed, queuing JSON upload for {queue_entry.video_path}")
 
         db.commit()

@@ -1021,7 +1021,7 @@ const PumpFunStreamsWrapper: React.FC = () => {
     subscribe,
     unsubscribe,
     updateSubscription,
-  } = usePumpFunSources({ pluginName: "PumpFunPlugin", autoRefresh: true, refreshInterval: 30000 });
+  } = usePumpFunSources({ pluginName: "PumpFunPlugin", autoRefresh: true, refreshInterval: 600000 });
 
   return (
     <Box

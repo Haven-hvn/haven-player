@@ -237,19 +237,29 @@ class OpenRingService:
         return tokens
 
     async def fetch_devices(self) -> list[RingDevice]:
-        response = await self._api_request("GET", self.DEVICES_URL)
-        payload = _ensure_dict(response)
+        payload = await self._api_request("GET", self.DEVICES_URL)
         devices: list[RingDevice] = []
         for item in _extract_device_payloads(payload):
             device = RingDevice.from_payload(item)
             if device:
                 devices.append(device)
         if not devices:
-            logger.warning(
-                "Ring device discovery returned 0 devices. payload_keys=%s key_counts=%s",
-                list(payload.keys()),
-                _summarize_device_payload(payload),
-            )
+            if isinstance(payload, Mapping):
+                logger.warning(
+                    "Ring device discovery returned 0 devices. payload_keys=%s key_counts=%s",
+                    list(payload.keys()),
+                    _summarize_device_payload(payload),
+                )
+            elif isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+                logger.warning(
+                    "Ring device discovery returned 0 devices. payload_type=list payload_len=%s",
+                    len(payload),
+                )
+            else:
+                logger.warning(
+                    "Ring device discovery returned 0 devices. payload_type=%s",
+                    type(payload).__name__,
+                )
         return devices
 
     async def start_live_view(
@@ -319,17 +329,17 @@ class OpenRingService:
         )
 
         if response.status_code == 200:
-            payload = _ensure_dict(response)
+            payload = _ensure_dict(_parse_json(response))
             now = datetime.now(timezone.utc)
             return OpenRingTokens.from_payload(payload, now)
 
         if response.status_code == 412:
-            payload = _ensure_dict(response)
+            payload = _ensure_dict(_parse_json(response))
             prompt, tsv_state, phone = _build_two_factor_prompt(payload)
             raise OpenRingTwoFactorRequired(prompt, tsv_state, phone)
 
         if response.status_code in (400, 401):
-            payload = _ensure_dict(response)
+            payload = _ensure_dict(_parse_json(response))
             error_description = _coerce_str(payload.get("error_description")) or ""
             if "Verification Code" in error_description:
                 raise OpenRingInvalidTwoFactorCode(error_description)
@@ -345,7 +355,7 @@ class OpenRingService:
         method: str,
         url: str,
         body: Optional[Mapping[str, object]] = None,
-    ) -> Mapping[str, object]:
+    ) -> object:
         if not self._access_token:
             raise OpenRingApiError("Missing access token", 401)
         if not self._hardware_id:
@@ -367,8 +377,7 @@ class OpenRingService:
         )
 
         if 200 <= response.status_code < 300:
-            payload = _ensure_dict(response)
-            return payload
+            return _parse_json(response)
 
         if response.status_code == 401:
             raise OpenRingApiError("Unauthorized", 401)
@@ -383,17 +392,20 @@ class OpenRingService:
         )
 
 
-def _ensure_dict(response: HttpResponse) -> Mapping[str, object]:
+def _parse_json(response: HttpResponse) -> object:
     try:
-        payload = response.json()
+        return response.json()
     except Exception:
         return {}
+
+
+def _ensure_dict(payload: object) -> Mapping[str, object]:
     if isinstance(payload, Mapping):
         return payload
     return {}
 
 
-def _extract_device_payloads(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
+def _extract_device_payloads(payload: object) -> list[Mapping[str, object]]:
     device_payloads: list[Mapping[str, object]] = []
 
     def add_items(items: object) -> None:
@@ -402,11 +414,14 @@ def _extract_device_payloads(payload: Mapping[str, object]) -> list[Mapping[str,
                 if isinstance(item, Mapping):
                     device_payloads.append(item)
 
-    for key in ("doorbots", "authorized_doorbots", "stickup_cams", "chimes"):
-        add_items(payload.get(key))
+    if isinstance(payload, Mapping):
+        for key in ("doorbots", "authorized_doorbots", "stickup_cams", "chimes"):
+            add_items(payload.get(key))
 
-    for key in ("devices", "all_devices", "ring_devices"):
-        add_items(payload.get(key))
+        for key in ("devices", "all_devices", "ring_devices"):
+            add_items(payload.get(key))
+    elif isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+        add_items(payload)
 
     return device_payloads
 

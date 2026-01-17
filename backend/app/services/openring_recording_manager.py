@@ -143,13 +143,17 @@ class OpenRingRecordingManager:
         output_dir: Path,
     ) -> bool:
         if device_id in self.active_recordings:
+            logger.warning("Recording already active for device_id=%s", device_id)
             return False
         if segment_duration <= 0:
+            logger.warning("Invalid segment_duration=%s for device_id=%s", segment_duration, device_id)
             return False
 
         session_id = str(uuid.uuid4())
         device_dir = output_dir / "openring" / str(device_id)
         device_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Starting recording: device_id=%s device_name=%s session_id=%s output_dir=%s segment_duration=%s",
+                   device_id, device_name, session_id, device_dir, segment_duration)
 
         recorder = self._recorder_factory(
             service=service,
@@ -162,8 +166,11 @@ class OpenRingRecordingManager:
 
         try:
             await recorder.start()
+            logger.info("Recording started successfully: device_id=%s device_name=%s session_id=%s",
+                       device_id, device_name, session_id)
         except Exception as exc:
-            logger.error(f"Failed to start recording for {device_id}: {exc}")
+            logger.error("Failed to start recording for device_id=%s device_name=%s: %s",
+                        device_id, device_name, exc, exc_info=True)
             return False
 
         self.active_recordings[device_id] = OpenRingRecordingSession(
@@ -174,14 +181,25 @@ class OpenRingRecordingManager:
             recorder=recorder,
             started_at=datetime.now(timezone.utc),
         )
+        logger.info("Recording session registered: device_id=%s active_recordings_count=%s",
+                   device_id, len(self.active_recordings))
         return True
 
     async def stop_recording(self, device_id: int) -> bool:
         session = self.active_recordings.get(device_id)
         if not session:
+            logger.warning("No active recording found for device_id=%s", device_id)
             return False
-        await session.recorder.stop()
+        logger.info("Stopping recording: device_id=%s device_name=%s session_id=%s",
+                   device_id, session.device_name, session.session_id)
+        try:
+            await session.recorder.stop()
+            logger.info("Recording stopped successfully: device_id=%s", device_id)
+        except Exception as exc:
+            logger.error("Error stopping recording: device_id=%s error=%s", device_id, exc, exc_info=True)
         self.active_recordings.pop(device_id, None)
+        logger.info("Recording session removed: device_id=%s active_recordings_count=%s",
+                   device_id, len(self.active_recordings))
         return True
 
     async def stop_all(self) -> None:
@@ -189,10 +207,15 @@ class OpenRingRecordingManager:
             await self.stop_recording(device_id)
 
     async def _handle_segment_complete(self, segment_path: Path) -> None:
-        await self.upload_coordinator.enqueue_video_after_download(
-            video_path=str(segment_path),
-            plugin_name="OpenRingPlugin",
-        )
+        logger.info("Segment complete, enqueuing for upload: path=%s plugin=OpenRingPlugin", segment_path)
+        try:
+            await self.upload_coordinator.enqueue_video_after_download(
+                video_path=str(segment_path),
+                plugin_name="OpenRingPlugin",
+            )
+            logger.info("Segment enqueued for upload: path=%s", segment_path)
+        except Exception as exc:
+            logger.error("Failed to enqueue segment for upload: path=%s error=%s", segment_path, exc, exc_info=True)
 
 
 def online_device_ids(devices: Iterable[RingDevice]) -> set[int]:

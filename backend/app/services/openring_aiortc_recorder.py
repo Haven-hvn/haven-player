@@ -132,6 +132,13 @@ class OpenRingAiortcRecorder:
         if self._running:
             raise RuntimeError("Recorder already running")
 
+        logger.info(
+            "Starting OpenRing recorder: device_id=%s session_id=%s output_dir=%s segment_duration=%s",
+            self._device_id,
+            self._session_id,
+            self._output_dir,
+            self._segment_duration,
+        )
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._peer_connection = self._peer_connection_factory()
         self._peer_connection.on("track")(self._handle_track)
@@ -144,6 +151,7 @@ class OpenRingAiortcRecorder:
         local_description = self._peer_connection.localDescription
         offer_sdp = local_description.sdp if local_description else offer.sdp
 
+        logger.debug("Starting live view session for device_id=%s", self._device_id)
         response = await self._service.start_live_view(
             device_id=self._device_id,
             session_id=self._session_id,
@@ -152,6 +160,7 @@ class OpenRingAiortcRecorder:
         remote_description = self._session_description_factory(response.answer_sdp, "answer")
         await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
         await self._service.activate_camera(self._session_id)
+        logger.info("Live view session established for device_id=%s session_id=%s", self._device_id, self._session_id)
 
         self._segment_task = asyncio.create_task(self._segment_loop())
         self._running = True
@@ -159,6 +168,8 @@ class OpenRingAiortcRecorder:
     async def stop(self) -> None:
         if not self._running:
             return
+        logger.info("Stopping OpenRing recorder: device_id=%s session_id=%s segments_created=%s", 
+                   self._device_id, self._session_id, self._segment_index)
         self._stop_event.set()
         if self._segment_task:
             await self._segment_task
@@ -166,33 +177,57 @@ class OpenRingAiortcRecorder:
             await _maybe_await(self._peer_connection.close())
         await self._service.end_live_view(self._session_id)
         self._running = False
+        logger.info("OpenRing recorder stopped: device_id=%s", self._device_id)
 
     def _handle_track(self, track: MediaStreamTrackProtocol) -> None:
+        logger.info("Received remote track: device_id=%s session_id=%s track_kind=%s total_tracks=%s",
+                   self._device_id, self._session_id, track.kind, len(self._remote_tracks) + 1)
         self._remote_tracks.append(track)
         self._track_ready.set()
 
     async def _segment_loop(self) -> None:
+        logger.info("Segment loop starting: device_id=%s session_id=%s waiting_for_tracks timeout=%s",
+                   self._device_id, self._session_id, self._track_wait_timeout)
         try:
             await asyncio.wait_for(self._track_ready.wait(), timeout=self._track_wait_timeout)
+            logger.info("Tracks received: device_id=%s session_id=%s track_count=%s",
+                       self._device_id, self._session_id, len(self._remote_tracks))
         except asyncio.TimeoutError:
-            logger.warning("Timed out waiting for remote tracks")
+            logger.warning("Timed out waiting for remote tracks: device_id=%s session_id=%s timeout=%s",
+                          self._device_id, self._session_id, self._track_wait_timeout)
             return
 
         while not self._stop_event.is_set():
             segment = self._next_segment()
+            logger.info("Creating segment: device_id=%s session_id=%s segment_index=%s path=%s",
+                       self._device_id, self._session_id, self._segment_index - 1, segment.path)
             recorder = self._media_recorder_factory(str(segment.path))
             for track in list(self._remote_tracks):
                 recorder.addTrack(track)
 
-            await _maybe_await(recorder.start())
+            logger.debug("Starting segment recording: device_id=%s segment_path=%s track_count=%s",
+                        self._device_id, segment.path, len(self._remote_tracks))
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self._segment_duration)
-            except asyncio.TimeoutError:
-                pass
-            await _maybe_await(recorder.stop())
+                await _maybe_await(recorder.start())
+                logger.debug("Segment recording started: device_id=%s segment_path=%s duration=%s",
+                            self._device_id, segment.path, self._segment_duration)
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self._segment_duration)
+                except asyncio.TimeoutError:
+                    pass
+                await _maybe_await(recorder.stop())
+                logger.info("Segment recording completed: device_id=%s segment_path=%s segment_index=%s",
+                           self._device_id, segment.path, self._segment_index - 1)
 
-            if self._on_segment_complete:
-                await _maybe_await(self._on_segment_complete(segment.path))
+                if self._on_segment_complete:
+                    logger.debug("Invoking segment complete callback: device_id=%s segment_path=%s",
+                                self._device_id, segment.path)
+                    await _maybe_await(self._on_segment_complete(segment.path))
+                    logger.debug("Segment callback completed: device_id=%s segment_path=%s",
+                                self._device_id, segment.path)
+            except Exception as exc:
+                logger.error("Error recording segment: device_id=%s segment_path=%s error=%s",
+                            self._device_id, segment.path, exc, exc_info=True)
 
     def _next_segment(self) -> RecorderSegment:
         timestamp = datetime.fromtimestamp(self._time_provider(), tz=timezone.utc)
@@ -200,7 +235,10 @@ class OpenRingAiortcRecorder:
             f"ring_{self._device_id}_{timestamp.strftime('%Y%m%dT%H%M%SZ')}_{self._segment_index}.mp4"
         )
         self._segment_index += 1
-        return RecorderSegment(path=self._output_dir / filename, started_at=timestamp)
+        segment = RecorderSegment(path=self._output_dir / filename, started_at=timestamp)
+        logger.debug("Generated segment path: device_id=%s segment_index=%s path=%s",
+                    self._device_id, self._segment_index - 1, segment.path)
+        return segment
 
 
 async def _wait_for_ice_gathering_complete(
@@ -208,18 +246,23 @@ async def _wait_for_ice_gathering_complete(
 ) -> None:
     state = getattr(peer_connection, "iceGatheringState", None)
     if state in (None, "complete"):
+        logger.debug("ICE gathering already complete or not supported: state=%s", state)
         return
+    logger.debug("Waiting for ICE gathering to complete: initial_state=%s timeout=%s", state, timeout)
     event = asyncio.Event()
 
     @peer_connection.on("icegatheringstatechange")
     def on_state_change(_: object = None) -> None:
-        if getattr(peer_connection, "iceGatheringState", None) == "complete":
+        new_state = getattr(peer_connection, "iceGatheringState", None)
+        logger.debug("ICE gathering state changed: state=%s", new_state)
+        if new_state == "complete":
             event.set()
 
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout)
+        logger.debug("ICE gathering completed successfully")
     except asyncio.TimeoutError:
-        logger.warning("Timed out waiting for ICE gathering to complete")
+        logger.warning("Timed out waiting for ICE gathering to complete: timeout=%s", timeout)
 
 
 async def _maybe_await(value: Awaitable[None] | None | object) -> object:

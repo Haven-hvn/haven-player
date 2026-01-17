@@ -154,6 +154,20 @@ class OpenRingPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMi
         if device_id is None:
             return ArchiveResult(success=False, error="Invalid device ID")
 
+        # Check if recording is already active
+        status = self._recording_manager.get_status(device_id)
+        if status.get("recording"):
+            logger.info("Recording already active for device_id=%s, returning success", device_id)
+            return ArchiveResult(
+                success=True,
+                metadata={
+                    "device_id": device_id,
+                    "device_name": status.get("device_name", source.metadata.get("device_name")),
+                    "session_id": status.get("session_id"),
+                    "already_recording": True,
+                },
+            )
+
         service = await self._get_authenticated_service()
         if not service:
             return ArchiveResult(success=False, error="Ring authentication missing or expired")

@@ -514,6 +514,7 @@ class JobScheduler:
             logger.info(f"Job {job.job_name}: on_success='archive_all', processing {len(sources)} sources")
             archived = 0
             enqueued = 0
+            failed_sources = []
             for i, source in enumerate(sources, 1):
                 try:
                     logger.info(f"Archiving source {i}/{len(sources)}: {source.source_id}")
@@ -535,13 +536,27 @@ class JobScheduler:
                             if enqueued_result:
                                 enqueued += 1
                     else:
-                        logger.warning(f"❌ Failed to archive {source.source_id}: {archive_result.error}")
+                        error_msg = archive_result.error or "Unknown error"
+                        logger.warning(f"❌ Failed to archive {source.source_id}: {error_msg}")
+                        failed_sources.append((source.source_id, error_msg))
                 except Exception as e:
-                    logger.error(f"❌ Error archiving {source.source_id}: {e}")
+                    error_msg = str(e)
+                    logger.error(f"❌ Error archiving {source.source_id}: {error_msg}")
+                    failed_sources.append((source.source_id, error_msg))
 
             result["archived"] = archived
             result["enqueued"] = enqueued
             logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources, enqueued {enqueued} for upload")
+            
+            # Raise exception if any archives failed
+            if failed_sources:
+                failed_source_ids = [s[0] for s in failed_sources]
+                first_error = failed_sources[0][1]
+                raise Exception(
+                    f"Failed to archive {len(failed_sources)}/{len(sources)} sources. "
+                    f"Failed sources: {failed_source_ids}. "
+                    f"First error: {first_error}"
+                )
 
         elif job.on_success == "archive_new":
             # Archive all discovered sources (plugin should handle filtering of seen sources)
@@ -549,6 +564,7 @@ class JobScheduler:
             logger.info(f"Job {job.job_name}: on_success='archive_new', processing {len(sources)} sources")
             archived = 0
             enqueued = 0
+            failed_sources = []
             for i, source in enumerate(sources, 1):
                 try:
                     logger.info(f"Archiving source {i}/{len(sources)}: {source.source_id}")
@@ -570,13 +586,27 @@ class JobScheduler:
                             if enqueued_result:
                                 enqueued += 1
                     else:
-                        logger.warning(f"❌ Failed to archive {source.source_id}: {archive_result.error}")
+                        error_msg = archive_result.error or "Unknown error"
+                        logger.warning(f"❌ Failed to archive {source.source_id}: {error_msg}")
+                        failed_sources.append((source.source_id, error_msg))
                 except Exception as e:
-                    logger.error(f"❌ Error archiving {source.source_id}: {e}")
+                    error_msg = str(e)
+                    logger.error(f"❌ Error archiving {source.source_id}: {error_msg}")
+                    failed_sources.append((source.source_id, error_msg))
 
             result["archived"] = archived
             result["enqueued"] = enqueued
             logger.info(f"Job {job.job_name}: archived {archived}/{len(sources)} sources, enqueued {enqueued} for upload")
+            
+            # Raise exception if any archives failed
+            if failed_sources:
+                failed_source_ids = [s[0] for s in failed_sources]
+                first_error = failed_sources[0][1]
+                raise Exception(
+                    f"Failed to archive {len(failed_sources)}/{len(sources)} sources. "
+                    f"Failed sources: {failed_source_ids}. "
+                    f"First error: {first_error}"
+                )
 
         # log_only is default - just log results
         logger.info(f"Job {job.job_name}: discovered {len(sources)} sources")

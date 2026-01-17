@@ -556,18 +556,49 @@ interface TimestampMarkerProps {
 }
 
 const TimestampMarker = ({ timestamp, duration, onClick }: TimestampMarkerProps): React.ReactElement => {
-  const position = (timestamp.start_time / duration) * 100;
+  const startPosition = (timestamp.start_time / duration) * 100;
+  const hasRange = timestamp.end_time !== null && timestamp.end_time > timestamp.start_time;
+  
+  // Calculate width for range
+  const width = hasRange && timestamp.end_time 
+    ? ((timestamp.end_time - timestamp.start_time) / duration) * 100 
+    : 0;
+
+  const tooltipTitle = hasRange && timestamp.end_time
+    ? `${timestamp.tag_name} (${formatTime(timestamp.start_time)} - ${formatTime(timestamp.end_time)})`
+    : `${timestamp.tag_name} (${formatTime(timestamp.start_time)})`;
   
   return (
-    <Tooltip title={`${timestamp.tag_name} (${formatTime(timestamp.start_time)})`} placement="top">
+    <Tooltip title={tooltipTitle} placement="top">
       <Box
         onClick={(e: React.MouseEvent) => {
           e.stopPropagation();
           onClick(timestamp.start_time / duration);
         }}
-        sx={{
+        sx={hasRange ? {
+          // Bar styles
           position: 'absolute',
-          left: `${position}%`,
+          left: `${startPosition}%`,
+          top: '50%',
+          transform: 'translateY(-50%)', // Only translate Y, start from left edge
+          width: `${width}%`,
+          height: 8,
+          borderRadius: '4px',
+          backgroundColor: '#fbbf24',
+          border: '1px solid rgba(255, 255, 255, 0.8)',
+          cursor: 'pointer',
+          transition: 'transform 0.15s ease, height 0.15s ease, opacity 0.15s ease',
+          zIndex: 2,
+          opacity: 0.8,
+          '&:hover': {
+            transform: 'translateY(-50%) scaleY(1.5)',
+            zIndex: 3,
+            opacity: 1,
+          },
+        } : {
+          // Dot styles (original)
+          position: 'absolute',
+          left: `${startPosition}%`,
           top: '50%',
           transform: 'translate(-50%, -50%)',
           width: 8,

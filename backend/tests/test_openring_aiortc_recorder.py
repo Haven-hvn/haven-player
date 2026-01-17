@@ -15,6 +15,7 @@ from app.services.openring_aiortc_recorder import (
     _load_peer_connection_factory,
     _load_session_description_factory,
     _maybe_await,
+    _wait_for_ice_gathering_complete,
 )
 from app.services.openring_service import LiveViewStartResponse
 
@@ -37,6 +38,15 @@ class FakePeerConnection:
         self.remote_description: FakeSessionDescription | None = None
         self._callbacks: dict[str, object] = {}
         self.closed = False
+        self.ice_gathering_state = "complete"
+
+    @property
+    def localDescription(self) -> FakeSessionDescription | None:
+        return self.local_description
+
+    @property
+    def iceGatheringState(self) -> str:
+        return self.ice_gathering_state
 
     def addTransceiver(self, kind: str, direction: str) -> None:
         self.transceivers.append((kind, direction))
@@ -53,6 +63,10 @@ class FakePeerConnection:
 
     async def setLocalDescription(self, description: FakeSessionDescription) -> None:
         self.local_description = description
+        self.ice_gathering_state = "complete"
+        callback = self._callbacks.get("icegatheringstatechange")
+        if callback:
+            callback()
 
     async def setRemoteDescription(self, description: FakeSessionDescription) -> None:
         self.remote_description = description
@@ -247,6 +261,12 @@ def test_recorder_requires_positive_segment_duration(tmp_path: Path) -> None:
             session_description_factory=FakeSessionDescription,
             media_recorder_factory=FakeMediaRecorder,
         )
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ice_gathering_complete_no_wait() -> None:
+    peer_connection = FakePeerConnection()
+    await _wait_for_ice_gathering_complete(peer_connection, timeout=0.01)
 
 
 @pytest.mark.asyncio

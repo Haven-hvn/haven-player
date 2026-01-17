@@ -147,7 +147,7 @@ class OpenRingRecordingManager:
         if segment_duration <= 0:
             return False
 
-        session_id = uuid.uuid4().hex
+        session_id = str(uuid.uuid4())
         device_dir = output_dir / "openring" / str(device_id)
         device_dir.mkdir(parents=True, exist_ok=True)
 

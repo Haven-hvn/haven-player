@@ -59,6 +59,12 @@ class PeerConnectionProtocol(Protocol):
         self, description: SessionDescriptionProtocol
     ) -> Awaitable[None] | None: ...
 
+    @property
+    def localDescription(self) -> SessionDescriptionProtocol | None: ...
+
+    @property
+    def iceGatheringState(self) -> str: ...
+
     def close(self) -> Awaitable[None] | None: ...
 
 
@@ -89,6 +95,7 @@ class OpenRingAiortcRecorder:
         session_description_factory: Optional[SessionDescriptionFactory] = None,
         media_recorder_factory: Optional[MediaRecorderFactory] = None,
         track_wait_timeout: float = 15.0,
+        ice_gathering_timeout: float = 5.0,
         time_provider: Optional[Callable[[], float]] = None,
     ):
         if segment_duration <= 0:
@@ -100,6 +107,7 @@ class OpenRingAiortcRecorder:
         self._segment_duration = segment_duration
         self._on_segment_complete = on_segment_complete
         self._track_wait_timeout = track_wait_timeout
+        self._ice_gathering_timeout = ice_gathering_timeout
         self._time_provider = time_provider or time.time
 
         self._peer_connection_factory = peer_connection_factory or _load_peer_connection_factory()
@@ -132,11 +140,14 @@ class OpenRingAiortcRecorder:
 
         offer = await _maybe_await(self._peer_connection.createOffer())
         await _maybe_await(self._peer_connection.setLocalDescription(offer))
+        await _wait_for_ice_gathering_complete(self._peer_connection, self._ice_gathering_timeout)
+        local_description = self._peer_connection.localDescription
+        offer_sdp = local_description.sdp if local_description else offer.sdp
 
         response = await self._service.start_live_view(
             device_id=self._device_id,
             session_id=self._session_id,
-            offer_sdp=offer.sdp,
+            offer_sdp=offer_sdp,
         )
         remote_description = self._session_description_factory(response.answer_sdp, "answer")
         await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
@@ -190,6 +201,25 @@ class OpenRingAiortcRecorder:
         )
         self._segment_index += 1
         return RecorderSegment(path=self._output_dir / filename, started_at=timestamp)
+
+
+async def _wait_for_ice_gathering_complete(
+    peer_connection: PeerConnectionProtocol, timeout: float
+) -> None:
+    state = getattr(peer_connection, "iceGatheringState", None)
+    if state in (None, "complete"):
+        return
+    event = asyncio.Event()
+
+    @peer_connection.on("icegatheringstatechange")
+    def on_state_change(_: object = None) -> None:
+        if getattr(peer_connection, "iceGatheringState", None) == "complete":
+            event.set()
+
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("Timed out waiting for ICE gathering to complete")
 
 
 async def _maybe_await(value: Awaitable[None] | None | object) -> object:

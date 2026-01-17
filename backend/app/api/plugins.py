@@ -7,6 +7,7 @@ This module provides REST API endpoints for managing plugins.
 from fastapi import APIRouter, HTTPException, Depends, Body
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 import logging
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -44,6 +45,28 @@ def get_plugin_manager() -> PluginManager:
     if plugin_manager is None:
         raise HTTPException(status_code=500, detail="Plugin manager not initialized")
     return plugin_manager
+
+
+def _serialize_operation_result(value: object) -> object:
+    """Recursively serialize plugin operation results for JSON responses."""
+    if hasattr(value, "to_dict"):
+        to_dict = getattr(value, "to_dict")
+        if callable(to_dict):
+            return to_dict()
+
+    if isinstance(value, dict):
+        return {str(key): _serialize_operation_result(item) for key, item in value.items()}
+
+    if isinstance(value, list):
+        return [_serialize_operation_result(item) for item in value]
+
+    if isinstance(value, tuple):
+        return [_serialize_operation_result(item) for item in value]
+
+    if isinstance(value, set):
+        return [_serialize_operation_result(item) for item in value]
+
+    return value
 
 
 @router.get("", response_model=List[Dict[str, Any]])
@@ -405,8 +428,11 @@ async def update_plugin_config(
             db.add(db_plugin)
         else:
             # Update existing plugin entry
-            db_plugin.config = config
+            current_config: Dict[str, object] = dict(db_plugin.config) if db_plugin.config else {}
+            current_config.update(config)
+            db_plugin.config = current_config
             db_plugin.updated_at = datetime.utcnow()
+            flag_modified(db_plugin, "config")
         
         db.commit()
         db.refresh(db_plugin)
@@ -781,12 +807,14 @@ async def execute_plugin_operation(request: PluginOperationRequest, plugin_mgr: 
             result = await method(**request.params)
         else:
             result = await method()
+
+        serialized_result: object = _serialize_operation_result(result)
         
         return {
             "success": True,
             "plugin": request.plugin_name,
             "operation": request.operation,
-            "result": result
+            "result": serialized_result
         }
     
     except HTTPException:

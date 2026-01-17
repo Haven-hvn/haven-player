@@ -8,12 +8,12 @@ import {
   Login as LoginIcon,
   Logout as LogoutIcon
 } from '@mui/icons-material';
-import { OpenRingPluginConfig, MediaSource } from '@/types/plugin';
+import { OpenRingPluginConfig as OpenRingPluginConfigType } from '@/types/plugin';
 import { openringService } from '@/services/api';
 
 interface OpenRingPluginConfigProps {
-  config: OpenRingPluginConfig;
-  onChange: (newConfig: OpenRingPluginConfig) => void;
+  config: OpenRingPluginConfigType;
+  onChange: (newConfig: OpenRingPluginConfigType) => void;
 }
 
 export function OpenRingPluginConfig({ config, onChange }: OpenRingPluginConfigProps) {
@@ -41,9 +41,6 @@ export function OpenRingPluginConfig({ config, onChange }: OpenRingPluginConfigP
         expires_at: status.expires_at,
         loading: false
       });
-      if (status.authenticated) {
-        // Auth success
-      }
     } catch (err) {
       console.error('Failed to check auth status:', err);
       setAuthState(prev => ({ ...prev, loading: false, status: 'error' }));
@@ -88,41 +85,6 @@ export function OpenRingPluginConfig({ config, onChange }: OpenRingPluginConfigP
       await checkAuth();
     } catch (err) {
       console.error('Logout failed:', err);
-    }
-  };
-
-  const isSubscribed = (deviceId: string) => {
-    return config.devices.some(d => String(d.device_id) === String(deviceId));
-  };
-
-  const toggleSubscription = async (device: MediaSource) => {
-    const deviceId = device.source_id;
-    const deviceName = device.metadata.device_name || 'Unknown Device';
-    const subscribed = isSubscribed(deviceId);
-
-    try {
-      if (subscribed) {
-        await openringService.unsubscribe(deviceId);
-        // Update local config state
-        onChange({
-          ...config,
-          devices: config.devices.filter(d => String(d.device_id) !== String(deviceId))
-        });
-      } else {
-        await openringService.subscribe(deviceId, deviceName);
-        // Update local config state
-        onChange({
-          ...config,
-          devices: [...config.devices, {
-            device_id: deviceId,
-            device_name: deviceName,
-            enabled: true,
-            created_at: new Date().toISOString()
-          }]
-        });
-      }
-    } catch (err) {
-      setDeviceError(err instanceof Error ? err.message : 'Failed to update subscription');
     }
   };
 

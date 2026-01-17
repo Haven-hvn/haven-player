@@ -12,7 +12,7 @@ import {
   Schedule as ScheduleIcon,
   Build as BuildIcon,
 } from '@mui/icons-material';
-import { PluginConfigSchema, PluginConfigField, YouTubePluginConfig, BitTorrentPluginConfig } from '@/types/plugin';
+import { PluginConfigSchema, PluginConfigField, YouTubePluginConfig, BitTorrentPluginConfig, OpenRingPluginConfig } from '@/types/plugin';
 import { usePluginConfiguration } from '@/hooks/usePluginConfiguration';
 import { YouTubePluginConfig as YouTubeConfig } from './YouTubePluginConfig';
 import { BitTorrentPluginConfig as BitTorrentConfig } from './BitTorrentPluginConfig';

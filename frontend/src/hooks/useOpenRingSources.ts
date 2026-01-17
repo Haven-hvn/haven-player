@@ -29,7 +29,7 @@ export default function useOpenRingSources({
     setError((prev) => ({ ...prev, devices: null }));
     try {
       const result = await openringService.discoverDevices(true); // Include offline devices
-      setDevices(Array.isArray(result) ? result : []);
+      setDevices(result);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load devices";
       setError((prev) => ({ ...prev, devices: errorMessage }));

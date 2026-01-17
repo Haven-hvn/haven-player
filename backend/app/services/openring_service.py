@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+import logging
 import uuid
 from typing import Optional, Mapping, Protocol, Sequence
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class HttpResponse(Protocol):
@@ -237,14 +240,16 @@ class OpenRingService:
         response = await self._api_request("GET", self.DEVICES_URL)
         payload = _ensure_dict(response)
         devices: list[RingDevice] = []
-        for key in ("doorbots", "authorized_doorbots", "stickup_cams", "chimes"):
-            items = payload.get(key)
-            if isinstance(items, Sequence):
-                for item in items:
-                    if isinstance(item, Mapping):
-                        device = RingDevice.from_payload(item)
-                        if device:
-                            devices.append(device)
+        for item in _extract_device_payloads(payload):
+            device = RingDevice.from_payload(item)
+            if device:
+                devices.append(device)
+        if not devices:
+            logger.warning(
+                "Ring device discovery returned 0 devices. payload_keys=%s key_counts=%s",
+                list(payload.keys()),
+                _summarize_device_payload(payload),
+            )
         return devices
 
     async def start_live_view(
@@ -386,6 +391,42 @@ def _ensure_dict(response: HttpResponse) -> Mapping[str, object]:
     if isinstance(payload, Mapping):
         return payload
     return {}
+
+
+def _extract_device_payloads(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
+    device_payloads: list[Mapping[str, object]] = []
+
+    def add_items(items: object) -> None:
+        if isinstance(items, Sequence) and not isinstance(items, (str, bytes)):
+            for item in items:
+                if isinstance(item, Mapping):
+                    device_payloads.append(item)
+
+    for key in ("doorbots", "authorized_doorbots", "stickup_cams", "chimes"):
+        add_items(payload.get(key))
+
+    for key in ("devices", "all_devices", "ring_devices"):
+        add_items(payload.get(key))
+
+    return device_payloads
+
+
+def _summarize_device_payload(payload: Mapping[str, object]) -> dict[str, Optional[int]]:
+    return {
+        "doorbots": _sequence_length(payload.get("doorbots")),
+        "authorized_doorbots": _sequence_length(payload.get("authorized_doorbots")),
+        "stickup_cams": _sequence_length(payload.get("stickup_cams")),
+        "chimes": _sequence_length(payload.get("chimes")),
+        "devices": _sequence_length(payload.get("devices")),
+        "all_devices": _sequence_length(payload.get("all_devices")),
+        "ring_devices": _sequence_length(payload.get("ring_devices")),
+    }
+
+
+def _sequence_length(value: object) -> Optional[int]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return len(value)
+    return None
 
 
 def _build_two_factor_prompt(

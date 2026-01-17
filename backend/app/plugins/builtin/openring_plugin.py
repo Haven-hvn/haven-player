@@ -120,6 +120,15 @@ class OpenRingPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMi
 
         filtered = [device for device in devices if include_offline or device.is_online]
         paginated = filtered[offset : offset + limit]
+        logger.info(
+            "OpenRingPlugin device discovery: total=%s filtered=%s returned=%s include_offline=%s offset=%s limit=%s",
+            len(devices),
+            len(filtered),
+            len(paginated),
+            include_offline,
+            offset,
+            limit,
+        )
         sources: list[MediaSource] = []
         for device in paginated:
             sources.append(

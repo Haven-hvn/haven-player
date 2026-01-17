@@ -1,5 +1,148 @@
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+from typing import Mapping, Optional
+
+import pytest
+
+from app.services.openring_service import (
+    OpenRingService,
+    RingDevice,
+    _extract_device_payloads,
+    _sequence_length,
+    _summarize_device_payload,
+)
+
+
+@dataclass(frozen=True)
+class FakeResponse:
+    status_code: int
+    payload: Mapping[str, object]
+
+    @property
+    def text(self) -> str:
+        return json.dumps(self.payload)
+
+    def json(self) -> object:
+        return self.payload
+
+
+class FakeClient:
+    def __init__(self, response: FakeResponse) -> None:
+        self._response = response
+        self.requests: list[tuple[str, str]] = []
+        self.closed = False
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Mapping[str, str]] = None,
+        json: Optional[Mapping[str, object]] = None,
+    ) -> FakeResponse:
+        self.requests.append((method, url))
+        return self._response
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _device_payload(device_id: int) -> Mapping[str, object]:
+    return {
+        "id": device_id,
+        "description": f"Device {device_id}",
+        "device_id": str(device_id),
+        "kind": "doorbell",
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_devices_accepts_devices_key() -> None:
+    payload = {"devices": [_device_payload(1)]}
+    response = FakeResponse(status_code=200, payload=payload)
+    client = FakeClient(response)
+    service = OpenRingService(
+        access_token="token",
+        refresh_token="refresh",
+        hardware_id="hardware",
+        http_client=client,
+    )
+
+    devices = await service.fetch_devices()
+
+    assert len(devices) == 1
+    assert isinstance(devices[0], RingDevice)
+    assert devices[0].id == 1
+    assert devices[0].description == "Device 1"
+
+
+@pytest.mark.asyncio
+async def test_fetch_devices_accepts_all_devices_key() -> None:
+    payload = {"all_devices": [_device_payload(2), _device_payload(3)]}
+    response = FakeResponse(status_code=200, payload=payload)
+    client = FakeClient(response)
+    service = OpenRingService(
+        access_token="token",
+        refresh_token="refresh",
+        hardware_id="hardware",
+        http_client=client,
+    )
+
+    devices = await service.fetch_devices()
+
+    assert [device.id for device in devices] == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_fetch_devices_returns_empty_when_no_devices() -> None:
+    payload = {"devices": []}
+    response = FakeResponse(status_code=200, payload=payload)
+    client = FakeClient(response)
+    service = OpenRingService(
+        access_token="token",
+        refresh_token="refresh",
+        hardware_id="hardware",
+        http_client=client,
+    )
+
+    devices = await service.fetch_devices()
+
+    assert devices == []
+
+
+def test_extract_device_payloads_combines_sources() -> None:
+    payload = {
+        "doorbots": [_device_payload(10)],
+        "devices": [_device_payload(11)],
+    }
+
+    items = _extract_device_payloads(payload)
+
+    assert len(items) == 2
+    assert items[0]["id"] == 10
+    assert items[1]["id"] == 11
+
+
+def test_sequence_length_handles_non_sequences() -> None:
+    assert _sequence_length([1, 2, 3]) == 3
+    assert _sequence_length("not-a-sequence") is None
+
+
+def test_summarize_device_payload_counts_sequences() -> None:
+    payload = {
+        "doorbots": [_device_payload(1)],
+        "authorized_doorbots": [],
+        "devices": "unexpected",
+    }
+
+    summary = _summarize_device_payload(payload)
+
+    assert summary["doorbots"] == 1
+    assert summary["authorized_doorbots"] == 0
+    assert summary["devices"] is None
+from __future__ import annotations
+
 from datetime import datetime, timezone
 import pytest
 

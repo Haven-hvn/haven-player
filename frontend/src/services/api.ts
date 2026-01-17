@@ -530,6 +530,35 @@ export const pumpfunService = {
   },
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isMediaSource = (value: unknown): value is MediaSource => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const metadata = value.metadata;
+  return (
+    typeof value.source_id === "string" &&
+    typeof value.media_type === "string" &&
+    typeof value.uri === "string" &&
+    isRecord(metadata)
+  );
+};
+
+const isMediaSourceArray = (value: unknown): value is MediaSource[] =>
+  Array.isArray(value) && value.every(isMediaSource);
+
+const isDiscoverWrapper = (
+  value: unknown
+): value is { sources: MediaSource[]; count?: number } => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const sources = value.sources;
+  return isMediaSourceArray(sources);
+};
+
 // OpenRing-related API functions
 export const openringService = {
   login: async (email: string, password: string, code?: string): Promise<{ success: boolean; status: string; error?: string; phone?: string }> => {
@@ -564,9 +593,15 @@ export const openringService = {
   },
   
   discoverDevices: async (includeOffline: boolean = false): Promise<MediaSource[]> => {
-      const result = await pluginService.executeOperation('OpenRingPlugin', 'discover_sources', {
+      const result: unknown = await pluginService.executeOperation('OpenRingPlugin', 'discover_sources', {
           filter_options: { include_offline: includeOffline }
       });
-      return result;
+      if (isMediaSourceArray(result)) {
+        return result;
+      }
+      if (isDiscoverWrapper(result)) {
+        return result.sources;
+      }
+      throw new Error("Unexpected OpenRing discover_sources response");
   }
 };

@@ -5,6 +5,7 @@ from app.models.analysis_job import AnalysisJob
 from app.models.video import Video, Timestamp
 from app.models.live_session import LiveSession
 from app.models.plugin import Plugin
+from app.models.segment_metadata import SegmentMetadata
 
 __all__ = [
     'Base',
@@ -14,4 +15,5 @@ __all__ = [
     'Timestamp',
     'LiveSession',
     'Plugin',
+    'SegmentMetadata',
 ]

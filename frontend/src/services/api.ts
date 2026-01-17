@@ -529,3 +529,44 @@ export const pumpfunService = {
     return response.data;
   },
 };
+
+// OpenRing-related API functions
+export const openringService = {
+  login: async (email: string, password: string, code?: string): Promise<{ success: boolean; status: string; error?: string; phone?: string }> => {
+    return await pluginService.executeOperation('OpenRingPlugin', 'login', { email, password, code });
+  },
+
+  submitTwoFactor: async (code: string): Promise<{ success: boolean; error?: string }> => {
+    return await pluginService.executeOperation('OpenRingPlugin', 'submit_two_factor', { code });
+  },
+
+  logout: async (): Promise<{ success: boolean; status: string }> => {
+    return await pluginService.executeOperation('OpenRingPlugin', 'logout', {});
+  },
+
+  getAuthStatus: async (): Promise<{ status: string; authenticated: boolean; expires_at?: string }> => {
+    return await pluginService.executeOperation('OpenRingPlugin', 'auth_status', {});
+  },
+
+  listSubscriptions: async (): Promise<any[]> => {
+    return await pluginService.executeOperation('OpenRingPlugin', 'list_subscriptions', {});
+  },
+
+  subscribe: async (deviceId: string, deviceName: string): Promise<any> => {
+    return await pluginService.executeOperation('OpenRingPlugin', 'subscribe', {
+      collection_uri: deviceId,
+      config: { device_id: deviceId, device_name: deviceName }
+    });
+  },
+
+  unsubscribe: async (deviceId: string): Promise<any> => {
+    return await pluginService.executeOperation('OpenRingPlugin', 'unsubscribe', { collection_id: deviceId });
+  },
+  
+  discoverDevices: async (includeOffline: boolean = false): Promise<MediaSource[]> => {
+      const result = await pluginService.executeOperation('OpenRingPlugin', 'discover_sources', {
+          filter_options: { include_offline: includeOffline }
+      });
+      return result;
+  }
+};

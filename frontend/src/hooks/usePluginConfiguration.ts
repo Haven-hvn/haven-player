@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { PluginConfigSchema, PumpFunPluginConfig, PluginConfig, YouTubePluginConfig, BitTorrentPluginConfig } from '@/types/plugin';
+import { PluginConfigSchema, PumpFunPluginConfig, PluginConfig, YouTubePluginConfig, BitTorrentPluginConfig, OpenRingPluginConfig } from '@/types/plugin';
 import { pluginService } from '@/services/api';
 
 const defaultPumpFunConfig: PumpFunPluginConfig = {
@@ -16,6 +16,13 @@ const defaultYouTubeConfig: YouTubePluginConfig = {
 const defaultBitTorrentConfig: BitTorrentPluginConfig = {
   subscriptions: [],
   glitter_endpoint: 'https://gw.magnode.ru/v1/sql/query',
+};
+
+const defaultOpenRingConfig: OpenRingPluginConfig = {
+  segment_duration: 30,
+  auto_recording_enabled: true,
+  refresh_buffer_seconds: 60,
+  devices: [],
 };
 
 export function usePluginConfiguration(pluginName: string) {
@@ -40,6 +47,12 @@ export function usePluginConfiguration(pluginName: string) {
 
     if (pluginName.toLowerCase().includes('bittorrent')) {
       return { ...defaultBitTorrentConfig, ...actualConfig } as BitTorrentPluginConfig;
+    }
+
+    if (pluginName.toLowerCase().includes('openring')) {
+      // Filter out sensitive token fields if they exist in the config
+      const { access_token, refresh_token, ...safeConfig } = actualConfig;
+      return { ...defaultOpenRingConfig, ...safeConfig } as OpenRingPluginConfig;
     }
 
     return actualConfig as PluginConfig;

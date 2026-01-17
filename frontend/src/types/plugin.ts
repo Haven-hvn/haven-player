@@ -55,7 +55,24 @@ export interface ArchiveResult {
   message: string;
 }
 
-export type PluginConfig = YouTubePluginConfig | PumpFunPluginConfig | BitTorrentPluginConfig;
+export type PluginConfig = YouTubePluginConfig | PumpFunPluginConfig | BitTorrentPluginConfig | OpenRingPluginConfig;
+
+export interface OpenRingDevice {
+  device_id: string;
+  device_name: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface OpenRingPluginConfig {
+  segment_duration: number;
+  auto_recording_enabled: boolean;
+  refresh_buffer_seconds: number;
+  devices: OpenRingDevice[];
+  auth_status?: 'authenticated' | 'expired' | 'logged_out' | 'two_factor_required';
+  expires_at?: string;
+  two_factor_pending?: boolean;
+}
 
 export interface DiscoverResponse {
   success: boolean;

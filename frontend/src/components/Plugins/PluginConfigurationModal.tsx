@@ -16,6 +16,7 @@ import { PluginConfigSchema, PluginConfigField, YouTubePluginConfig, BitTorrentP
 import { usePluginConfiguration } from '@/hooks/usePluginConfiguration';
 import { YouTubePluginConfig as YouTubeConfig } from './YouTubePluginConfig';
 import { BitTorrentPluginConfig as BitTorrentConfig } from './BitTorrentPluginConfig';
+import { OpenRingPluginConfig as OpenRingConfig } from './OpenRingPluginConfig';
 import { RecurringJobsTab } from './RecurringJobsTab';
 
 interface TabPanelProps {
@@ -260,9 +261,15 @@ export function PluginConfigurationModal({
                       onChange={handleConfigChange}
                     />
                   )}
+                  {pluginName === 'OpenRingPlugin' && (
+                    <OpenRingConfig
+                      config={config as OpenRingPluginConfig}
+                      onChange={handleConfigChange}
+                    />
+                  )}
 
                   {/* Fallback to schema-driven rendering for other plugins */}
-                  {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin') && (
+                  {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin' || pluginName === 'OpenRingPlugin') && (
                     <Grid container spacing={2}>
                       {configSchema.config_schema.map((field) => (
                         <Grid size={{ xs: 12, sm: 6 }} key={field.name}>

@@ -82,9 +82,14 @@ class FakeService:
         self.set_tokens = Mock()
 
 
+def _create_plugin():
+    with patch("app.plugins.builtin.openring_plugin.OpenRingRecordingManager", side_effect=FakeManager):
+        return OpenRingPlugin()
+
+
 @pytest.mark.asyncio
 async def test_subscribe_success() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"devices": []}
     db = FakeDB(plugin=plugin_model)
@@ -99,7 +104,7 @@ async def test_subscribe_success() -> None:
 
 @pytest.mark.asyncio
 async def test_subscribe_plugin_missing() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     db = FakeDB(plugin=None)
 
     with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
@@ -110,7 +115,7 @@ async def test_subscribe_plugin_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_subscribe_duplicate() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"devices": [{"device_id": 1, "device_name": "Door"}]}
     db = FakeDB(plugin=plugin_model)
@@ -123,7 +128,7 @@ async def test_subscribe_duplicate() -> None:
 
 @pytest.mark.asyncio
 async def test_subscribe_exception_returns_error() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"devices": []}
 
@@ -139,7 +144,7 @@ async def test_subscribe_exception_returns_error() -> None:
 
 @pytest.mark.asyncio
 async def test_unsubscribe_success() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"devices": [{"device_id": 1, "device_name": "Door"}]}
     db = FakeDB(plugin=plugin_model)
@@ -154,7 +159,7 @@ async def test_unsubscribe_success() -> None:
 
 @pytest.mark.asyncio
 async def test_unsubscribe_not_found() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"devices": [{"device_id": 2, "device_name": "Door"}]}
     db = FakeDB(plugin=plugin_model)
@@ -167,7 +172,7 @@ async def test_unsubscribe_not_found() -> None:
 
 @pytest.mark.asyncio
 async def test_unsubscribe_plugin_missing() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     db = FakeDB(plugin=None)
 
     with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
@@ -178,7 +183,7 @@ async def test_unsubscribe_plugin_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_unsubscribe_exception() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"devices": [{"device_id": 1, "device_name": "Door"}]}
     db = FakeDB(plugin=plugin_model)
@@ -193,7 +198,7 @@ async def test_unsubscribe_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_list_subscriptions_empty_when_missing() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     db = FakeDB(plugin=None)
 
     with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
@@ -204,7 +209,7 @@ async def test_list_subscriptions_empty_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_get_subscription_none_when_missing() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     db = FakeDB(plugin=None)
 
     with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
@@ -215,7 +220,7 @@ async def test_get_subscription_none_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_discover_sources_no_service() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     with patch.object(plugin, "_get_service_and_devices", return_value=(None, [])):
         sources = await plugin.discover_sources()
     assert sources == []
@@ -223,7 +228,7 @@ async def test_discover_sources_no_service() -> None:
 
 @pytest.mark.asyncio
 async def test_discover_sources_filters_offline() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     devices = [
         RingDevice(id=1, description="Front", device_id="1", kind="doorbell", location_id=None, alerts=None),
         RingDevice(
@@ -242,7 +247,7 @@ async def test_discover_sources_filters_offline() -> None:
 
 @pytest.mark.asyncio
 async def test_discover_sources_include_offline() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     devices = [
         RingDevice(id=1, description="Front", device_id="1", kind="doorbell", location_id=None, alerts=None),
         RingDevice(
@@ -261,7 +266,7 @@ async def test_discover_sources_include_offline() -> None:
 
 @pytest.mark.asyncio
 async def test_archive_invalid_media_type() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     source = MediaSource(source_id="1", media_type=MediaType.YOUTUBE, uri="x")
     result = await plugin.archive(source)
     assert result.success is False
@@ -269,7 +274,7 @@ async def test_archive_invalid_media_type() -> None:
 
 @pytest.mark.asyncio
 async def test_archive_invalid_device_id() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     source = MediaSource(source_id="x", media_type=MediaType.WEBRTC, uri="webrtc://ring/abc")
     result = await plugin.archive(source)
     assert result.success is False
@@ -277,7 +282,7 @@ async def test_archive_invalid_device_id() -> None:
 
 @pytest.mark.asyncio
 async def test_archive_missing_auth() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     source = MediaSource(source_id="1", media_type=MediaType.WEBRTC, uri="webrtc://ring/1")
     with patch.object(plugin, "_get_authenticated_service", return_value=None):
         result = await plugin.archive(source)
@@ -286,7 +291,7 @@ async def test_archive_missing_auth() -> None:
 
 @pytest.mark.asyncio
 async def test_archive_missing_download_dir() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     source = MediaSource(source_id="1", media_type=MediaType.WEBRTC, uri="webrtc://ring/1")
     with patch.object(plugin, "_get_authenticated_service", return_value=FakeService()):
         with patch.object(plugin, "_get_download_directory", return_value=None):
@@ -296,7 +301,7 @@ async def test_archive_missing_download_dir() -> None:
 
 @pytest.mark.asyncio
 async def test_archive_start_failure() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     manager = FakeManager()
     manager.start_result = False
     plugin._recording_manager = manager
@@ -310,7 +315,7 @@ async def test_archive_start_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_archive_success() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     manager = FakeManager()
     plugin._recording_manager = manager
     source = MediaSource(
@@ -328,14 +333,14 @@ async def test_archive_success() -> None:
 
 @pytest.mark.asyncio
 async def test_health_check_no_service() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     with patch.object(plugin, "_get_authenticated_service", return_value=None):
         assert await plugin.health_check() is False
 
 
 @pytest.mark.asyncio
 async def test_health_check_fetch_failure() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     service = FakeService()
     service.fetch_devices = AsyncMock(side_effect=RuntimeError("boom"))
     with patch.object(plugin, "_get_authenticated_service", return_value=service):
@@ -344,7 +349,7 @@ async def test_health_check_fetch_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_health_check_success() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     service = FakeService([])
     with patch.object(plugin, "_get_authenticated_service", return_value=service):
         assert await plugin.health_check() is True
@@ -352,14 +357,14 @@ async def test_health_check_success() -> None:
 
 @pytest.mark.asyncio
 async def test_stop_archiving_invalid_id() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     result = await plugin.stop_archiving("invalid")
     assert result["success"] is False
 
 
 @pytest.mark.asyncio
 async def test_stop_archiving_success() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     manager = FakeManager()
     plugin._recording_manager = manager
     result = await plugin.stop_archiving("1")
@@ -368,14 +373,14 @@ async def test_stop_archiving_success() -> None:
 
 @pytest.mark.asyncio
 async def test_get_archiving_status_invalid_id() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     result = await plugin.get_archiving_status("invalid")
     assert result["success"] is False
 
 
 @pytest.mark.asyncio
 async def test_get_archiving_status_success() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     manager = FakeManager()
     plugin._recording_manager = manager
     result = await plugin.get_archiving_status("1")
@@ -384,7 +389,7 @@ async def test_get_archiving_status_success() -> None:
 
 @pytest.mark.asyncio
 async def test_manage_recordings_no_config() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     db = FakeDB(plugin=None)
 
     with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
@@ -395,7 +400,7 @@ async def test_manage_recordings_no_config() -> None:
 
 @pytest.mark.asyncio
 async def test_manage_recordings_disabled() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"auto_recording_enabled": False}
     db = FakeDB(plugin=plugin_model)
@@ -408,7 +413,7 @@ async def test_manage_recordings_disabled() -> None:
 
 @pytest.mark.asyncio
 async def test_manage_recordings_auth_error() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"auto_recording_enabled": True}
     db = FakeDB(plugin=plugin_model)
@@ -422,7 +427,7 @@ async def test_manage_recordings_auth_error() -> None:
 
 @pytest.mark.asyncio
 async def test_manage_recordings_download_dir_missing() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"auto_recording_enabled": True, "devices": []}
     db = FakeDB(plugin=plugin_model)
@@ -437,7 +442,7 @@ async def test_manage_recordings_download_dir_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_manage_recordings_success() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {
         "auto_recording_enabled": True,
@@ -458,7 +463,7 @@ async def test_manage_recordings_success() -> None:
 
 @pytest.mark.asyncio
 async def test_manage_recordings_exception() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"auto_recording_enabled": True, "devices": []}
     db = FakeDB(plugin=plugin_model)
@@ -475,7 +480,7 @@ async def test_manage_recordings_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_build_authenticated_service_returns_none_when_missing_tokens() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {}
     db = FakeDB(plugin=plugin_model)
@@ -487,7 +492,7 @@ async def test_build_authenticated_service_returns_none_when_missing_tokens() ->
 
 @pytest.mark.asyncio
 async def test_build_authenticated_service_generates_hardware_id() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {"access_token": "access"}
     db = FakeDB(plugin=plugin_model)
@@ -502,7 +507,7 @@ async def test_build_authenticated_service_generates_hardware_id() -> None:
 
 @pytest.mark.asyncio
 async def test_build_authenticated_service_refreshes_tokens() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {
         "access_token": "access",
@@ -533,7 +538,7 @@ async def test_build_authenticated_service_refreshes_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_build_authenticated_service_refresh_failure() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {
         "access_token": "access",
@@ -555,7 +560,7 @@ async def test_build_authenticated_service_refresh_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_build_authenticated_service_refreshes_without_access_token() -> None:
-    plugin = OpenRingPlugin()
+    plugin = _create_plugin()
     plugin_model = Mock(spec=PluginModel)
     plugin_model.config = {
         "refresh_token": "refresh",
@@ -594,3 +599,196 @@ def test_parse_helpers_handle_invalid_values() -> None:
         two_factor_pending=False,
     )
     assert openring_plugin._should_refresh(auth, 60) is False
+
+
+@pytest.mark.asyncio
+async def test_login_success() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    plugin_model.config = {}
+    db = FakeDB(plugin=plugin_model)
+
+    fake_service = FakeService()
+    tokens = OpenRingTokens(
+        access_token="access",
+        refresh_token="refresh",
+        expires_in=3600,
+        scope="client",
+        token_type="bearer",
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=3600),
+    )
+    fake_service.login = AsyncMock(return_value=tokens)
+    fake_service.close = AsyncMock()
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        with patch("app.plugins.builtin.openring_plugin.OpenRingService", return_value=fake_service):
+            with patch("app.plugins.builtin.openring_plugin.flag_modified"):
+                result = await plugin.login("test@example.com", "password")
+
+    assert result["success"] is True
+    assert result["status"] == "authenticated"
+    assert plugin_model.config["access_token"] == "access"
+    assert plugin_model.config["refresh_token"] == "refresh"
+
+
+@pytest.mark.asyncio
+async def test_login_2fa_required() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    plugin_model.config = {}
+    db = FakeDB(plugin=plugin_model)
+
+    fake_service = FakeService()
+    from app.services.openring_service import OpenRingTwoFactorRequired
+    fake_service.login = AsyncMock(side_effect=OpenRingTwoFactorRequired("Enter code", "sms", "1234"))
+    fake_service.close = AsyncMock()
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        with patch("app.plugins.builtin.openring_plugin.OpenRingService", return_value=fake_service):
+            with patch("app.plugins.builtin.openring_plugin.flag_modified"):
+                result = await plugin.login("test@example.com", "password")
+
+    assert result["success"] is False
+    assert result["status"] == "two_factor_required"
+    assert result["error"] == "Enter code"
+    assert result["phone"] == "1234"
+
+
+@pytest.mark.asyncio
+async def test_login_error() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    plugin_model.config = {}
+    db = FakeDB(plugin=plugin_model)
+
+    fake_service = FakeService()
+    fake_service.login = AsyncMock(side_effect=RuntimeError("boom"))
+    fake_service.close = AsyncMock()
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        with patch("app.plugins.builtin.openring_plugin.OpenRingService", return_value=fake_service):
+            with patch("app.plugins.builtin.openring_plugin.flag_modified"):
+                result = await plugin.login("test@example.com", "password")
+
+    assert result["success"] is False
+    assert result["status"] == "error"
+    assert result["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_logout_success() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    plugin_model.config = {
+        "access_token": "old",
+        "refresh_token": "old",
+        "expires_at": "2025-01-01T00:00:00+00:00",
+        "two_factor_pending": True
+    }
+    db = FakeDB(plugin=plugin_model)
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        with patch("app.plugins.builtin.openring_plugin.flag_modified"):
+            result = await plugin.logout()
+
+    assert result["success"] is True
+    assert result["status"] == "logged_out"
+    assert plugin_model.config["access_token"] is None
+    assert plugin_model.config["refresh_token"] is None
+    assert plugin_model.config["expires_at"] is None
+    assert plugin_model.config["two_factor_pending"] is False
+
+
+@pytest.mark.asyncio
+async def test_logout_plugin_not_found() -> None:
+    plugin = _create_plugin()
+    db = FakeDB(plugin=None)
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        result = await plugin.logout()
+
+    assert result["success"] is False
+    assert result["error"] == "Plugin not found"
+
+
+@pytest.mark.asyncio
+async def test_auth_status_authenticated() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    # Valid unexpired token
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    plugin_model.config = {
+        "access_token": "token",
+        "refresh_token": "refresh",
+        "expires_at": expires_at.isoformat()
+    }
+    db = FakeDB(plugin=plugin_model)
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        result = await plugin.auth_status()
+
+    assert result["authenticated"] is True
+    assert result["status"] == "authenticated"
+
+
+@pytest.mark.asyncio
+async def test_auth_status_expired_no_refresh() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    # Expired token, no refresh token
+    expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    plugin_model.config = {
+        "access_token": "token",
+        "refresh_token": None,
+        "expires_at": expires_at.isoformat()
+    }
+    db = FakeDB(plugin=plugin_model)
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        result = await plugin.auth_status()
+
+    assert result["authenticated"] is False
+    assert result["status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_auth_status_expired_but_refresh_possible() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    # Expired token, BUT has refresh token
+    expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    plugin_model.config = {
+        "access_token": "token",
+        "refresh_token": "refresh",
+        "expires_at": expires_at.isoformat()
+    }
+    db = FakeDB(plugin=plugin_model)
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        result = await plugin.auth_status()
+
+    # Should report authenticated because we can refresh
+    assert result["authenticated"] is True
+    assert result["status"] == "authenticated"
+
+
+@pytest.mark.asyncio
+async def test_auth_status_logged_out() -> None:
+    plugin = _create_plugin()
+    plugin_model = Mock(spec=PluginModel)
+    plugin_model.config = {}
+    db = FakeDB(plugin=plugin_model)
+
+    with patch("app.plugins.builtin.openring_plugin.get_db_session", return_value=iter([db])):
+        result = await plugin.auth_status()
+
+    assert result["authenticated"] is False
+    assert result["status"] == "logged_out"
+
+
+@pytest.mark.asyncio
+async def test_submit_two_factor_returns_instruction() -> None:
+    plugin = _create_plugin()
+    result = await plugin.submit_two_factor("123456")
+    assert result["success"] is False
+    assert "Please call login() again" in result["error"]

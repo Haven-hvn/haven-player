@@ -701,6 +701,24 @@ class JobScheduler:
         """
         db = SessionLocal()
         try:
+            # Check if job already exists to prevent duplicates
+            existing_job = db.query(RecurringJob).filter(
+                RecurringJob.plugin_name == plugin_name,
+                RecurringJob.job_name == job_name
+            ).first()
+            
+            if existing_job:
+                logger.info(f"Job already exists, returning existing job: {plugin_name}:{job_name}")
+                
+                # Ensure job is scheduled
+                if self.scheduler:
+                    scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
+                    if not scheduled_job:
+                        logger.info(f"Rescheduling existing job: {plugin_name}:{job_name}")
+                        await self.schedule_job(existing_job)
+                
+                return existing_job
+            
             # Validate method
             if method == "archive":
                 raise ValueError(

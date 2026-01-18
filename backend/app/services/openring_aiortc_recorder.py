@@ -242,16 +242,9 @@ class OpenRingAiortcRecorder:
         local_description = self._peer_connection.localDescription
         offer_sdp = local_description.sdp if local_description else offer.sdp
         
-        # CRITICAL: Force DTLS active role in our offer
-        # Ring's server says setup:active but never sends ClientHello
-        # By using setup:active in our offer, Ring should respond with setup:passive
-        # and WE will initiate the DTLS handshake instead of waiting for Ring
-        if "a=setup:actpass" in offer_sdp:
-            offer_sdp = offer_sdp.replace("a=setup:actpass", "a=setup:active")
-            logger.info(
-                "Modified SDP: forcing DTLS active role (we initiate handshake): device_id=%s",
-                self._device_id
-            )
+        # Note: We keep setup:actpass in our offer (standard WebRTC behavior)
+        # Ring responds with setup:active but never sends ClientHello (Ring bug)
+        # We fix this by patching Ring's answer later (see DTLS FIX below)
 
         logger.debug("Starting live view session for device_id=%s", self._device_id)
         response = await self._service.start_live_view(
@@ -293,7 +286,25 @@ class OpenRingAiortcRecorder:
                 logger.info("  ICE server %d: urls=%s has_creds=%s", 
                            i, server.urls, bool(server.username))
         
-        remote_description = self._session_description_factory(response.answer_sdp, "answer")
+        # CRITICAL FIX: Patch Ring's non-compliant SDP answer
+        # Ring's server has a bug where they respond with setup:active (claiming DTLS client role)
+        # but NEVER actually send a ClientHello to initiate the DTLS handshake.
+        # This causes aiortc to wait forever for a ClientHello that never comes.
+        # 
+        # Fix: Change Ring's setup:active to setup:passive, which tells aiortc that Ring
+        # is the DTLS server. This makes aiortc become the DTLS client and send the
+        # ClientHello ourselves, which Ring will accept.
+        patched_answer_sdp = response.answer_sdp
+        if "a=setup:active" in patched_answer_sdp:
+            patched_answer_sdp = patched_answer_sdp.replace("a=setup:active", "a=setup:passive")
+            logger.info(
+                "DTLS FIX: Patched Ring's SDP answer - changed setup:active to setup:passive. "
+                "Ring claims DTLS client role but never sends ClientHello. "
+                "We will initiate DTLS handshake instead. device_id=%s",
+                self._device_id
+            )
+        
+        remote_description = self._session_description_factory(patched_answer_sdp, "answer")
         
         # Set remote description and activate camera in parallel (like Swift implementation)
         # activateCamera only needs sessionId, not remote description

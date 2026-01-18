@@ -134,6 +134,72 @@ class OpenRingRecordingManager:
             stats["active"] = len(self.active_recordings)
             return stats
 
+    async def wait_for_first_segment(
+        self,
+        device_id: int,
+        timeout: float = 60.0,
+    ) -> Optional[Path]:
+        """
+        Wait for the first segment to complete for a recording.
+        
+        Args:
+            device_id: Device ID to wait for
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            Path to the first segment file, or None if timeout/error
+        """
+        session = self.active_recordings.get(device_id)
+        if not session:
+            logger.warning("No active recording found for device_id=%s", device_id)
+            return None
+        
+        # Check if any segments already exist (in case segment completed before we set up callback)
+        if session.output_dir.exists():
+            try:
+                existing_segments = [
+                    p for p in session.output_dir.glob("ring_*.mp4")
+                    if p.exists() and p.stat().st_size > 0
+                ]
+                if existing_segments:
+                    # Sort by modification time, most recent first
+                    existing_segments.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                    logger.info("Found existing segment, using most recent: device_id=%s path=%s size=%s",
+                               device_id, existing_segments[0], existing_segments[0].stat().st_size)
+                    return existing_segments[0]
+            except Exception as exc:
+                logger.debug("Error checking for existing segments: device_id=%s error=%s", device_id, exc)
+        
+        # Create an event to signal when first segment completes
+        segment_event = asyncio.Event()
+        segment_path: Optional[Path] = None
+        
+        original_callback = session.recorder._on_segment_complete
+        
+        async def first_segment_callback(path: Path) -> None:
+            nonlocal segment_path
+            segment_path = path
+            segment_event.set()
+            # Call original callback if it exists
+            if original_callback:
+                from app.services.openring_aiortc_recorder import _maybe_await
+                await _maybe_await(original_callback(path))
+        
+        # Temporarily replace callback
+        session.recorder._on_segment_complete = first_segment_callback
+        
+        try:
+            logger.info("Waiting for first segment: device_id=%s timeout=%s", device_id, timeout)
+            await asyncio.wait_for(segment_event.wait(), timeout=timeout)
+            logger.info("First segment completed: device_id=%s path=%s", device_id, segment_path)
+            return segment_path
+        except asyncio.TimeoutError:
+            logger.warning("Timeout waiting for first segment: device_id=%s timeout=%s", device_id, timeout)
+            return None
+        finally:
+            # Restore original callback
+            session.recorder._on_segment_complete = original_callback
+
     async def start_recording(
         self,
         device_id: int,

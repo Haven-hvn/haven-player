@@ -187,8 +187,48 @@ class OpenRingPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMi
         if not started:
             return ArchiveResult(success=False, error="Failed to start recording")
 
+        # Wait for first segment to complete (like PumpFun plugin)
+        # This ensures the job completes with an actual file
+        logger.info("Waiting for first segment to complete: device_id=%s", device_id)
+        first_segment_path = await self._recording_manager.wait_for_first_segment(
+            device_id=device_id,
+            timeout=float(segment_duration) + 10.0,  # segment_duration + buffer
+        )
+        
+        if not first_segment_path:
+            # Recording started but no segment completed - still return success
+            # since recording is active and will produce segments
+            logger.warning("First segment not completed within timeout, but recording is active: device_id=%s", device_id)
+            return ArchiveResult(
+                success=True,
+                metadata={
+                    "device_id": device_id,
+                    "device_name": source.metadata.get("device_name"),
+                    "segment_duration": segment_duration,
+                    "note": "Recording started but first segment not yet complete",
+                },
+            )
+
+        # Verify file exists
+        if not first_segment_path.exists():
+            logger.warning("Segment file does not exist yet: path=%s", first_segment_path)
+            return ArchiveResult(
+                success=True,
+                metadata={
+                    "device_id": device_id,
+                    "device_name": source.metadata.get("device_name"),
+                    "segment_duration": segment_duration,
+                    "note": "Segment path created but file not yet written",
+                },
+            )
+
+        file_size = first_segment_path.stat().st_size if first_segment_path.exists() else None
+        
         return ArchiveResult(
             success=True,
+            output_path=str(first_segment_path),
+            file_size_bytes=file_size,
+            duration_seconds=segment_duration,
             metadata={
                 "device_id": device_id,
                 "device_name": source.metadata.get("device_name"),

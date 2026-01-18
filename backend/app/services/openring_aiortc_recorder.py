@@ -216,8 +216,17 @@ class OpenRingAiortcRecorder:
                 except asyncio.TimeoutError:
                     pass
                 await _maybe_await(recorder.stop())
+                file_exists = segment.path.exists()
+                file_size = segment.path.stat().st_size if file_exists else None
                 logger.info("Segment recording completed: device_id=%s segment_path=%s segment_index=%s",
                            self._device_id, segment.path, self._segment_index - 1)
+                logger.info(
+                    "Segment file status: device_id=%s path=%s exists=%s size=%s",
+                    self._device_id,
+                    segment.path,
+                    file_exists,
+                    file_size,
+                )
 
                 if self._on_segment_complete:
                     logger.debug("Invoking segment complete callback: device_id=%s segment_path=%s",

@@ -133,10 +133,46 @@ def patch_aiortc_dtls_logging() -> bool:
     """
     try:
         from aiortc import rtcdtlstransport
+        import asyncio
         
         # Store original methods
         original_write_ssl = rtcdtlstransport.RTCDtlsTransport._write_ssl
         original_recv_next = rtcdtlstransport.RTCDtlsTransport._recv_next
+        
+        def classify_dtls_packet(data: bytes) -> str:
+            """Classify a DTLS packet by content type and handshake type."""
+            if not data:
+                return "Empty"
+            
+            content_type = data[0]
+            content_types = {
+                20: "ChangeCipherSpec",
+                21: "Alert", 
+                22: "Handshake",
+                23: "ApplicationData",
+                25: "Heartbeat"
+            }
+            msg_type = content_types.get(content_type, f"Unknown({content_type})")
+            
+            # For handshake messages, get the handshake type
+            if content_type == 22 and len(data) > 13:
+                hs_type = data[13]
+                hs_types = {
+                    0: "HelloRequest",
+                    1: "ClientHello",
+                    2: "ServerHello", 
+                    3: "HelloVerifyRequest",
+                    11: "Certificate",
+                    12: "ServerKeyExchange",
+                    13: "CertificateRequest",
+                    14: "ServerHelloDone",
+                    15: "CertificateVerify",
+                    16: "ClientKeyExchange",
+                    20: "Finished"
+                }
+                msg_type += f" [{hs_types.get(hs_type, f'HS({hs_type})')}]"
+            
+            return msg_type
         
         async def logged_write_ssl(self):
             """Log outgoing DTLS data."""
@@ -146,48 +182,99 @@ def patch_aiortc_dtls_logging() -> bool:
                 data = b""
             
             if data:
-                # Identify DTLS message type from first byte of content type
-                content_type = data[0] if data else 0
-                content_types = {
-                    20: "ChangeCipherSpec",
-                    21: "Alert", 
-                    22: "Handshake",
-                    23: "ApplicationData",
-                    25: "Heartbeat"
-                }
-                msg_type = content_types.get(content_type, f"Unknown({content_type})")
-                
-                # For handshake messages, get the handshake type
-                handshake_info = ""
-                if content_type == 22 and len(data) > 13:
-                    hs_type = data[13]
-                    hs_types = {
-                        0: "HelloRequest",
-                        1: "ClientHello",
-                        2: "ServerHello", 
-                        3: "HelloVerifyRequest",
-                        11: "Certificate",
-                        12: "ServerKeyExchange",
-                        13: "CertificateRequest",
-                        14: "ServerHelloDone",
-                        15: "CertificateVerify",
-                        16: "ClientKeyExchange",
-                        20: "Finished"
-                    }
-                    handshake_info = f" [{hs_types.get(hs_type, f'Unknown({hs_type})')}]"
-                
+                msg_type = classify_dtls_packet(data)
                 logger.info(
-                    "DTLS SEND: role=%s type=%s%s len=%d",
-                    self._role, msg_type, handshake_info, len(data)
+                    "DTLS SEND: role=%s type=%s len=%d",
+                    self._role, msg_type, len(data)
                 )
                 
                 await self.transport._send(data)
                 self._RTCDtlsTransport__tx_bytes += len(data)
                 self._RTCDtlsTransport__tx_packets += 1
         
-        # Apply write patch
+        async def logged_recv_next(self):
+            """Log incoming packets to see what we're receiving."""
+            # Get timeout
+            timeout = None
+            if not self.encrypted:
+                timeout = self._ssl.DTLSv1_get_timeout()
+            
+            # Receive next datagram with logging
+            try:
+                if timeout is not None:
+                    try:
+                        data = await asyncio.wait_for(self.transport._recv(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        logger.debug("DTLS RECV: timeout (%.2fs), handling retransmit", timeout)
+                        self._ssl.DTLSv1_handle_timeout()
+                        await self._write_ssl()
+                        return
+                else:
+                    # Log that we're waiting (only occasionally to avoid spam)
+                    data = await self.transport._recv()
+                
+                # Log what we received
+                first_byte = data[0] if data else 0
+                if first_byte > 19 and first_byte < 64:
+                    # DTLS packet
+                    msg_type = classify_dtls_packet(data)
+                    logger.info(
+                        "DTLS RECV: role=%s type=%s len=%d encrypted=%s",
+                        self._role, msg_type, len(data), self.encrypted
+                    )
+                elif first_byte > 127 and first_byte < 192:
+                    # RTP/RTCP packet - log summary only
+                    logger.debug("DTLS RECV: RTP/RTCP packet len=%d", len(data))
+                else:
+                    logger.info(
+                        "DTLS RECV: Unknown packet first_byte=%d len=%d",
+                        first_byte, len(data)
+                    )
+                
+                # Process the packet (copied from original _recv_next)
+                self._RTCDtlsTransport__rx_bytes += len(data)
+                self._RTCDtlsTransport__rx_packets += 1
+                
+                if first_byte > 19 and first_byte < 64:
+                    # DTLS
+                    self._ssl.bio_write(data)
+                    try:
+                        decrypted = self._ssl.recv(1500)
+                    except rtcdtlstransport.SSL.ZeroReturnError:
+                        decrypted = None
+                    except rtcdtlstransport.SSL.Error as e:
+                        logger.warning("DTLS SSL.Error during recv: %s", e)
+                        decrypted = b""
+                    await self._write_ssl()
+                    if decrypted is None:
+                        logger.info("DTLS shutdown by remote party")
+                        raise ConnectionError
+                    elif decrypted and self._data_receiver:
+                        await self._data_receiver._handle_data(decrypted)
+                elif first_byte > 127 and first_byte < 192 and self._rx_srtp:
+                    # SRTP / SRTCP
+                    from aiortc import clock
+                    from aiortc.rtp import is_rtcp
+                    import pylibsrtp
+                    arrival_time_ms = clock.current_ms()
+                    try:
+                        if is_rtcp(data):
+                            data = self._rx_srtp.unprotect_rtcp(data)
+                            await self._handle_rtcp_data(data)
+                        else:
+                            data = self._rx_srtp.unprotect(data)
+                            await self._handle_rtp_data(data, arrival_time_ms=arrival_time_ms)
+                    except pylibsrtp.Error as exc:
+                        logger.debug("SRTP unprotect failed: %s", exc)
+                        
+            except Exception as e:
+                logger.warning("DTLS RECV error: %s", e)
+                raise
+        
+        # Apply patches
         rtcdtlstransport.RTCDtlsTransport._write_ssl = logged_write_ssl
-        logger.info("Patched aiortc DTLS transport for detailed packet logging")
+        rtcdtlstransport.RTCDtlsTransport._recv_next = logged_recv_next
+        logger.info("Patched aiortc DTLS transport for detailed packet logging (send + recv)")
         return True
         
     except Exception as e:

@@ -224,6 +224,8 @@ class OpenRingAiortcRecorder:
         self._peer_connection.on("track")(self._handle_track)
         self._peer_connection.on("connectionstatechange")(self._handle_connection_state_change)
         self._peer_connection.on("iceconnectionstatechange")(self._handle_ice_connection_state_change)
+        self._peer_connection.on("signalingstatechange")(self._handle_signaling_state_change)
+        self._peer_connection.on("icecandidate")(self._handle_ice_candidate)
         self._peer_connection.addTransceiver("audio", direction="recvonly")
         self._peer_connection.addTransceiver("video", direction="recvonly")
 
@@ -240,13 +242,26 @@ class OpenRingAiortcRecorder:
             offer_sdp=offer_sdp,
         )
         
-        # Log our local SDP fingerprint for comparison
+        # Log our local SDP details for comparison
         local_sdp = offer_sdp
         local_sdp_lines = local_sdp.split('\n') if local_sdp else []
         local_fingerprints = [l.strip() for l in local_sdp_lines if 'fingerprint' in l.lower()]
+        local_setup = [l.strip() for l in local_sdp_lines if 'a=setup:' in l.lower()]
+        local_media = [l.strip() for l in local_sdp_lines if l.startswith('m=')]
         logger.info(
-            "Local SDP fingerprints: device_id=%s fingerprints=%s",
-            self._device_id, local_fingerprints[:2]
+            "Local SDP: device_id=%s fingerprints=%s setup=%s media=%s",
+            self._device_id, local_fingerprints[:2], local_setup[:2], local_media
+        )
+        
+        # Check SDP setup compatibility
+        # In our offer we should have setup:actpass (we can be active or passive)
+        # Ring's answer should have setup:active or setup:passive
+        remote_sdp = response.answer_sdp
+        remote_sdp_lines = remote_sdp.split('\n') if remote_sdp else []
+        remote_setup = [l.strip() for l in remote_sdp_lines if 'a=setup:' in l.lower()]
+        logger.info(
+            "DTLS setup negotiation: device_id=%s local_setup=%s remote_setup=%s",
+            self._device_id, local_setup[:2], remote_setup[:2]
         )
         
         # If Ring provided ICE servers, log them (we'd need to restart with them for full support)
@@ -263,6 +278,44 @@ class OpenRingAiortcRecorder:
         remote_description = self._session_description_factory(response.answer_sdp, "answer")
         await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
         
+        # Log signaling state after setting remote description
+        signaling_state = getattr(self._peer_connection, 'signalingState', 'unknown')
+        logger.info(
+            "After setRemoteDescription: device_id=%s signaling_state=%s",
+            self._device_id, signaling_state
+        )
+        
+        # Check for SCTP/DTLS transport state if available
+        try:
+            sctp = getattr(self._peer_connection, 'sctp', None)
+            if sctp:
+                sctp_state = getattr(sctp, 'state', 'unknown')
+                dtls_state = getattr(getattr(sctp, 'transport', None), 'state', 'unknown')
+                logger.info(
+                    "SCTP/DTLS state: device_id=%s sctp=%s dtls=%s",
+                    self._device_id, sctp_state, dtls_state
+                )
+        except Exception as e:
+            logger.debug("Could not get SCTP/DTLS state: %s", e)
+        
+        # Try to access DTLS transport via transceivers
+        try:
+            transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
+            for i, tr in enumerate(transceivers):
+                receiver = getattr(tr, 'receiver', None)
+                if receiver:
+                    transport = getattr(receiver, 'transport', None)
+                    if transport:
+                        dtls = getattr(transport, 'transport', None)
+                        if dtls:
+                            dtls_state = getattr(dtls, 'state', 'unknown')
+                            logger.info(
+                                "Transceiver %d DTLS state: device_id=%s state=%s",
+                                i, self._device_id, dtls_state
+                            )
+        except Exception as e:
+            logger.debug("Could not get transceiver DTLS state: %s", e)
+        
         # Wait for WebRTC connection to be fully established (ICE + DTLS)
         logger.info(
             "Waiting for WebRTC connection: device_id=%s session_id=%s timeout=%s",
@@ -270,6 +323,42 @@ class OpenRingAiortcRecorder:
         )
         try:
             await asyncio.wait_for(self._connection_ready.wait(), timeout=self._connection_timeout)
+            
+            # ICE completed, now wait a bit and poll for DTLS/connection state
+            conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
+            ice_state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
+            logger.info(
+                "ICE ready, checking DTLS: device_id=%s session_id=%s connection_state=%s ice_state=%s",
+                self._device_id, self._session_id, conn_state, ice_state
+            )
+            
+            # Poll for connection state to become "connected" (DTLS complete)
+            dtls_timeout = 15.0
+            poll_interval = 0.5
+            dtls_deadline = asyncio.get_event_loop().time() + dtls_timeout
+            while asyncio.get_event_loop().time() < dtls_deadline:
+                conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
+                if conn_state == "connected":
+                    logger.info(
+                        "DTLS handshake completed: device_id=%s session_id=%s connection_state=%s",
+                        self._device_id, self._session_id, conn_state
+                    )
+                    break
+                elif conn_state in ("failed", "closed", "disconnected"):
+                    logger.error(
+                        "DTLS handshake failed: device_id=%s session_id=%s connection_state=%s",
+                        self._device_id, self._session_id, conn_state
+                    )
+                    break
+                await asyncio.sleep(poll_interval)
+            else:
+                conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
+                logger.warning(
+                    "DTLS handshake did not complete within %ss: device_id=%s connection_state=%s. "
+                    "This is likely the root cause of no media - DTLS must complete for SRTP media to flow.",
+                    dtls_timeout, self._device_id, conn_state
+                )
+            
             logger.info(
                 "WebRTC connection established: device_id=%s session_id=%s connection_state=%s ice_state=%s",
                 self._device_id, self._session_id,
@@ -341,6 +430,21 @@ class OpenRingAiortcRecorder:
         # Also trigger connection ready on ICE connected (backup for connectionState)
         if state == "connected" or state == "completed":
             self._connection_ready.set()
+
+    def _handle_signaling_state_change(self, *args: object) -> None:
+        state = getattr(self._peer_connection, 'signalingState', 'unknown')
+        logger.info(
+            "Signaling state changed: device_id=%s session_id=%s state=%s",
+            self._device_id, self._session_id, state
+        )
+
+    def _handle_ice_candidate(self, candidate: object) -> None:
+        if candidate:
+            candidate_str = str(candidate)[:100] if candidate else "null"
+            logger.debug(
+                "ICE candidate: device_id=%s candidate=%s...",
+                self._device_id, candidate_str
+            )
 
     async def _segment_loop(self) -> None:
         logger.info("Segment loop starting: device_id=%s session_id=%s waiting_for_tracks timeout=%s",

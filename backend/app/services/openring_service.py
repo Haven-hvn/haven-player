@@ -354,20 +354,45 @@ class OpenRingService:
         if not answer_sdp:
             raise OpenRingApiError("Missing SDP answer from Ring", 200)
         
-        # Log SDP details for debugging
+        # Log detailed SDP for debugging
         sdp_lines = answer_sdp.split('\n') if answer_sdp else []
-        fingerprint_lines = [l for l in sdp_lines if 'fingerprint' in l.lower()]
-        ice_pwd_lines = [l for l in sdp_lines if 'ice-pwd' in l.lower()]
-        ice_ufrag_lines = [l for l in sdp_lines if 'ice-ufrag' in l.lower()]
-        candidate_count = len([l for l in sdp_lines if l.startswith('a=candidate')])
+        fingerprint_lines = [l.strip() for l in sdp_lines if 'fingerprint' in l.lower()]
+        ice_pwd_lines = [l.strip() for l in sdp_lines if 'ice-pwd' in l.lower()]
+        ice_ufrag_lines = [l.strip() for l in sdp_lines if 'ice-ufrag' in l.lower()]
+        candidate_lines = [l.strip() for l in sdp_lines if l.strip().startswith('a=candidate')]
+        setup_lines = [l.strip() for l in sdp_lines if 'a=setup:' in l.lower()]
+        rtcp_mux_lines = [l.strip() for l in sdp_lines if 'rtcp-mux' in l.lower()]
+        media_lines = [l.strip() for l in sdp_lines if l.startswith('m=')]
+        rtpmap_lines = [l.strip() for l in sdp_lines if 'a=rtpmap:' in l]
+        
         logger.info(
             "Ring SDP details: device_id=%s fingerprints=%s ice_ufrag=%s ice_pwd_count=%s candidates=%s",
             device_id,
-            fingerprint_lines[:2],  # First 2 fingerprints
-            ice_ufrag_lines[:1],    # First ice-ufrag
+            fingerprint_lines[:2],
+            ice_ufrag_lines[:1],
             len(ice_pwd_lines),
-            candidate_count
+            len(candidate_lines)
         )
+        logger.info(
+            "Ring SDP media: device_id=%s setup=%s rtcp_mux=%s media_sections=%s",
+            device_id,
+            setup_lines[:2],
+            len(rtcp_mux_lines) > 0,
+            media_lines
+        )
+        logger.info(
+            "Ring SDP codecs: device_id=%s rtpmap_count=%s sample=%s",
+            device_id,
+            len(rtpmap_lines),
+            rtpmap_lines[:4] if rtpmap_lines else []
+        )
+        # Log first few ICE candidates for debugging
+        if candidate_lines:
+            logger.info(
+                "Ring ICE candidates (first 3): device_id=%s candidates=%s",
+                device_id,
+                candidate_lines[:3]
+            )
         
         # Parse ICE servers if present
         ice_servers: list[IceServer] = []

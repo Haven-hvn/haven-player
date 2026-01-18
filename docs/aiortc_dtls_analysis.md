@@ -202,6 +202,73 @@ remote_description = self._session_description_factory(remote_sdp, "answer")
 
 ---
 
+## DTLS Cipher Suite Investigation
+
+### aiortc's Default Configuration
+
+**File: `aiortc/rtcdtlstransport.py` lines 203-206**
+
+```python
+ctx.set_cipher_list(
+    b"ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA"
+)
+```
+
+**Supported DTLS Ciphers:**
+- `ECDHE-ECDSA-AES128-GCM-SHA256`
+- `ECDHE-ECDSA-CHACHA20-POLY1305`
+- `ECDHE-ECDSA-AES128-SHA`
+- `ECDHE-ECDSA-AES256-SHA`
+
+**SRTP Profiles:**
+- `SRTP_AEAD_AES_256_GCM`
+- `SRTP_AEAD_AES_128_GCM`
+- `SRTP_AES128_CM_SHA1_80`
+
+**Certificate Type:** ECDSA (SECP256R1)
+
+### Potential Cipher Mismatch Issue
+
+Ring might require RSA-based cipher suites like:
+- `ECDHE-RSA-AES128-GCM-SHA256`
+- `ECDHE-RSA-AES256-GCM-SHA384`
+
+These require an RSA certificate, but aiortc generates ECDSA certificates by default.
+
+### Diagnostic Environment Variables
+
+```bash
+# Enable verbose aiortc/OpenSSL logging
+export AIORTC_DEBUG=1
+
+# Extend cipher list to include RSA variants
+export RING_EXTENDED_CIPHERS=1
+
+# Use RSA certificate instead of ECDSA
+export RING_RSA_CERT=1
+
+# DTLS role strategy
+export RING_DTLS_STRATEGY=patch_answer  # or force_passive_offer
+```
+
+### Upstream Dependencies
+
+| Package | Purpose | Configuration |
+|---------|---------|--------------|
+| `pyOpenSSL` | DTLS/TLS implementation | `SSL.Context(SSL.DTLS_METHOD)` |
+| `pylibsrtp` | SRTP encryption | SRTP profiles |
+| `cryptography` | Certificate generation | ECDSA/RSA keys |
+
+### Contributing to aiortc
+
+If cipher suite support is the issue, options include:
+
+1. **Open an issue** on [aiortc GitHub](https://github.com/aiortc/aiortc) describing Ring compatibility
+2. **Submit a PR** to extend cipher list or make it configurable
+3. **Local patch** using our `patch_aiortc_cipher_list()` function
+
+---
+
 ## Alternative: Different Library Assessment
 
 If patching doesn't work, consider:

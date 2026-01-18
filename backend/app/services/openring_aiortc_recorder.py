@@ -20,6 +20,243 @@ from app.services.openring_service import OpenRingService, IceServer
 
 logger = logging.getLogger(__name__)
 
+# Enable aiortc debug logging if AIORTC_DEBUG=1 is set
+import os
+if os.environ.get("AIORTC_DEBUG", "").lower() in ("1", "true", "yes"):
+    logging.getLogger("aiortc").setLevel(logging.DEBUG)
+    logging.getLogger("aioice").setLevel(logging.DEBUG)
+    logger.info("aiortc/aioice debug logging enabled")
+
+
+def log_dtls_cipher_info() -> None:
+    """Log available DTLS cipher suites and SRTP profiles for diagnostics."""
+    try:
+        from OpenSSL import SSL, crypto
+        import ssl
+        
+        # Log OpenSSL version
+        logger.info("OpenSSL version: %s", ssl.OPENSSL_VERSION)
+        
+        # Create a test DTLS context to check available ciphers
+        ctx = SSL.Context(SSL.DTLS_METHOD)
+        
+        # aiortc's default cipher list
+        aiortc_ciphers = b"ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA"
+        
+        # Extended cipher list including RSA variants (Ring might need these)
+        extended_ciphers = (
+            b"ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:"
+            b"ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA:"
+            b"ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:"
+            b"ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA:"
+            b"AES128-GCM-SHA256:AES256-GCM-SHA384"
+        )
+        
+        logger.info("aiortc default DTLS ciphers: %s", aiortc_ciphers.decode())
+        
+        # Check which ciphers are actually available
+        try:
+            ctx.set_cipher_list(aiortc_ciphers)
+            logger.info("aiortc ciphers are available in this OpenSSL build")
+        except SSL.Error as e:
+            logger.warning("Some aiortc ciphers may not be available: %s", e)
+        
+    except Exception as e:
+        logger.debug("Could not log DTLS cipher info: %s", e)
+
+
+def get_dtls_transport_diagnostics(dtls_transport: object) -> dict[str, object]:
+    """Extract detailed diagnostics from a DTLS transport."""
+    diagnostics: dict[str, object] = {}
+    
+    try:
+        diagnostics["state"] = getattr(dtls_transport, "state", "unknown")
+        diagnostics["role"] = getattr(dtls_transport, "_role", "unknown")
+        diagnostics["encrypted"] = getattr(dtls_transport, "encrypted", False)
+        
+        ssl_conn = getattr(dtls_transport, "_ssl", None)
+        if ssl_conn:
+            try:
+                # Get negotiated cipher
+                cipher = ssl_conn.get_cipher_name()
+                diagnostics["negotiated_cipher"] = cipher
+            except Exception:
+                diagnostics["negotiated_cipher"] = "not_negotiated_yet"
+            
+            try:
+                # Get cipher list
+                cipher_list = ssl_conn.get_cipher_list()
+                diagnostics["available_ciphers"] = cipher_list[:5] if cipher_list else []
+            except Exception:
+                pass
+            
+            try:
+                # Get SRTP profile
+                srtp_profile = ssl_conn.get_selected_srtp_profile()
+                diagnostics["srtp_profile"] = srtp_profile.decode() if srtp_profile else None
+            except Exception:
+                diagnostics["srtp_profile"] = "not_negotiated_yet"
+            
+            try:
+                # Get peer certificate info
+                peer_cert = ssl_conn.get_peer_certificate()
+                if peer_cert:
+                    diagnostics["peer_cert_subject"] = str(peer_cert.get_subject())
+                    diagnostics["peer_cert_issuer"] = str(peer_cert.get_issuer())
+            except Exception:
+                pass
+                
+    except Exception as e:
+        diagnostics["error"] = str(e)
+    
+    return diagnostics
+
+
+# Log cipher info at module load time
+log_dtls_cipher_info()
+
+
+def patch_aiortc_cipher_list() -> bool:
+    """
+    Patch aiortc to use extended cipher list including RSA variants.
+    
+    aiortc by default only supports ECDHE-ECDSA ciphers, which require
+    an ECDSA certificate. Some servers (possibly Ring) may only support
+    RSA-based ciphers.
+    
+    This patch extends the cipher list to include both ECDSA and RSA variants.
+    
+    Returns True if patching was successful.
+    """
+    try:
+        from aiortc import rtcdtlstransport
+        from OpenSSL import SSL
+        
+        # Store original method
+        original_create_ssl_context = rtcdtlstransport.RTCCertificate._create_ssl_context
+        
+        def patched_create_ssl_context(self, srtp_profiles):
+            ctx = SSL.Context(SSL.DTLS_METHOD)
+            ctx.set_verify(
+                SSL.VERIFY_PEER | SSL.VERIFY_FAIL_IF_NO_PEER_CERT, lambda *args: True
+            )
+            ctx.use_certificate(self._cert)
+            ctx.use_privatekey(self._key)
+            
+            # Extended cipher list including RSA variants
+            # This is broader than aiortc's default ECDSA-only list
+            extended_ciphers = (
+                b"ECDHE-ECDSA-AES128-GCM-SHA256:"
+                b"ECDHE-ECDSA-CHACHA20-POLY1305:"
+                b"ECDHE-ECDSA-AES128-SHA:"
+                b"ECDHE-ECDSA-AES256-SHA:"
+                b"ECDHE-RSA-AES128-GCM-SHA256:"
+                b"ECDHE-RSA-AES256-GCM-SHA384:"
+                b"ECDHE-RSA-CHACHA20-POLY1305:"
+                b"ECDHE-RSA-AES128-SHA:"
+                b"ECDHE-RSA-AES256-SHA:"
+                b"AES128-GCM-SHA256:"
+                b"AES256-GCM-SHA384:"
+                b"AES128-SHA:"
+                b"AES256-SHA"
+            )
+            
+            try:
+                ctx.set_cipher_list(extended_ciphers)
+                logger.info("Using extended DTLS cipher list (includes RSA variants)")
+            except SSL.Error:
+                # Fall back to original if extended list fails
+                ctx.set_cipher_list(
+                    b"ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:"
+                    b"ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA"
+                )
+                logger.warning("Extended cipher list failed, using original aiortc ciphers")
+            
+            ctx.set_tlsext_use_srtp(b":".join(x.openssl_profile for x in srtp_profiles))
+            return ctx
+        
+        # Apply patch
+        rtcdtlstransport.RTCCertificate._create_ssl_context = patched_create_ssl_context
+        logger.info("Successfully patched aiortc to use extended DTLS cipher list")
+        return True
+        
+    except Exception as e:
+        logger.warning("Failed to patch aiortc cipher list: %s", e)
+        return False
+
+
+def patch_aiortc_rsa_certificate() -> bool:
+    """
+    Patch aiortc to generate RSA certificates instead of ECDSA.
+    
+    aiortc by default generates ECDSA certificates (SECP256R1), but some servers
+    may only accept RSA certificates for DTLS handshake.
+    
+    Returns True if patching was successful.
+    """
+    try:
+        from aiortc import rtcdtlstransport
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        import datetime
+        import binascii
+        
+        def generate_rsa_certificate(key):
+            """Generate certificate for RSA key."""
+            name = x509.Name([
+                x509.NameAttribute(
+                    x509.NameOID.COMMON_NAME,
+                    binascii.hexlify(os.urandom(16)).decode("ascii"),
+                )
+            ])
+            now = datetime.datetime.now(tz=datetime.timezone.utc)
+            builder = (
+                x509.CertificateBuilder()
+                .subject_name(name)
+                .issuer_name(name)
+                .public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=30))
+            )
+            return builder.sign(key, hashes.SHA256(), default_backend())
+        
+        # Store original method
+        original_generate = rtcdtlstransport.RTCCertificate.generateCertificate
+        
+        @classmethod
+        def patched_generate_certificate(cls):
+            """Generate RSA certificate instead of ECDSA."""
+            # Generate 2048-bit RSA key
+            key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048,
+                backend=default_backend()
+            )
+            cert = generate_rsa_certificate(key)
+            logger.info("Generated RSA certificate for DTLS (instead of ECDSA)")
+            return cls(key=key, cert=cert)
+        
+        # Apply patch
+        rtcdtlstransport.RTCCertificate.generateCertificate = patched_generate_certificate
+        logger.info("Successfully patched aiortc to use RSA certificates")
+        return True
+        
+    except Exception as e:
+        logger.warning("Failed to patch aiortc for RSA certificates: %s", e)
+        return False
+
+
+# Optionally patch aiortc cipher list if RING_EXTENDED_CIPHERS=1
+if os.environ.get("RING_EXTENDED_CIPHERS", "").lower() in ("1", "true", "yes"):
+    patch_aiortc_cipher_list()
+
+# Optionally use RSA certificates if RING_RSA_CERT=1
+if os.environ.get("RING_RSA_CERT", "").lower() in ("1", "true", "yes"):
+    patch_aiortc_rsa_certificate()
+
 
 class OpenRingRecorderDependencyError(RuntimeError):
     """Raised when aiortc dependencies are missing."""
@@ -242,9 +479,35 @@ class OpenRingAiortcRecorder:
         local_description = self._peer_connection.localDescription
         offer_sdp = local_description.sdp if local_description else offer.sdp
         
-        # Note: We keep setup:actpass in our offer (standard WebRTC behavior)
-        # Ring responds with setup:active but never sends ClientHello (Ring bug)
-        # We fix this by patching Ring's answer later (see DTLS FIX below)
+        # DTLS Role Strategy:
+        # Ring has a bug where they respond with setup:active (claiming DTLS client)
+        # but never actually send ClientHello.
+        # 
+        # Strategy 1 (current): Patch Ring's answer to setup:passive → we become client
+        # Strategy 2 (alternative): Force setup:passive in our offer → Ring must be client
+        # 
+        # We can test both strategies via RING_DTLS_STRATEGY env var:
+        # - "patch_answer" (default): Patch Ring's answer to passive, we initiate DTLS
+        # - "force_passive_offer": Set passive in offer, Ring should initiate DTLS
+        dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "patch_answer")
+        
+        if dtls_strategy == "force_passive_offer":
+            # Strategy 2: Force setup:passive in our offer
+            # This explicitly tells Ring we WILL be server, they MUST be client
+            if "a=setup:actpass" in offer_sdp:
+                offer_sdp = offer_sdp.replace("a=setup:actpass", "a=setup:passive")
+                logger.info(
+                    "DTLS Strategy: force_passive_offer - Set setup:passive in offer, "
+                    "Ring must be client and send ClientHello. device_id=%s",
+                    self._device_id
+                )
+        else:
+            # Strategy 1 (default): Keep actpass in offer, patch Ring's answer later
+            logger.info(
+                "DTLS Strategy: patch_answer - Keep actpass in offer, "
+                "will patch Ring's answer to passive. device_id=%s",
+                self._device_id
+            )
 
         logger.debug("Starting live view session for device_id=%s", self._device_id)
         response = await self._service.start_live_view(
@@ -295,12 +558,34 @@ class OpenRingAiortcRecorder:
         # is the DTLS server. This makes aiortc become the DTLS client and send the
         # ClientHello ourselves, which Ring will accept.
         patched_answer_sdp = response.answer_sdp
-        if "a=setup:active" in patched_answer_sdp:
+        
+        # Only apply patch_answer strategy if not using force_passive_offer
+        dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "patch_answer")
+        
+        if dtls_strategy == "patch_answer" and "a=setup:active" in patched_answer_sdp:
+            # Count occurrences before patching
+            active_count = patched_answer_sdp.count("a=setup:active")
             patched_answer_sdp = patched_answer_sdp.replace("a=setup:active", "a=setup:passive")
+            passive_count = patched_answer_sdp.count("a=setup:passive")
+            
             logger.info(
-                "DTLS FIX: Patched Ring's SDP answer - changed setup:active to setup:passive. "
+                "DTLS FIX: Patched Ring's SDP answer - changed %d 'setup:active' to 'setup:passive'. "
                 "Ring claims DTLS client role but never sends ClientHello. "
-                "We will initiate DTLS handshake instead. device_id=%s",
+                "We will initiate DTLS handshake instead. device_id=%s patched_passive_count=%d",
+                active_count, self._device_id, passive_count
+            )
+            
+            # Verify the patch worked
+            if "a=setup:active" in patched_answer_sdp:
+                logger.warning(
+                    "SDP patch incomplete - still contains 'setup:active' after patching! "
+                    "device_id=%s",
+                    self._device_id
+                )
+        elif dtls_strategy == "force_passive_offer":
+            logger.info(
+                "DTLS FIX: Using force_passive_offer strategy, not patching Ring's answer. "
+                "Ring should send ClientHello since we declared passive in offer. device_id=%s",
                 self._device_id
             )
         
@@ -350,17 +635,21 @@ class OpenRingAiortcRecorder:
             for i, tr in enumerate(transceivers):
                 receiver = getattr(tr, 'receiver', None)
                 if receiver:
-                    transport = getattr(receiver, 'transport', None)
-                    if transport:
-                        dtls = getattr(transport, 'transport', None)
-                        if dtls:
-                            dtls_state = getattr(dtls, 'state', 'unknown')
-                            logger.info(
-                                "Transceiver %d DTLS state: device_id=%s state=%s",
-                                i, self._device_id, dtls_state
-                            )
+                    # receiver.transport is RTCDtlsTransport
+                    dtls_transport = getattr(receiver, 'transport', None)
+                    if dtls_transport:
+                        # Get actual DTLS state (not ICE state)
+                        dtls_state = getattr(dtls_transport, 'state', 'unknown')
+                        dtls_role = getattr(dtls_transport, '_role', 'unknown')
+                        # Also get ICE transport state for comparison
+                        ice_transport = getattr(dtls_transport, 'transport', None)
+                        ice_state = getattr(ice_transport, 'state', 'unknown') if ice_transport else 'unknown'
+                        logger.info(
+                            "Transceiver %d transport state: device_id=%s dtls_state=%s dtls_role=%s ice_state=%s",
+                            i, self._device_id, dtls_state, dtls_role, ice_state
+                        )
         except Exception as e:
-            logger.debug("Could not get transceiver DTLS state: %s", e)
+            logger.debug("Could not get transceiver state: %s", e)
         
         # Wait for WebRTC connection to be fully established (ICE + DTLS)
         logger.info(
@@ -370,7 +659,7 @@ class OpenRingAiortcRecorder:
         try:
             await asyncio.wait_for(self._connection_ready.wait(), timeout=self._connection_timeout)
             
-            # ICE completed, now wait a bit and poll for DTLS/connection state
+            # ICE completed, now check and possibly force-start DTLS
             conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
             ice_state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
             logger.info(
@@ -378,12 +667,79 @@ class OpenRingAiortcRecorder:
                 self._device_id, self._session_id, conn_state, ice_state
             )
             
+            # Check if DTLS needs to be explicitly started
+            # aiortc's background __connect() should handle this, but verify it happened
+            try:
+                transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
+                for i, tr in enumerate(transceivers):
+                    receiver = getattr(tr, 'receiver', None)
+                    if receiver:
+                        dtls_transport = getattr(receiver, 'transport', None)
+                        if dtls_transport:
+                            dtls_state = getattr(dtls_transport, 'state', 'unknown')
+                            dtls_role = getattr(dtls_transport, '_role', 'unknown')
+                            logger.info(
+                                "Pre-poll DTLS check: device_id=%s transceiver=%d dtls_state=%s dtls_role=%s",
+                                self._device_id, i, dtls_state, dtls_role
+                            )
+                            # If DTLS is still "new" after ICE completed, something is wrong
+                            if dtls_state == "new":
+                                logger.warning(
+                                    "DTLS transport still in 'new' state after ICE completed! "
+                                    "This suggests the background connection process didn't start DTLS. "
+                                    "device_id=%s transceiver=%d",
+                                    self._device_id, i
+                                )
+            except Exception as e:
+                logger.debug("Pre-poll DTLS check error: %s", e)
+            
             # Poll for connection state to become "connected" (DTLS complete)
             dtls_timeout = 15.0
-            poll_interval = 0.5
+            poll_interval = 1.0
             dtls_deadline = asyncio.get_event_loop().time() + dtls_timeout
+            poll_count = 0
             while asyncio.get_event_loop().time() < dtls_deadline:
                 conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
+                poll_count += 1
+                
+                # Get detailed DTLS diagnostics every poll
+                try:
+                    transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
+                    for i, tr in enumerate(transceivers[:1]):  # Just check first transceiver
+                        receiver = getattr(tr, 'receiver', None)
+                        if receiver:
+                            dtls_transport = getattr(receiver, 'transport', None)
+                            if dtls_transport:
+                                # Get basic info
+                                dtls_state = getattr(dtls_transport, 'state', 'unknown')
+                                dtls_role = getattr(dtls_transport, '_role', 'unknown')
+                                encrypted = getattr(dtls_transport, 'encrypted', False)
+                                ice_transport = getattr(dtls_transport, 'transport', None)
+                                ice_state = getattr(ice_transport, 'state', 'unknown') if ice_transport else 'unknown'
+                                
+                                # Get detailed cipher diagnostics
+                                diag = get_dtls_transport_diagnostics(dtls_transport)
+                                cipher = diag.get('negotiated_cipher', 'unknown')
+                                srtp = diag.get('srtp_profile', 'unknown')
+                                
+                                logger.info(
+                                    "DTLS poll %d: device_id=%s conn=%s dtls=%s role=%s "
+                                    "encrypted=%s ice=%s cipher=%s srtp=%s",
+                                    poll_count, self._device_id, conn_state, dtls_state, 
+                                    dtls_role, encrypted, ice_state, cipher, srtp
+                                )
+                                
+                                # On first poll, also log available ciphers
+                                if poll_count == 1:
+                                    available = diag.get('available_ciphers', [])
+                                    if available:
+                                        logger.info(
+                                            "DTLS available ciphers (first 5): device_id=%s ciphers=%s",
+                                            self._device_id, available
+                                        )
+                except Exception as e:
+                    logger.debug("DTLS poll error: %s", e)
+                
                 if conn_state == "connected":
                     logger.info(
                         "DTLS handshake completed: device_id=%s session_id=%s connection_state=%s",

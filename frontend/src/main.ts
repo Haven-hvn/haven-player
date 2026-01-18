@@ -226,6 +226,11 @@ async function tryStartBackend(): Promise<void> {
       ARKIV_RPC_URL: arkivRpcUrl,
       ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
       ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
+      // Ring DTLS debugging - use RSA certs and extended ciphers for compatibility
+      RING_DTLS_STRATEGY: 'no_patch',
+      RING_EXTENDED_CIPHERS: '1',
+      RING_RSA_CERT: '1',
+      RING_DTLS_DEBUG: '1',
     };
 
     console.log('🚀 Auto-starting backend with configured environment variables...');
@@ -755,6 +760,11 @@ ipcMain.handle('start-backend', async () => {
     ARKIV_RPC_URL: arkivRpcUrl,
     ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
     ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
+    // Ring DTLS debugging - use RSA certs and extended ciphers for compatibility
+    RING_DTLS_STRATEGY: 'no_patch',
+    RING_EXTENDED_CIPHERS: '1',
+    RING_RSA_CERT: '1',
+    RING_DTLS_DEBUG: '1',
   };
 
   const { pythonPath, venvPath } = findPythonExecutable(backendDir);
@@ -859,6 +869,11 @@ ipcMain.handle('restart-backend', async () => {
     ARKIV_RPC_URL: arkivRpcUrl,
     ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
     ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
+    // Ring DTLS debugging - use RSA certs and extended ciphers for compatibility
+    RING_DTLS_STRATEGY: 'no_patch',
+    RING_EXTENDED_CIPHERS: '1',
+    RING_RSA_CERT: '1',
+    RING_DTLS_DEBUG: '1',
   };
 
   const { pythonPath, venvPath } = findPythonExecutable(backendDir);

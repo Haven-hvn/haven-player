@@ -71,6 +71,12 @@ class PeerConnectionProtocol(Protocol):
     @property
     def iceGatheringState(self) -> str: ...
 
+    @property
+    def connectionState(self) -> str: ...
+
+    @property
+    def iceConnectionState(self) -> str: ...
+
     def close(self) -> Awaitable[None] | None: ...
 
 
@@ -85,6 +91,51 @@ SegmentCallback = Callable[[Path], Awaitable[None] | None]
 class RecorderSegment:
     path: Path
     started_at: datetime
+
+
+class DiagnosticTrackWrapper:
+    """Wrapper that logs frame reception for debugging."""
+    
+    def __init__(
+        self,
+        track: MediaStreamTrackProtocol,
+        device_id: int,
+        session_id: str,
+    ):
+        self._track = track
+        self._device_id = device_id
+        self._session_id = session_id
+        self._frame_count = 0
+        self._first_frame_logged = False
+    
+    @property
+    def kind(self) -> str:
+        return self._track.kind
+    
+    @property
+    def readyState(self) -> str:
+        return getattr(self._track, 'readyState', 'unknown')
+    
+    @property
+    def id(self) -> str:
+        return getattr(self._track, 'id', 'unknown')
+    
+    async def recv(self) -> object:
+        """Receive a frame and log it for debugging."""
+        frame = await self._track.recv()  # type: ignore[attr-defined]
+        self._frame_count += 1
+        if not self._first_frame_logged:
+            self._first_frame_logged = True
+            logger.info(
+                "First frame received: device_id=%s session_id=%s track_kind=%s frame_type=%s",
+                self._device_id, self._session_id, self.kind, type(frame).__name__
+            )
+        elif self._frame_count % 100 == 0:
+            logger.debug(
+                "Frame progress: device_id=%s session_id=%s track_kind=%s frame_count=%s",
+                self._device_id, self._session_id, self.kind, self._frame_count
+            )
+        return frame
 
 
 class OpenRingAiortcRecorder:
@@ -130,9 +181,11 @@ class OpenRingAiortcRecorder:
         self._segment_task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._track_ready = asyncio.Event()
+        self._connection_ready = asyncio.Event()
         self._remote_tracks: list[MediaStreamTrackProtocol] = []
         self._segment_index = 0
         self._running = False
+        self._connection_timeout = 30.0
 
     @property
     def is_running(self) -> bool:
@@ -153,6 +206,8 @@ class OpenRingAiortcRecorder:
         self._media_relay = self._media_relay_factory()
         self._peer_connection = self._peer_connection_factory()
         self._peer_connection.on("track")(self._handle_track)
+        self._peer_connection.on("connectionstatechange")(self._handle_connection_state_change)
+        self._peer_connection.on("iceconnectionstatechange")(self._handle_ice_connection_state_change)
         self._peer_connection.addTransceiver("audio", direction="recvonly")
         self._peer_connection.addTransceiver("video", direction="recvonly")
 
@@ -170,6 +225,29 @@ class OpenRingAiortcRecorder:
         )
         remote_description = self._session_description_factory(response.answer_sdp, "answer")
         await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
+        
+        # Wait for WebRTC connection to be fully established (ICE + DTLS)
+        logger.info(
+            "Waiting for WebRTC connection: device_id=%s session_id=%s timeout=%s",
+            self._device_id, self._session_id, self._connection_timeout
+        )
+        try:
+            await asyncio.wait_for(self._connection_ready.wait(), timeout=self._connection_timeout)
+            logger.info(
+                "WebRTC connection established: device_id=%s session_id=%s connection_state=%s ice_state=%s",
+                self._device_id, self._session_id,
+                getattr(self._peer_connection, 'connectionState', 'unknown'),
+                getattr(self._peer_connection, 'iceConnectionState', 'unknown'),
+            )
+        except asyncio.TimeoutError:
+            conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
+            ice_state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
+            logger.warning(
+                "WebRTC connection timeout: device_id=%s session_id=%s connection_state=%s ice_state=%s",
+                self._device_id, self._session_id, conn_state, ice_state
+            )
+            # Continue anyway - sometimes media flows even if state isn't "connected"
+        
         await self._service.activate_camera(self._session_id)
         logger.info("Live view session established for device_id=%s session_id=%s", self._device_id, self._session_id)
 
@@ -191,10 +269,41 @@ class OpenRingAiortcRecorder:
         logger.info("OpenRing recorder stopped: device_id=%s", self._device_id)
 
     def _handle_track(self, track: MediaStreamTrackProtocol) -> None:
-        logger.info("Received remote track: device_id=%s session_id=%s track_kind=%s total_tracks=%s",
-                   self._device_id, self._session_id, track.kind, len(self._remote_tracks) + 1)
+        # Log track state details for debugging
+        track_state = getattr(track, 'readyState', 'unknown')
+        track_id = getattr(track, 'id', 'unknown')
+        logger.info(
+            "Received remote track: device_id=%s session_id=%s track_kind=%s track_id=%s "
+            "track_state=%s total_tracks=%s",
+            self._device_id, self._session_id, track.kind, track_id,
+            track_state, len(self._remote_tracks) + 1
+        )
         self._remote_tracks.append(track)
         self._track_ready.set()
+
+    def _handle_connection_state_change(self, *args: object) -> None:
+        state = getattr(self._peer_connection, 'connectionState', 'unknown')
+        logger.info(
+            "WebRTC connection state changed: device_id=%s session_id=%s state=%s",
+            self._device_id, self._session_id, state
+        )
+        if state == "connected":
+            self._connection_ready.set()
+        elif state in ("failed", "closed", "disconnected"):
+            logger.warning(
+                "WebRTC connection lost: device_id=%s session_id=%s state=%s",
+                self._device_id, self._session_id, state
+            )
+
+    def _handle_ice_connection_state_change(self, *args: object) -> None:
+        state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
+        logger.info(
+            "ICE connection state changed: device_id=%s session_id=%s state=%s",
+            self._device_id, self._session_id, state
+        )
+        # Also trigger connection ready on ICE connected (backup for connectionState)
+        if state == "connected" or state == "completed":
+            self._connection_ready.set()
 
     async def _segment_loop(self) -> None:
         logger.info("Segment loop starting: device_id=%s session_id=%s waiting_for_tracks timeout=%s",
@@ -207,6 +316,19 @@ class OpenRingAiortcRecorder:
             logger.warning("Timed out waiting for remote tracks: device_id=%s session_id=%s timeout=%s",
                           self._device_id, self._session_id, self._track_wait_timeout)
             return
+        
+        # Log track details for debugging
+        for track in self._remote_tracks:
+            track_state = getattr(track, 'readyState', 'unknown')
+            track_id = getattr(track, 'id', 'unknown')
+            track_enabled = getattr(track, 'enabled', 'unknown')
+            logger.info(
+                "Track details: device_id=%s track_kind=%s track_id=%s state=%s enabled=%s",
+                self._device_id, track.kind, track_id, track_state, track_enabled
+            )
+        
+        # Probe for frames before starting recording
+        await self._probe_for_frames()
 
         while not self._stop_event.is_set():
             segment = self._next_segment()
@@ -216,22 +338,42 @@ class OpenRingAiortcRecorder:
             # Use MediaRelay to subscribe to tracks for each segment
             # This allows multiple segments to receive frames from the same source tracks
             for track in list(self._remote_tracks):
+                track_state = getattr(track, 'readyState', 'unknown')
+                logger.debug(
+                    "Adding track to segment: device_id=%s track_kind=%s track_state=%s segment_index=%s",
+                    self._device_id, track.kind, track_state, self._segment_index - 1
+                )
                 if self._media_relay:
                     relayed_track = self._media_relay.subscribe(track, buffered=False)
                     recorder.addTrack(relayed_track)
                 else:
                     recorder.addTrack(track)
 
-            logger.debug("Starting segment recording: device_id=%s segment_path=%s track_count=%s",
-                        self._device_id, segment.path, len(self._remote_tracks))
+            logger.info(
+                "Starting segment recording: device_id=%s segment_path=%s track_count=%s "
+                "connection_state=%s ice_state=%s",
+                self._device_id, segment.path, len(self._remote_tracks),
+                getattr(self._peer_connection, 'connectionState', 'unknown') if self._peer_connection else 'none',
+                getattr(self._peer_connection, 'iceConnectionState', 'unknown') if self._peer_connection else 'none',
+            )
             try:
                 await _maybe_await(recorder.start())
-                logger.debug("Segment recording started: device_id=%s segment_path=%s duration=%s",
-                            self._device_id, segment.path, self._segment_duration)
+                logger.info(
+                    "Segment recording started, waiting for frames: device_id=%s segment_path=%s duration=%s",
+                    self._device_id, segment.path, self._segment_duration
+                )
                 try:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=self._segment_duration)
                 except asyncio.TimeoutError:
                     pass
+                
+                # Log connection state before stopping
+                logger.info(
+                    "Stopping segment recording: device_id=%s connection_state=%s ice_state=%s",
+                    self._device_id,
+                    getattr(self._peer_connection, 'connectionState', 'unknown') if self._peer_connection else 'none',
+                    getattr(self._peer_connection, 'iceConnectionState', 'unknown') if self._peer_connection else 'none',
+                )
                 await _maybe_await(recorder.stop())
                 file_exists = segment.path.exists()
                 file_size = segment.path.stat().st_size if file_exists else None
@@ -244,6 +386,15 @@ class OpenRingAiortcRecorder:
                     file_exists,
                     file_size,
                 )
+                
+                # If file doesn't exist or is empty, log diagnostic info
+                if not file_exists or (file_size is not None and file_size == 0):
+                    logger.error(
+                        "RECORDING FAILED - No media data received: device_id=%s path=%s. "
+                        "This usually means the WebRTC connection is not receiving media from Ring. "
+                        "Check firewall settings and ensure UDP traffic is allowed.",
+                        self._device_id, segment.path
+                    )
 
                 if self._on_segment_complete:
                     logger.debug("Invoking segment complete callback: device_id=%s segment_path=%s",
@@ -254,6 +405,73 @@ class OpenRingAiortcRecorder:
             except Exception as exc:
                 logger.error("Error recording segment: device_id=%s segment_path=%s error=%s",
                             self._device_id, segment.path, exc, exc_info=True)
+
+    async def _probe_for_frames(self, timeout: float = 10.0) -> bool:
+        """
+        Probe tracks to verify frames are being received.
+        Uses MediaRelay subscriptions so we don't consume the actual track frames.
+        """
+        if not self._remote_tracks or not self._media_relay:
+            logger.warning(
+                "Cannot probe for frames: device_id=%s tracks=%s relay=%s",
+                self._device_id, len(self._remote_tracks), self._media_relay is not None
+            )
+            return False
+        
+        logger.info(
+            "Probing for frames: device_id=%s session_id=%s timeout=%s",
+            self._device_id, self._session_id, timeout
+        )
+        
+        # Try to receive a frame from the video track
+        video_tracks = [t for t in self._remote_tracks if t.kind == "video"]
+        if not video_tracks:
+            logger.warning("No video track found for probing: device_id=%s", self._device_id)
+            return False
+        
+        video_track = video_tracks[0]
+        probe_track = self._media_relay.subscribe(video_track, buffered=False)
+        
+        try:
+            # Try to receive a single frame
+            recv_method = getattr(probe_track, 'recv', None)
+            if not recv_method:
+                logger.warning(
+                    "Probe track has no recv method: device_id=%s track_type=%s",
+                    self._device_id, type(probe_track).__name__
+                )
+                return False
+            
+            frame = await asyncio.wait_for(recv_method(), timeout=timeout)
+            frame_type = type(frame).__name__
+            frame_info = ""
+            if hasattr(frame, 'width') and hasattr(frame, 'height'):
+                frame_info = f" size={frame.width}x{frame.height}"
+            if hasattr(frame, 'pts'):
+                frame_info += f" pts={frame.pts}"
+            
+            logger.info(
+                "Frame probe SUCCESS: device_id=%s session_id=%s frame_type=%s%s",
+                self._device_id, self._session_id, frame_type, frame_info
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.error(
+                "Frame probe FAILED - No frames received within %ss: device_id=%s session_id=%s. "
+                "WebRTC connection is not receiving media. Possible causes: "
+                "1) Ring session expired or invalid, "
+                "2) Firewall blocking UDP traffic, "
+                "3) NAT traversal failed, "
+                "4) Ring server not sending media",
+                timeout, self._device_id, self._session_id
+            )
+            return False
+        except Exception as exc:
+            logger.error(
+                "Frame probe ERROR: device_id=%s session_id=%s error=%s",
+                self._device_id, self._session_id, exc, exc_info=True
+            )
+            return False
 
     def _next_segment(self) -> RecorderSegment:
         timestamp = datetime.fromtimestamp(self._time_provider(), tz=timezone.utc)

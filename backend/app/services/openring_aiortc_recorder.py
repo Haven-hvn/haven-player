@@ -316,6 +316,18 @@ class OpenRingAiortcRecorder:
         except Exception as e:
             logger.debug("Could not get transceiver DTLS state: %s", e)
         
+        # IMPORTANT: Activate the camera IMMEDIATELY after setting remote description
+        # Ring needs this before it will start the DTLS handshake and send media
+        logger.info("Activating camera immediately after SDP exchange: device_id=%s", self._device_id)
+        try:
+            await self._service.activate_camera(self._session_id)
+            logger.info("Camera activated successfully: device_id=%s", self._device_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to activate camera (will retry later): device_id=%s error=%s",
+                self._device_id, e
+            )
+        
         # Wait for WebRTC connection to be fully established (ICE + DTLS)
         logger.info(
             "Waiting for WebRTC connection: device_id=%s session_id=%s timeout=%s",
@@ -374,7 +386,6 @@ class OpenRingAiortcRecorder:
             )
             # Continue anyway - sometimes media flows even if state isn't "connected"
         
-        await self._service.activate_camera(self._session_id)
         logger.info("Live view session established for device_id=%s session_id=%s", self._device_id, self._session_id)
 
         self._segment_task = asyncio.create_task(self._segment_loop())

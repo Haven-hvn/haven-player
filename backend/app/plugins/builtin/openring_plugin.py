@@ -196,33 +196,20 @@ class OpenRingPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMi
         )
         
         if not first_segment_path:
-            # Recording started but no segment completed - still return success
-            # since recording is active and will produce segments
-            logger.warning("First segment not completed within timeout, but recording is active: device_id=%s", device_id)
+            logger.warning("First segment not available within timeout: device_id=%s", device_id)
             return ArchiveResult(
-                success=True,
-                metadata={
-                    "device_id": device_id,
-                    "device_name": source.metadata.get("device_name"),
-                    "segment_duration": segment_duration,
-                    "note": "Recording started but first segment not yet complete",
-                },
+                success=False,
+                error="First segment not available within timeout",
             )
 
-        # Verify file exists
-        if not first_segment_path.exists():
-            logger.warning("Segment file does not exist yet: path=%s", first_segment_path)
+        try:
+            file_size = first_segment_path.stat().st_size
+        except Exception as exc:
+            logger.error("Failed to stat segment file: path=%s error=%s", first_segment_path, exc)
             return ArchiveResult(
-                success=True,
-                metadata={
-                    "device_id": device_id,
-                    "device_name": source.metadata.get("device_name"),
-                    "segment_duration": segment_duration,
-                    "note": "Segment path created but file not yet written",
-                },
+                success=False,
+                error="Segment file not accessible",
             )
-
-        file_size = first_segment_path.stat().st_size if first_segment_path.exists() else None
         
         return ArchiveResult(
             success=True,

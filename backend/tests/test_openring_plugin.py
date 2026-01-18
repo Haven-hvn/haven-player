@@ -54,10 +54,11 @@ class FakeManager:
     def __init__(self):
         self.start_calls: list[tuple[int, str]] = []
         self.stop_calls: list[int] = []
-        self.status = {"recording": True}
+        self.status = {"recording": False}
         self.start_result = True
         self.stop_result = True
         self.manage_result = {"status": "ok", "active": 1, "started": 1, "stopped": 0, "errors": 0}
+        self.first_segment_path: Path | None = None
 
     async def start_recording(self, device_id, device_name, service, segment_duration, output_dir):
         self.start_calls.append((device_id, device_name))
@@ -72,6 +73,9 @@ class FakeManager:
 
     async def manage_subscriptions(self, **kwargs):
         return self.manage_result
+
+    async def wait_for_first_segment(self, device_id: int, timeout: float = 60.0) -> Path | None:
+        return self.first_segment_path
 
 
 class FakeService:
@@ -314,9 +318,31 @@ async def test_archive_start_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_archive_success() -> None:
+async def test_archive_already_recording() -> None:
     plugin = _create_plugin()
     manager = FakeManager()
+    manager.status = {"recording": True, "device_name": "Front", "session_id": "session-1"}
+    plugin._recording_manager = manager
+    source = MediaSource(
+        source_id="1",
+        media_type=MediaType.WEBRTC,
+        uri="webrtc://ring/1",
+        metadata={"device_name": "Front", "device_id": "1"},
+    )
+
+    result = await plugin.archive(source)
+
+    assert result.success is True
+    assert result.metadata["already_recording"] is True
+
+
+@pytest.mark.asyncio
+async def test_archive_success(tmp_path: Path) -> None:
+    plugin = _create_plugin()
+    manager = FakeManager()
+    segment_path = tmp_path / "ring_1_segment.mp4"
+    segment_path.write_bytes(b"data")
+    manager.first_segment_path = segment_path
     plugin._recording_manager = manager
     source = MediaSource(
         source_id="1",
@@ -326,9 +352,10 @@ async def test_archive_success() -> None:
     )
 
     with patch.object(plugin, "_get_authenticated_service", return_value=FakeService()):
-        with patch.object(plugin, "_get_download_directory", return_value=Path("downloads")):
+        with patch.object(plugin, "_get_download_directory", return_value=tmp_path):
             result = await plugin.archive(source)
     assert result.success is True
+    assert result.output_path == str(segment_path)
 
 
 @pytest.mark.asyncio

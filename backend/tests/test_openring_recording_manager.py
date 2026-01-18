@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 import pytest
 
 from app.services.openring_recording_manager import (
     OpenRingRecordingManager,
+    OpenRingRecordingSession,
     OpenRingSubscription,
     online_device_ids,
 )
@@ -25,6 +27,7 @@ class FakeRecorder:
         self.output_dir = output_dir
         self.started = False
         self.stopped = False
+        self._on_segment_complete = on_segment_complete
 
     async def start(self) -> None:
         self.started = True
@@ -195,6 +198,77 @@ async def test_handle_segment_complete_enqueues(tmp_path: Path) -> None:
     await manager._handle_segment_complete(tmp_path / "segment.mp4")
 
     assert manager.upload_coordinator.calls == [(str(tmp_path / "segment.mp4"), "OpenRingPlugin")]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_first_segment_existing_file(tmp_path: Path) -> None:
+    manager = OpenRingRecordingManager()
+    manager.active_recordings = {}
+    recorder = FakeRecorder(None, 1, "session", tmp_path, 30, None)
+    session = OpenRingRecordingSession(
+        device_id=1,
+        device_name="Front",
+        session_id="session",
+        output_dir=tmp_path,
+        recorder=recorder,
+        started_at=datetime.now(timezone.utc),
+    )
+    manager.active_recordings[1] = session
+    segment_path = tmp_path / "ring_1_segment.mp4"
+    segment_path.write_bytes(b"data")
+
+    result = await manager.wait_for_first_segment(1, timeout=0.1)
+
+    assert result == segment_path
+
+
+@pytest.mark.asyncio
+async def test_wait_for_first_segment_waits_for_callback(tmp_path: Path) -> None:
+    manager = OpenRingRecordingManager()
+    manager.active_recordings = {}
+    recorder = FakeRecorder(None, 2, "session2", tmp_path, 30, None)
+    session = OpenRingRecordingSession(
+        device_id=2,
+        device_name="Back",
+        session_id="session2",
+        output_dir=tmp_path,
+        recorder=recorder,
+        started_at=datetime.now(timezone.utc),
+    )
+    manager.active_recordings[2] = session
+    segment_path = tmp_path / "ring_2_segment.mp4"
+
+    async def trigger() -> None:
+        await asyncio.sleep(0.01)
+        segment_path.write_bytes(b"data")
+        if recorder._on_segment_complete:
+            await recorder._on_segment_complete(segment_path)
+
+    task = asyncio.create_task(trigger())
+    result = await manager.wait_for_first_segment(2, timeout=1.0)
+    await task
+
+    assert result == segment_path
+
+
+@pytest.mark.asyncio
+async def test_wait_for_first_segment_timeout(tmp_path: Path) -> None:
+    manager = OpenRingRecordingManager()
+    manager.active_recordings = {}
+    recorder = FakeRecorder(None, 3, "session3", tmp_path, 30, None)
+    session = OpenRingRecordingSession(
+        device_id=3,
+        device_name="Side",
+        session_id="session3",
+        output_dir=tmp_path,
+        recorder=recorder,
+        started_at=datetime.now(timezone.utc),
+    )
+    manager.active_recordings[3] = session
+
+    result = await manager.wait_for_first_segment(3, timeout=0.05)
+
+    assert result is None
 
 
 @pytest.mark.asyncio

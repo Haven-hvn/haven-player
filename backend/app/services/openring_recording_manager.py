@@ -192,6 +192,16 @@ class OpenRingRecordingManager:
             logger.info("Waiting for first segment: device_id=%s timeout=%s", device_id, timeout)
             await asyncio.wait_for(segment_event.wait(), timeout=timeout)
             logger.info("First segment completed: device_id=%s path=%s", device_id, segment_path)
+            if not segment_path:
+                return None
+            file_ready = await self._wait_for_segment_file(segment_path, timeout=10.0)
+            if not file_ready:
+                logger.warning(
+                    "Segment file not found after completion: device_id=%s path=%s",
+                    device_id,
+                    segment_path,
+                )
+                return None
             return segment_path
         except asyncio.TimeoutError:
             logger.warning("Timeout waiting for first segment: device_id=%s timeout=%s", device_id, timeout)
@@ -199,6 +209,22 @@ class OpenRingRecordingManager:
         finally:
             # Restore original callback
             session.recorder._on_segment_complete = original_callback
+
+    async def _wait_for_segment_file(
+        self,
+        segment_path: Path,
+        timeout: float = 5.0,
+        poll_interval: float = 0.5,
+    ) -> bool:
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                if segment_path.exists() and segment_path.stat().st_size > 0:
+                    return True
+            except Exception as exc:
+                logger.debug("Error checking segment file: path=%s error=%s", segment_path, exc)
+            await asyncio.sleep(poll_interval)
+        return False
 
     async def start_recording(
         self,

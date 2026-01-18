@@ -105,11 +105,99 @@ def get_dtls_transport_diagnostics(dtls_transport: object) -> dict[str, object]:
                     diagnostics["peer_cert_issuer"] = str(peer_cert.get_issuer())
             except Exception:
                 pass
+            
+            try:
+                # Get DTLS-specific info
+                timeout = ssl_conn.DTLSv1_get_timeout()
+                diagnostics["dtls_timeout"] = timeout
+            except Exception:
+                pass
+            
+            try:
+                # Check if there's pending data
+                diagnostics["want_read"] = ssl_conn.want_read()
+                diagnostics["want_write"] = ssl_conn.want_write()
+            except Exception:
+                pass
                 
     except Exception as e:
         diagnostics["error"] = str(e)
     
     return diagnostics
+
+
+def patch_aiortc_dtls_logging() -> bool:
+    """
+    Patch aiortc's DTLS transport to add detailed packet logging.
+    This helps debug DTLS handshake issues by showing what's being sent/received.
+    """
+    try:
+        from aiortc import rtcdtlstransport
+        
+        # Store original methods
+        original_write_ssl = rtcdtlstransport.RTCDtlsTransport._write_ssl
+        original_recv_next = rtcdtlstransport.RTCDtlsTransport._recv_next
+        
+        async def logged_write_ssl(self):
+            """Log outgoing DTLS data."""
+            try:
+                data = self._ssl.bio_read(1500)
+            except Exception:
+                data = b""
+            
+            if data:
+                # Identify DTLS message type from first byte of content type
+                content_type = data[0] if data else 0
+                content_types = {
+                    20: "ChangeCipherSpec",
+                    21: "Alert", 
+                    22: "Handshake",
+                    23: "ApplicationData",
+                    25: "Heartbeat"
+                }
+                msg_type = content_types.get(content_type, f"Unknown({content_type})")
+                
+                # For handshake messages, get the handshake type
+                handshake_info = ""
+                if content_type == 22 and len(data) > 13:
+                    hs_type = data[13]
+                    hs_types = {
+                        0: "HelloRequest",
+                        1: "ClientHello",
+                        2: "ServerHello", 
+                        3: "HelloVerifyRequest",
+                        11: "Certificate",
+                        12: "ServerKeyExchange",
+                        13: "CertificateRequest",
+                        14: "ServerHelloDone",
+                        15: "CertificateVerify",
+                        16: "ClientKeyExchange",
+                        20: "Finished"
+                    }
+                    handshake_info = f" [{hs_types.get(hs_type, f'Unknown({hs_type})')}]"
+                
+                logger.info(
+                    "DTLS SEND: role=%s type=%s%s len=%d",
+                    self._role, msg_type, handshake_info, len(data)
+                )
+                
+                await self.transport._send(data)
+                self._RTCDtlsTransport__tx_bytes += len(data)
+                self._RTCDtlsTransport__tx_packets += 1
+        
+        # Apply write patch
+        rtcdtlstransport.RTCDtlsTransport._write_ssl = logged_write_ssl
+        logger.info("Patched aiortc DTLS transport for detailed packet logging")
+        return True
+        
+    except Exception as e:
+        logger.warning("Failed to patch aiortc DTLS logging: %s", e)
+        return False
+
+
+# Optionally enable DTLS packet logging if RING_DTLS_DEBUG=1
+if os.environ.get("RING_DTLS_DEBUG", "").lower() in ("1", "true", "yes"):
+    patch_aiortc_dtls_logging()
 
 
 # Log cipher info at module load time
@@ -549,33 +637,39 @@ class OpenRingAiortcRecorder:
                 logger.info("  ICE server %d: urls=%s has_creds=%s", 
                            i, server.urls, bool(server.username))
         
-        # CRITICAL FIX: Patch Ring's non-compliant SDP answer
-        # Ring's server has a bug where they respond with setup:active (claiming DTLS client role)
-        # but NEVER actually send a ClientHello to initiate the DTLS handshake.
-        # This causes aiortc to wait forever for a ClientHello that never comes.
+        # DTLS ROLE HANDLING
         # 
-        # Fix: Change Ring's setup:active to setup:passive, which tells aiortc that Ring
-        # is the DTLS server. This makes aiortc become the DTLS client and send the
-        # ClientHello ourselves, which Ring will accept.
-        patched_answer_sdp = response.answer_sdp
+        # Ring's SDP says setup:active (they claim to be DTLS client), but testing shows:
+        # - When we patch to passive (making us client): Ring doesn't respond to our ClientHello
+        # - Original behavior: Ring claims active but doesn't send ClientHello either
+        #
+        # This is a complex compatibility issue. We support multiple strategies:
+        # - "patch_answer" (default): Patch Ring's answer to passive, we send ClientHello
+        # - "no_patch": Don't patch, trust Ring's SDP (we become server, wait for their ClientHello)  
+        # - "force_passive_offer": Set passive in our offer, Ring must be client
         
-        # Only apply patch_answer strategy if not using force_passive_offer
+        patched_answer_sdp = response.answer_sdp
         dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "patch_answer")
         
-        if dtls_strategy == "patch_answer" and "a=setup:active" in patched_answer_sdp:
-            # Count occurrences before patching
+        if dtls_strategy == "no_patch":
+            # Trust Ring's SDP - they say active, so we become server and wait
+            logger.info(
+                "DTLS Strategy: no_patch - Trusting Ring's SDP (setup:active). "
+                "We will be DTLS server and wait for Ring's ClientHello. device_id=%s",
+                self._device_id
+            )
+        elif dtls_strategy == "patch_answer" and "a=setup:active" in patched_answer_sdp:
+            # Patch Ring's answer to passive, making us the client
             active_count = patched_answer_sdp.count("a=setup:active")
             patched_answer_sdp = patched_answer_sdp.replace("a=setup:active", "a=setup:passive")
             passive_count = patched_answer_sdp.count("a=setup:passive")
             
             logger.info(
-                "DTLS FIX: Patched Ring's SDP answer - changed %d 'setup:active' to 'setup:passive'. "
-                "Ring claims DTLS client role but never sends ClientHello. "
-                "We will initiate DTLS handshake instead. device_id=%s patched_passive_count=%d",
+                "DTLS Strategy: patch_answer - Changed %d 'setup:active' to 'setup:passive'. "
+                "We will be DTLS client and send ClientHello. device_id=%s patched_passive_count=%d",
                 active_count, self._device_id, passive_count
             )
             
-            # Verify the patch worked
             if "a=setup:active" in patched_answer_sdp:
                 logger.warning(
                     "SDP patch incomplete - still contains 'setup:active' after patching! "
@@ -584,8 +678,8 @@ class OpenRingAiortcRecorder:
                 )
         elif dtls_strategy == "force_passive_offer":
             logger.info(
-                "DTLS FIX: Using force_passive_offer strategy, not patching Ring's answer. "
-                "Ring should send ClientHello since we declared passive in offer. device_id=%s",
+                "DTLS Strategy: force_passive_offer - Not patching Ring's answer. "
+                "We declared passive in offer, Ring should be client. device_id=%s",
                 self._device_id
             )
         
@@ -729,7 +823,7 @@ class OpenRingAiortcRecorder:
                                     dtls_role, encrypted, ice_state, cipher, srtp
                                 )
                                 
-                                # On first poll, also log available ciphers
+                                # On first poll, also log available ciphers and other debug info
                                 if poll_count == 1:
                                     available = diag.get('available_ciphers', [])
                                     if available:
@@ -737,6 +831,17 @@ class OpenRingAiortcRecorder:
                                             "DTLS available ciphers (first 5): device_id=%s ciphers=%s",
                                             self._device_id, available
                                         )
+                                
+                                # Log additional diagnostics periodically
+                                if poll_count % 5 == 0:
+                                    timeout = diag.get('dtls_timeout')
+                                    want_read = diag.get('want_read')
+                                    want_write = diag.get('want_write')
+                                    logger.info(
+                                        "DTLS extended diag: device_id=%s poll=%d timeout=%s "
+                                        "want_read=%s want_write=%s",
+                                        self._device_id, poll_count, timeout, want_read, want_write
+                                    )
                 except Exception as e:
                     logger.debug("DTLS poll error: %s", e)
                 

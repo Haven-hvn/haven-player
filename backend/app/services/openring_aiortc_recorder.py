@@ -27,6 +27,17 @@ if os.environ.get("AIORTC_DEBUG", "").lower() in ("1", "true", "yes"):
     logging.getLogger("aioice").setLevel(logging.DEBUG)
     logger.info("aiortc/aioice debug logging enabled")
 
+# Apply DTLS handshake fix if RING_DTLS_FIX=1 is set
+if os.environ.get("RING_DTLS_FIX", "").lower() in ("1", "true", "yes"):
+    try:
+        from .dtls_handshake_fix import apply_dtls_handshake_fix
+        if apply_dtls_handshake_fix():
+            logger.info("DTLS handshake fix applied successfully")
+        else:
+            logger.warning("Failed to apply DTLS handshake fix")
+    except Exception as e:
+        logger.warning(f"Could not apply DTLS handshake fix: {e}")
+
 
 def log_dtls_cipher_info() -> None:
     """Log available DTLS cipher suites and SRTP profiles for diagnostics."""
@@ -1080,6 +1091,25 @@ class OpenRingAiortcRecorder:
                 self._device_id, candidate_str
             )
 
+    def _set_device_id_on_dtls_transports(self):
+        """Set device ID on DTLS transports for enhanced logging."""
+        try:
+            from .dtls_handshake_fix import set_device_id
+            
+            transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
+            for i, tr in enumerate(transceivers):
+                receiver = getattr(tr, 'receiver', None)
+                if receiver:
+                    dtls_transport = getattr(receiver, 'transport', None)
+                    if dtls_transport:
+                        set_device_id(dtls_transport, self._device_id)
+                        logger.info(
+                            "Set device_id=%s on DTLS transport for transceiver %d",
+                            self._device_id, i
+                        )
+        except Exception as e:
+            logger.debug("Could not set device ID on DTLS transports: %s", e)
+
     async def _segment_loop(self) -> None:
         logger.info("Segment loop starting: device_id=%s session_id=%s waiting_for_tracks timeout=%s",
                    self._device_id, self._session_id, self._track_wait_timeout)
@@ -1087,6 +1117,9 @@ class OpenRingAiortcRecorder:
             await asyncio.wait_for(self._track_ready.wait(), timeout=self._track_wait_timeout)
             logger.info("Tracks received: device_id=%s session_id=%s track_count=%s",
                        self._device_id, self._session_id, len(self._remote_tracks))
+            
+            # Set device ID on DTLS transports for enhanced handshake logging
+            self._set_device_id_on_dtls_transports()
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for remote tracks: device_id=%s session_id=%s timeout=%s",
                           self._device_id, self._session_id, self._track_wait_timeout)

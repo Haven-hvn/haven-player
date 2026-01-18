@@ -231,6 +231,7 @@ async function tryStartBackend(): Promise<void> {
       RING_EXTENDED_CIPHERS: '1',
       RING_RSA_CERT: '1',
       RING_DTLS_DEBUG: '1',
+      RING_DTLS_FIX: '1',
     };
 
     console.log('🚀 Auto-starting backend with configured environment variables...');

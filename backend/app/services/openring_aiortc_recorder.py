@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import Awaitable, Callable, Optional, Protocol
 
-from app.services.openring_service import OpenRingService
+from app.services.openring_service import OpenRingService, IceServer
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class PeerConnectionProtocol(Protocol):
 
 
 SessionDescriptionFactory = Callable[[str, str], SessionDescriptionProtocol]
-PeerConnectionFactory = Callable[[], PeerConnectionProtocol]
+PeerConnectionFactory = Callable[[Optional[object]], PeerConnectionProtocol]
 MediaRecorderFactory = Callable[[str], MediaRecorderProtocol]
 MediaRelayFactory = Callable[[], MediaRelayProtocol]
 SegmentCallback = Callable[[Path], Awaitable[None] | None]
@@ -204,7 +204,23 @@ class OpenRingAiortcRecorder:
         )
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._media_relay = self._media_relay_factory()
-        self._peer_connection = self._peer_connection_factory()
+        
+        # Get ICE servers from Ring session before creating peer connection
+        ice_servers = await self._service.get_session_info()
+        rtc_config = _build_rtc_configuration(ice_servers)
+        if rtc_config:
+            logger.info(
+                "Creating peer connection with %d ICE servers from Ring: device_id=%s",
+                len(ice_servers), self._device_id
+            )
+            self._peer_connection = self._peer_connection_factory(rtc_config)
+        else:
+            logger.warning(
+                "Creating peer connection WITHOUT ICE servers (may fail): device_id=%s",
+                self._device_id
+            )
+            self._peer_connection = self._peer_connection_factory(None)
+        
         self._peer_connection.on("track")(self._handle_track)
         self._peer_connection.on("connectionstatechange")(self._handle_connection_state_change)
         self._peer_connection.on("iceconnectionstatechange")(self._handle_ice_connection_state_change)
@@ -223,6 +239,27 @@ class OpenRingAiortcRecorder:
             session_id=self._session_id,
             offer_sdp=offer_sdp,
         )
+        
+        # Log our local SDP fingerprint for comparison
+        local_sdp = offer_sdp
+        local_sdp_lines = local_sdp.split('\n') if local_sdp else []
+        local_fingerprints = [l.strip() for l in local_sdp_lines if 'fingerprint' in l.lower()]
+        logger.info(
+            "Local SDP fingerprints: device_id=%s fingerprints=%s",
+            self._device_id, local_fingerprints[:2]
+        )
+        
+        # If Ring provided ICE servers, log them (we'd need to restart with them for full support)
+        if response.ice_servers:
+            logger.info(
+                "Ring provided %d ICE servers - NOTE: These should be used when creating peer connection. "
+                "Current implementation may not use them properly.",
+                len(response.ice_servers)
+            )
+            for i, server in enumerate(response.ice_servers[:3]):
+                logger.info("  ICE server %d: urls=%s has_creds=%s", 
+                           i, server.urls, bool(server.username))
+        
         remote_description = self._session_description_factory(response.answer_sdp, "answer")
         await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
         
@@ -520,7 +557,13 @@ def _load_peer_connection_factory() -> PeerConnectionFactory:
         from aiortc import RTCPeerConnection
     except Exception as exc:
         raise OpenRingRecorderDependencyError("aiortc is required for OpenRing recorder") from exc
-    return RTCPeerConnection
+    
+    def create_peer_connection(config: Optional[object] = None) -> PeerConnectionProtocol:
+        if config is not None:
+            return RTCPeerConnection(configuration=config)  # type: ignore[arg-type]
+        return RTCPeerConnection()
+    
+    return create_peer_connection
 
 
 def _load_session_description_factory() -> SessionDescriptionFactory:
@@ -545,3 +588,37 @@ def _load_media_relay_factory() -> MediaRelayFactory:
     except Exception as exc:
         raise OpenRingRecorderDependencyError("aiortc is required for OpenRing recorder") from exc
     return MediaRelay
+
+
+def _build_rtc_configuration(ice_servers: list[IceServer]) -> Optional[object]:
+    """
+    Build RTCConfiguration with ICE servers for aiortc.
+    Returns None if no ICE servers or aiortc not available.
+    """
+    if not ice_servers:
+        return None
+    
+    try:
+        from aiortc import RTCConfiguration, RTCIceServer
+        
+        rtc_ice_servers = []
+        for server in ice_servers:
+            if server.username and server.credential:
+                rtc_ice_servers.append(RTCIceServer(
+                    urls=server.urls,
+                    username=server.username,
+                    credential=server.credential,
+                ))
+            else:
+                rtc_ice_servers.append(RTCIceServer(urls=server.urls))
+        
+        if rtc_ice_servers:
+            logger.info("Built RTCConfiguration with %d ICE servers", len(rtc_ice_servers))
+            return RTCConfiguration(iceServers=rtc_ice_servers)
+        return None
+    except ImportError:
+        logger.warning("RTCConfiguration not available in aiortc")
+        return None
+    except Exception as exc:
+        logger.warning("Failed to build RTCConfiguration: %s", exc)
+        return None

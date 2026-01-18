@@ -148,9 +148,32 @@ class RingDevice:
 
 
 @dataclass(frozen=True)
+class IceServer:
+    urls: list[str]
+    username: Optional[str] = None
+    credential: Optional[str] = None
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, object]) -> Optional["IceServer"]:
+        urls_raw = payload.get("urls") or payload.get("url")
+        if isinstance(urls_raw, str):
+            urls = [urls_raw]
+        elif isinstance(urls_raw, list):
+            urls = [str(u) for u in urls_raw if u]
+        else:
+            return None
+        if not urls:
+            return None
+        username = _coerce_str(payload.get("username"))
+        credential = _coerce_str(payload.get("credential"))
+        return cls(urls=urls, username=username, credential=credential)
+
+
+@dataclass(frozen=True)
 class LiveViewStartResponse:
     session_id: str
     answer_sdp: str
+    ice_servers: list[IceServer]
 
 
 class OpenRingService:
@@ -159,6 +182,7 @@ class OpenRingService:
     OAUTH_URL = "https://oauth.ring.com/oauth/token"
     CLIENTS_API = "https://api.ring.com/clients_api/"
     DEVICES_URL = CLIENTS_API + "ring_devices"
+    SESSION_URL = CLIENTS_API + "session"
     LIVE_VIEW_START = "https://api.ring.com/integrations/v1/liveview/start"
     LIVE_VIEW_END = "https://api.ring.com/integrations/v1/liveview/end"
     LIVE_VIEW_OPTIONS = "https://api.ring.com/integrations/v1/liveview/options"
@@ -262,6 +286,48 @@ class OpenRingService:
                 )
         return devices
 
+    async def get_session_info(self) -> list[IceServer]:
+        """
+        Get session info including ICE servers from Ring.
+        This should be called before creating a peer connection.
+        """
+        try:
+            response = await self._api_request("GET", self.SESSION_URL)
+            payload = _ensure_dict(response)
+            
+            logger.info(
+                "Ring session response keys: %s",
+                list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__
+            )
+            
+            ice_servers: list[IceServer] = []
+            
+            # Try various possible locations for ICE servers
+            ice_servers_raw = (
+                payload.get("ice_servers") or 
+                payload.get("iceServers") or 
+                payload.get("profile", {}).get("ice_servers") if isinstance(payload.get("profile"), dict) else None or
+                []
+            )
+            
+            if isinstance(ice_servers_raw, list):
+                for server_payload in ice_servers_raw:
+                    if isinstance(server_payload, dict):
+                        server = IceServer.from_payload(server_payload)
+                        if server:
+                            ice_servers.append(server)
+            
+            logger.info(
+                "Ring session ICE servers: count=%s urls=%s",
+                len(ice_servers),
+                [s.urls[0] if s.urls else None for s in ice_servers[:3]]
+            )
+            
+            return ice_servers
+        except Exception as exc:
+            logger.warning("Failed to get session info from Ring: %s", exc)
+            return []
+
     async def start_live_view(
         self,
         device_id: int,
@@ -276,10 +342,60 @@ class OpenRingService:
         }
         response = await self._api_request("POST", self.LIVE_VIEW_START, body=body)
         payload = _ensure_dict(response)
+        
+        # Log the full response for debugging (excluding SDP which is large)
+        payload_keys = list(payload.keys()) if isinstance(payload, dict) else []
+        logger.info(
+            "Ring live_view/start response: device_id=%s keys=%s",
+            device_id, payload_keys
+        )
+        
         answer_sdp = _coerce_str(payload.get("sdp"))
         if not answer_sdp:
             raise OpenRingApiError("Missing SDP answer from Ring", 200)
-        return LiveViewStartResponse(session_id=session_id, answer_sdp=answer_sdp)
+        
+        # Log SDP details for debugging
+        sdp_lines = answer_sdp.split('\n') if answer_sdp else []
+        fingerprint_lines = [l for l in sdp_lines if 'fingerprint' in l.lower()]
+        ice_pwd_lines = [l for l in sdp_lines if 'ice-pwd' in l.lower()]
+        ice_ufrag_lines = [l for l in sdp_lines if 'ice-ufrag' in l.lower()]
+        candidate_count = len([l for l in sdp_lines if l.startswith('a=candidate')])
+        logger.info(
+            "Ring SDP details: device_id=%s fingerprints=%s ice_ufrag=%s ice_pwd_count=%s candidates=%s",
+            device_id,
+            fingerprint_lines[:2],  # First 2 fingerprints
+            ice_ufrag_lines[:1],    # First ice-ufrag
+            len(ice_pwd_lines),
+            candidate_count
+        )
+        
+        # Parse ICE servers if present
+        ice_servers: list[IceServer] = []
+        ice_servers_raw = payload.get("ice_servers") or payload.get("iceServers") or []
+        if isinstance(ice_servers_raw, list):
+            for server_payload in ice_servers_raw:
+                if isinstance(server_payload, dict):
+                    server = IceServer.from_payload(server_payload)
+                    if server:
+                        ice_servers.append(server)
+        
+        if ice_servers:
+            logger.info(
+                "Ring provided ICE servers: device_id=%s count=%s urls=%s",
+                device_id, len(ice_servers), 
+                [s.urls[0] if s.urls else None for s in ice_servers[:3]]  # First 3 server URLs
+            )
+        else:
+            logger.warning(
+                "Ring did not provide ICE servers in response: device_id=%s",
+                device_id
+            )
+        
+        return LiveViewStartResponse(
+            session_id=session_id, 
+            answer_sdp=answer_sdp,
+            ice_servers=ice_servers,
+        )
 
     async def end_live_view(self, session_id: str) -> None:
         await self._api_request("POST", self.LIVE_VIEW_END, body={"session_id": session_id})

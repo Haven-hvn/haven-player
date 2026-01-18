@@ -230,14 +230,28 @@ class OpenRingAiortcRecorder:
         self._peer_connection.on("iceconnectionstatechange")(self._handle_ice_connection_state_change)
         self._peer_connection.on("signalingstatechange")(self._handle_signaling_state_change)
         self._peer_connection.on("icecandidate")(self._handle_ice_candidate)
-        self._peer_connection.addTransceiver("audio", direction="recvonly")
+        
+        # Ring may require bidirectional audio negotiation for DTLS to complete
+        self._peer_connection.addTransceiver("audio", direction="sendrecv")
         self._peer_connection.addTransceiver("video", direction="recvonly")
+        logger.info("Added transceivers: device_id=%s audio=sendrecv video=recvonly", self._device_id)
 
         offer = await _maybe_await(self._peer_connection.createOffer())
         await _maybe_await(self._peer_connection.setLocalDescription(offer))
         await _wait_for_ice_gathering_complete(self._peer_connection, self._ice_gathering_timeout)
         local_description = self._peer_connection.localDescription
         offer_sdp = local_description.sdp if local_description else offer.sdp
+        
+        # CRITICAL: Force DTLS active role in our offer
+        # Ring's server says setup:active but never sends ClientHello
+        # By using setup:active in our offer, Ring should respond with setup:passive
+        # and WE will initiate the DTLS handshake instead of waiting for Ring
+        if "a=setup:actpass" in offer_sdp:
+            offer_sdp = offer_sdp.replace("a=setup:actpass", "a=setup:active")
+            logger.info(
+                "Modified SDP: forcing DTLS active role (we initiate handshake): device_id=%s",
+                self._device_id
+            )
 
         logger.debug("Starting live view session for device_id=%s", self._device_id)
         response = await self._service.start_live_view(

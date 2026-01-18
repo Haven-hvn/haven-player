@@ -18,6 +18,8 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
+logging.getLogger('aioice.ice').setLevel(logging.WARNING)
+
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from pathlib import Path

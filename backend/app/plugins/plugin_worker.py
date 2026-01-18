@@ -128,6 +128,7 @@ def setup_worker_logging(plugin_name: str):
         format=log_format,
         force=True  # Override existing config
     )
+    logging.getLogger('aioice.ice').setLevel(logging.WARNING)
 
 
 async def worker_execute_archive(

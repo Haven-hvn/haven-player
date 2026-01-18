@@ -575,9 +575,14 @@ class OpenRingAiortcRecorder:
         # Strategy 2 (alternative): Force setup:passive in our offer → Ring must be client
         # 
         # We can test both strategies via RING_DTLS_STRATEGY env var:
-        # - "patch_answer" (default): Patch Ring's answer to passive, we initiate DTLS
+        # - "no_patch" (default): Trust Ring's SDP as-is (matches working Swift implementation)
+        # - "patch_answer": Patch Ring's answer to passive, we initiate DTLS
         # - "force_passive_offer": Set passive in offer, Ring should initiate DTLS
-        dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "patch_answer")
+        #
+        # IMPORTANT: The working Swift/libwebrtc implementation does NOT patch Ring's SDP.
+        # Ring sends setup:active (they are DTLS client), and libwebrtc becomes server.
+        # Ring then sends ClientHello and the handshake succeeds.
+        dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "no_patch")
         
         if dtls_strategy == "force_passive_offer":
             # Strategy 2: Force setup:passive in our offer
@@ -590,11 +595,12 @@ class OpenRingAiortcRecorder:
                     self._device_id
                 )
         else:
-            # Strategy 1 (default): Keep actpass in offer, patch Ring's answer later
+            # Default strategy: Keep actpass in offer (standard WebRTC), 
+            # trust Ring's answer as-is (matches working Swift implementation)
             logger.info(
-                "DTLS Strategy: patch_answer - Keep actpass in offer, "
-                "will patch Ring's answer to passive. device_id=%s",
-                self._device_id
+                "DTLS Strategy: %s - Keep actpass in offer, "
+                "will use Ring's answer as-is (Ring=client, we=server). device_id=%s",
+                dtls_strategy, self._device_id
             )
 
         logger.debug("Starting live view session for device_id=%s", self._device_id)
@@ -644,12 +650,13 @@ class OpenRingAiortcRecorder:
         # - Original behavior: Ring claims active but doesn't send ClientHello either
         #
         # This is a complex compatibility issue. We support multiple strategies:
-        # - "patch_answer" (default): Patch Ring's answer to passive, we send ClientHello
-        # - "no_patch": Don't patch, trust Ring's SDP (we become server, wait for their ClientHello)  
+        # - "no_patch" (default): Don't patch, trust Ring's SDP (matches working Swift implementation)
+        #   We become server, wait for Ring's ClientHello - THIS IS WHAT WORKS!
+        # - "patch_answer": Patch Ring's answer to passive, we send ClientHello (doesn't work)
         # - "force_passive_offer": Set passive in our offer, Ring must be client
         
         patched_answer_sdp = response.answer_sdp
-        dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "patch_answer")
+        dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "no_patch")
         
         if dtls_strategy == "no_patch":
             # Trust Ring's SDP - they say active, so we become server and wait
@@ -760,6 +767,40 @@ class OpenRingAiortcRecorder:
                 "ICE ready, checking DTLS: device_id=%s session_id=%s connection_state=%s ice_state=%s",
                 self._device_id, self._session_id, conn_state, ice_state
             )
+            
+            # Log ICE candidate pair details
+            try:
+                transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
+                for i, tr in enumerate(transceivers[:1]):  # Just first transceiver
+                    receiver = getattr(tr, 'receiver', None)
+                    if receiver:
+                        dtls_transport = getattr(receiver, 'transport', None)
+                        if dtls_transport:
+                            ice_transport = getattr(dtls_transport, 'transport', None)
+                            if ice_transport:
+                                # Try to get the selected candidate pair
+                                ice_conn = getattr(ice_transport, '_connection', None)
+                                if ice_conn:
+                                    local_candidate = getattr(ice_conn, 'local_candidate', None)
+                                    remote_candidate = getattr(ice_conn, 'remote_candidate', None)
+                                    if local_candidate:
+                                        logger.info(
+                                            "ICE selected local: device_id=%s type=%s addr=%s:%s",
+                                            self._device_id, 
+                                            getattr(local_candidate, 'type', '?'),
+                                            getattr(local_candidate, 'host', '?'),
+                                            getattr(local_candidate, 'port', '?')
+                                        )
+                                    if remote_candidate:
+                                        logger.info(
+                                            "ICE selected remote: device_id=%s type=%s addr=%s:%s",
+                                            self._device_id,
+                                            getattr(remote_candidate, 'type', '?'),
+                                            getattr(remote_candidate, 'host', '?'),
+                                            getattr(remote_candidate, 'port', '?')
+                                        )
+            except Exception as e:
+                logger.debug("Could not get ICE candidate pair: %s", e)
             
             # Check if DTLS needs to be explicitly started
             # aiortc's background __connect() should handle this, but verify it happened

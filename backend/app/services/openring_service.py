@@ -373,6 +373,23 @@ class OpenRingService:
             len(ice_pwd_lines),
             len(candidate_lines)
         )
+        
+        # Log ICE candidate types for debugging connectivity issues
+        candidate_types: dict[str, int] = {}
+        for cand in candidate_lines:
+            # Parse candidate type (host, srflx, relay, prflx)
+            if ' typ ' in cand:
+                typ_part = cand.split(' typ ')[1].split()[0] if ' typ ' in cand else 'unknown'
+                candidate_types[typ_part] = candidate_types.get(typ_part, 0) + 1
+        
+        if candidate_types:
+            logger.info(
+                "Ring ICE candidate types: device_id=%s types=%s",
+                device_id, candidate_types
+            )
+            # Log first candidate of each type for debugging
+            for cand in candidate_lines[:3]:  # First 3 candidates
+                logger.debug("Ring ICE candidate sample: %s", cand[:100])
         logger.info(
             "Ring SDP media: device_id=%s setup=%s rtcp_mux=%s media_sections=%s",
             device_id,

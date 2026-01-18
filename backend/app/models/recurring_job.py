@@ -2,7 +2,7 @@
 Recurring job model for plugin system.
 """
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.models.base import Base
@@ -16,6 +16,9 @@ class RecurringJob(Base):
     (e.g., polling YouTube channel every hour).
     """
     __tablename__ = "recurring_jobs"
+    __table_args__ = (
+        UniqueConstraint('plugin_name', name='uq_recurring_job_plugin'),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
     plugin_name = Column(String, index=True, nullable=False)

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -643,34 +644,94 @@ class JobScheduler:
         """
         db = SessionLocal()
         try:
-            # Check if job already exists
+            # Check if plugin already has a job (one job per plugin)
             existing_job = db.query(RecurringJob).filter(
-                RecurringJob.plugin_name == plugin_name,
-                RecurringJob.job_name == job_name
+                RecurringJob.plugin_name == plugin_name
             ).first()
 
             if existing_job:
-                logger.info(f"Job already exists: {plugin_name}:{job_name} (id: {existing_job.id})")
+                logger.info(f"Job already exists for plugin: {plugin_name} (id: {existing_job.id}, job_name: {existing_job.job_name})")
 
                 # Ensure job is scheduled
                 if self.scheduler:
                     scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
                     if not scheduled_job:
-                        logger.info(f"Rescheduling existing job: {plugin_name}:{job_name}")
+                        logger.info(f"Rescheduling existing job: {plugin_name}:{existing_job.job_name}")
                         await self.schedule_job(existing_job)
 
                 return existing_job
 
-            # Create new job
+            # Validate method before creating
+            if method == "archive":
+                raise ValueError(
+                    f"Method 'archive' cannot be scheduled directly. "
+                    f"Use method='discover_sources' with on_success='archive_all' "
+                    f"to discover and archive sources automatically."
+                )
+            
+            # Sanitize config to ensure it's serializable
+            sanitized_config = sanitize_config_for_storage(config or {})
+            
+            # Create job in database within the same session
             logger.info(f"Creating new job: {plugin_name}:{job_name}")
-            return await self.create_job(
+            job = RecurringJob(
                 plugin_name=plugin_name,
                 job_name=job_name,
                 schedule=schedule,
                 method=method,
                 on_success=on_success,
-                config=config
+                config=sanitized_config,
+                enabled=enabled
             )
+            
+            db.add(job)
+            try:
+                db.commit()
+                db.refresh(job)
+            except IntegrityError:
+                # Race condition: job was created by another process/thread
+                db.rollback()
+                logger.info(f"Job was created concurrently for plugin, fetching existing job: {plugin_name}")
+                # Query again to get the existing job
+                existing_job = db.query(RecurringJob).filter(
+                    RecurringJob.plugin_name == plugin_name
+                ).first()
+                if existing_job:
+                    # Ensure job is scheduled
+                    if self.scheduler:
+                        scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
+                        if not scheduled_job:
+                            logger.info(f"Rescheduling existing job: {plugin_name}:{existing_job.job_name}")
+                            await self.schedule_job(existing_job)
+                    return existing_job
+                else:
+                    # Should not happen, but re-raise if it does
+                    raise
+
+            # Schedule the job
+            await self.schedule_job(job)
+
+            logger.info(f"Created job: {plugin_name}:{job_name}")
+            return job
+        
+        except IntegrityError:
+            # Handle race condition at outer level too
+            db.rollback()
+            logger.info(f"Job was created concurrently for plugin, fetching existing job: {plugin_name}")
+            existing_job = db.query(RecurringJob).filter(
+                RecurringJob.plugin_name == plugin_name
+            ).first()
+            if existing_job:
+                if self.scheduler:
+                    scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
+                    if not scheduled_job:
+                        await self.schedule_job(existing_job)
+                return existing_job
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to ensure job {job_name}: {e}")
+            raise
         finally:
             db.close()
 
@@ -701,20 +762,19 @@ class JobScheduler:
         """
         db = SessionLocal()
         try:
-            # Check if job already exists to prevent duplicates
+            # Check if plugin already has a job (one job per plugin)
             existing_job = db.query(RecurringJob).filter(
-                RecurringJob.plugin_name == plugin_name,
-                RecurringJob.job_name == job_name
+                RecurringJob.plugin_name == plugin_name
             ).first()
             
             if existing_job:
-                logger.info(f"Job already exists, returning existing job: {plugin_name}:{job_name}")
+                logger.info(f"Job already exists for plugin, returning existing job: {plugin_name} (id: {existing_job.id}, job_name: {existing_job.job_name})")
                 
                 # Ensure job is scheduled
                 if self.scheduler:
                     scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
                     if not scheduled_job:
-                        logger.info(f"Rescheduling existing job: {plugin_name}:{job_name}")
+                        logger.info(f"Rescheduling existing job: {plugin_name}:{existing_job.job_name}")
                         await self.schedule_job(existing_job)
                 
                 return existing_job
@@ -742,8 +802,28 @@ class JobScheduler:
             )
             
             db.add(job)
-            db.commit()
-            db.refresh(job)
+            try:
+                db.commit()
+                db.refresh(job)
+            except IntegrityError:
+                # Race condition: job was created by another process/thread
+                db.rollback()
+                logger.info(f"Job was created concurrently for plugin, fetching existing job: {plugin_name}")
+                # Query again to get the existing job
+                existing_job = db.query(RecurringJob).filter(
+                    RecurringJob.plugin_name == plugin_name
+                ).first()
+                if existing_job:
+                    # Ensure job is scheduled
+                    if self.scheduler:
+                        scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
+                        if not scheduled_job:
+                            logger.info(f"Rescheduling existing job: {plugin_name}:{existing_job.job_name}")
+                            await self.schedule_job(existing_job)
+                    return existing_job
+                else:
+                    # Should not happen, but re-raise if it does
+                    raise
 
             # Schedule the job
             await self.schedule_job(job)
@@ -751,6 +831,20 @@ class JobScheduler:
             logger.info(f"Created job: {plugin_name}:{job_name}")
             return job
         
+        except IntegrityError:
+            # Handle race condition at outer level too
+            db.rollback()
+            logger.info(f"Job was created concurrently for plugin, fetching existing job: {plugin_name}")
+            existing_job = db.query(RecurringJob).filter(
+                RecurringJob.plugin_name == plugin_name
+            ).first()
+            if existing_job:
+                if self.scheduler:
+                    scheduled_job = self.scheduler.get_job(f"job_{existing_job.id}")
+                    if not scheduled_job:
+                        await self.schedule_job(existing_job)
+                return existing_job
+            raise
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to create job {job_name}: {e}")

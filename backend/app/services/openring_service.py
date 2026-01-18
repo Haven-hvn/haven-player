@@ -386,13 +386,6 @@ class OpenRingService:
             len(rtpmap_lines),
             rtpmap_lines[:4] if rtpmap_lines else []
         )
-        # Log first few ICE candidates for debugging
-        if candidate_lines:
-            logger.info(
-                "Ring ICE candidates (first 3): device_id=%s candidates=%s",
-                device_id,
-                candidate_lines[:3]
-            )
         
         # Parse ICE servers if present
         ice_servers: list[IceServer] = []

@@ -205,18 +205,22 @@ class OpenRingAiortcRecorder:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._media_relay = self._media_relay_factory()
         
-        # Get ICE servers from Ring session before creating peer connection
-        ice_servers = await self._service.get_session_info()
-        rtc_config = _build_rtc_configuration(ice_servers)
+        # Use STUN servers like the working Swift implementation
+        # Ring's working implementation uses: stun:stun.l.google.com:19302 and stun:stun.ring.com:3478
+        stun_servers = [
+            IceServer(urls=["stun:stun.l.google.com:19302"]),
+            IceServer(urls=["stun:stun.ring.com:3478"]),
+        ]
+        rtc_config = _build_rtc_configuration(stun_servers)
         if rtc_config:
             logger.info(
-                "Creating peer connection with %d ICE servers from Ring: device_id=%s",
-                len(ice_servers), self._device_id
+                "Creating peer connection with STUN servers: device_id=%s",
+                self._device_id
             )
             self._peer_connection = self._peer_connection_factory(rtc_config)
         else:
             logger.warning(
-                "Creating peer connection WITHOUT ICE servers (may fail): device_id=%s",
+                "Creating peer connection WITHOUT STUN servers (may fail): device_id=%s",
                 self._device_id
             )
             self._peer_connection = self._peer_connection_factory(None)
@@ -276,14 +280,31 @@ class OpenRingAiortcRecorder:
                            i, server.urls, bool(server.username))
         
         remote_description = self._session_description_factory(response.answer_sdp, "answer")
-        await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
         
-        # Log signaling state after setting remote description
-        signaling_state = getattr(self._peer_connection, 'signalingState', 'unknown')
-        logger.info(
-            "After setRemoteDescription: device_id=%s signaling_state=%s",
-            self._device_id, signaling_state
-        )
+        # Set remote description and activate camera in parallel (like Swift implementation)
+        # activateCamera only needs sessionId, not remote description
+        logger.info("Setting remote description and activating camera in parallel: device_id=%s", self._device_id)
+        async def set_remote_desc() -> None:
+            await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
+            signaling_state = getattr(self._peer_connection, 'signalingState', 'unknown')
+            logger.info(
+                "After setRemoteDescription: device_id=%s signaling_state=%s",
+                self._device_id, signaling_state
+            )
+        
+        async def activate_cam() -> None:
+            try:
+                await self._service.activate_camera(self._session_id)
+                logger.info("Camera activated successfully: device_id=%s", self._device_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to activate camera: device_id=%s error=%s",
+                    self._device_id, e
+                )
+                raise
+        
+        # Run both in parallel
+        await asyncio.gather(set_remote_desc(), activate_cam())
         
         # Check for SCTP/DTLS transport state if available
         try:
@@ -315,18 +336,6 @@ class OpenRingAiortcRecorder:
                             )
         except Exception as e:
             logger.debug("Could not get transceiver DTLS state: %s", e)
-        
-        # IMPORTANT: Activate the camera IMMEDIATELY after setting remote description
-        # Ring needs this before it will start the DTLS handshake and send media
-        logger.info("Activating camera immediately after SDP exchange: device_id=%s", self._device_id)
-        try:
-            await self._service.activate_camera(self._session_id)
-            logger.info("Camera activated successfully: device_id=%s", self._device_id)
-        except Exception as e:
-            logger.warning(
-                "Failed to activate camera (will retry later): device_id=%s error=%s",
-                self._device_id, e
-            )
         
         # Wait for WebRTC connection to be fully established (ICE + DTLS)
         logger.info(
@@ -640,12 +649,18 @@ class OpenRingAiortcRecorder:
 async def _wait_for_ice_gathering_complete(
     peer_connection: PeerConnectionProtocol, timeout: float
 ) -> None:
+    """
+    Wait for ICE gathering to complete, with early exit if we have enough candidates.
+    Matches the Swift implementation which uses 2s timeout and early exit with 2+ candidates.
+    """
     state = getattr(peer_connection, "iceGatheringState", None)
     if state in (None, "complete"):
         logger.debug("ICE gathering already complete or not supported: state=%s", state)
         return
-    logger.debug("Waiting for ICE gathering to complete: initial_state=%s timeout=%s", state, timeout)
+    
+    logger.debug("Waiting for ICE gathering: initial_state=%s timeout=%s", state, timeout)
     event = asyncio.Event()
+    start_time = asyncio.get_event_loop().time()
 
     @peer_connection.on("icegatheringstatechange")
     def on_state_change(_: object = None) -> None:
@@ -653,12 +668,28 @@ async def _wait_for_ice_gathering_complete(
         logger.debug("ICE gathering state changed: state=%s", new_state)
         if new_state == "complete":
             event.set()
+        
+        # Early exit: Check if we have at least 2 candidates (host + srflx)
+        # This matches the Swift implementation's early exit logic
+        try:
+            local_desc = getattr(peer_connection, "localDescription", None)
+            if local_desc:
+                sdp = getattr(local_desc, "sdp", "")
+                candidate_count = sdp.count("a=candidate")
+                if candidate_count >= 2:
+                    logger.debug("ICE early exit with %d candidates", candidate_count)
+                    event.set()
+        except Exception:
+            pass
 
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout)
-        logger.debug("ICE gathering completed successfully")
+        elapsed = asyncio.get_event_loop().time() - start_time
+        final_state = getattr(peer_connection, "iceGatheringState", None)
+        logger.debug("ICE gathering completed: state=%s elapsed=%.2fs", final_state, elapsed)
     except asyncio.TimeoutError:
-        logger.warning("Timed out waiting for ICE gathering to complete: timeout=%s", timeout)
+        elapsed = asyncio.get_event_loop().time() - start_time
+        logger.warning("ICE gathering timeout after %.2fs, proceeding with available candidates", elapsed)
 
 
 async def _maybe_await(value: Awaitable[None] | None | object) -> object:

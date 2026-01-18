@@ -42,6 +42,12 @@ class MediaRecorderProtocol(Protocol):
     def stop(self) -> Awaitable[None] | None: ...
 
 
+class MediaRelayProtocol(Protocol):
+    def subscribe(
+        self, track: MediaStreamTrackProtocol, buffered: bool = True
+    ) -> MediaStreamTrackProtocol: ...
+
+
 class PeerConnectionProtocol(Protocol):
     def addTransceiver(self, kind: str, direction: str) -> None: ...
 
@@ -71,6 +77,7 @@ class PeerConnectionProtocol(Protocol):
 SessionDescriptionFactory = Callable[[str, str], SessionDescriptionProtocol]
 PeerConnectionFactory = Callable[[], PeerConnectionProtocol]
 MediaRecorderFactory = Callable[[str], MediaRecorderProtocol]
+MediaRelayFactory = Callable[[], MediaRelayProtocol]
 SegmentCallback = Callable[[Path], Awaitable[None] | None]
 
 
@@ -94,6 +101,7 @@ class OpenRingAiortcRecorder:
         peer_connection_factory: Optional[PeerConnectionFactory] = None,
         session_description_factory: Optional[SessionDescriptionFactory] = None,
         media_recorder_factory: Optional[MediaRecorderFactory] = None,
+        media_relay_factory: Optional[MediaRelayFactory] = None,
         track_wait_timeout: float = 15.0,
         ice_gathering_timeout: float = 5.0,
         time_provider: Optional[Callable[[], float]] = None,
@@ -115,8 +123,10 @@ class OpenRingAiortcRecorder:
             session_description_factory or _load_session_description_factory()
         )
         self._media_recorder_factory = media_recorder_factory or _load_media_recorder_factory()
+        self._media_relay_factory = media_relay_factory or _load_media_relay_factory()
 
         self._peer_connection: Optional[PeerConnectionProtocol] = None
+        self._media_relay: Optional[MediaRelayProtocol] = None
         self._segment_task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._track_ready = asyncio.Event()
@@ -140,6 +150,7 @@ class OpenRingAiortcRecorder:
             self._segment_duration,
         )
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._media_relay = self._media_relay_factory()
         self._peer_connection = self._peer_connection_factory()
         self._peer_connection.on("track")(self._handle_track)
         self._peer_connection.addTransceiver("audio", direction="recvonly")
@@ -202,8 +213,14 @@ class OpenRingAiortcRecorder:
             logger.info("Creating segment: device_id=%s session_id=%s segment_index=%s path=%s",
                        self._device_id, self._session_id, self._segment_index - 1, segment.path)
             recorder = self._media_recorder_factory(str(segment.path))
+            # Use MediaRelay to subscribe to tracks for each segment
+            # This allows multiple segments to receive frames from the same source tracks
             for track in list(self._remote_tracks):
-                recorder.addTrack(track)
+                if self._media_relay:
+                    relayed_track = self._media_relay.subscribe(track, buffered=False)
+                    recorder.addTrack(relayed_track)
+                else:
+                    recorder.addTrack(track)
 
             logger.debug("Starting segment recording: device_id=%s segment_path=%s track_count=%s",
                         self._device_id, segment.path, len(self._remote_tracks))
@@ -302,3 +319,11 @@ def _load_media_recorder_factory() -> MediaRecorderFactory:
     except Exception as exc:
         raise OpenRingRecorderDependencyError("aiortc is required for OpenRing recorder") from exc
     return MediaRecorder
+
+
+def _load_media_relay_factory() -> MediaRelayFactory:
+    try:
+        from aiortc.contrib.media import MediaRelay
+    except Exception as exc:
+        raise OpenRingRecorderDependencyError("aiortc is required for OpenRing recorder") from exc
+    return MediaRelay

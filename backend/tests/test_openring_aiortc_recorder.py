@@ -12,6 +12,7 @@ from app.services.openring_aiortc_recorder import (
     OpenRingAiortcRecorder,
     OpenRingRecorderDependencyError,
     _load_media_recorder_factory,
+    _load_media_relay_factory,
     _load_peer_connection_factory,
     _load_session_description_factory,
     _maybe_await,
@@ -97,6 +98,18 @@ class FakeMediaRecorder:
         self.stopped = True
 
 
+class FakeMediaRelay:
+    """Fake MediaRelay that returns the original track (for testing)."""
+
+    def __init__(self) -> None:
+        self.subscriptions: list[tuple[FakeTrack, bool]] = []
+
+    def subscribe(self, track: FakeTrack, buffered: bool = True) -> FakeTrack:
+        self.subscriptions.append((track, buffered))
+        # Return a new fake track to simulate relay behavior
+        return FakeTrack(track.kind)
+
+
 class FakeService:
     def __init__(self) -> None:
         self.start_calls: list[tuple[int, str, str]] = []
@@ -134,6 +147,7 @@ async def test_recorder_start_stop_creates_segments(tmp_path: Path) -> None:
         peer_connection_factory=lambda: peer_connection,
         session_description_factory=FakeSessionDescription,
         media_recorder_factory=recorder_factory,
+        media_relay_factory=FakeMediaRelay,
         track_wait_timeout=0.05,
         time_provider=lambda: 0.0,
     )
@@ -169,6 +183,7 @@ async def test_recorder_calls_segment_callback(tmp_path: Path) -> None:
         peer_connection_factory=lambda: peer_connection,
         session_description_factory=FakeSessionDescription,
         media_recorder_factory=FakeMediaRecorder,
+        media_relay_factory=FakeMediaRelay,
         track_wait_timeout=0.05,
         on_segment_complete=on_segment,
         time_provider=lambda: 0.0,
@@ -196,6 +211,7 @@ async def test_recorder_track_timeout_exits(tmp_path: Path) -> None:
         peer_connection_factory=lambda: peer_connection,
         session_description_factory=FakeSessionDescription,
         media_recorder_factory=FakeMediaRecorder,
+        media_relay_factory=FakeMediaRelay,
         track_wait_timeout=0.01,
         time_provider=lambda: 0.0,
     )
@@ -219,6 +235,7 @@ async def test_recorder_stop_without_start(tmp_path: Path) -> None:
         peer_connection_factory=FakePeerConnection,
         session_description_factory=FakeSessionDescription,
         media_recorder_factory=FakeMediaRecorder,
+        media_relay_factory=FakeMediaRelay,
     )
 
     await recorder.stop()
@@ -238,6 +255,7 @@ async def test_recorder_start_twice_raises(tmp_path: Path) -> None:
         peer_connection_factory=lambda: peer_connection,
         session_description_factory=FakeSessionDescription,
         media_recorder_factory=FakeMediaRecorder,
+        media_relay_factory=FakeMediaRelay,
         track_wait_timeout=0.05,
         time_provider=lambda: 0.0,
     )
@@ -260,6 +278,7 @@ def test_recorder_requires_positive_segment_duration(tmp_path: Path) -> None:
             peer_connection_factory=FakePeerConnection,
             session_description_factory=FakeSessionDescription,
             media_recorder_factory=FakeMediaRecorder,
+            media_relay_factory=FakeMediaRelay,
         )
 
 
@@ -280,7 +299,10 @@ def test_dependency_loader_success_and_error(monkeypatch: pytest.MonkeyPatch) ->
         RTCPeerConnection=FakePeerConnection,
         RTCSessionDescription=FakeSessionDescription,
     )
-    fake_media = types.SimpleNamespace(MediaRecorder=FakeMediaRecorder)
+    fake_media = types.SimpleNamespace(
+        MediaRecorder=FakeMediaRecorder,
+        MediaRelay=FakeMediaRelay,
+    )
 
     monkeypatch.setitem(sys.modules, "aiortc", fake_aiortc)
     monkeypatch.setitem(sys.modules, "aiortc.contrib", types.SimpleNamespace(media=fake_media))
@@ -289,6 +311,7 @@ def test_dependency_loader_success_and_error(monkeypatch: pytest.MonkeyPatch) ->
     assert _load_peer_connection_factory() is FakePeerConnection
     assert _load_session_description_factory() is FakeSessionDescription
     assert _load_media_recorder_factory() is FakeMediaRecorder
+    assert _load_media_relay_factory() is FakeMediaRelay
 
     original_import = builtins.__import__
 
@@ -307,3 +330,5 @@ def test_dependency_loader_success_and_error(monkeypatch: pytest.MonkeyPatch) ->
         _load_session_description_factory()
     with pytest.raises(OpenRingRecorderDependencyError):
         _load_media_recorder_factory()
+    with pytest.raises(OpenRingRecorderDependencyError):
+        _load_media_relay_factory()

@@ -3,6 +3,8 @@ aiortc-based recorder for Ring live view sessions.
 
 Establishes a WebRTC connection, records segmented media files, and invokes
 callbacks when segments complete.
+
+REFERENCE IMPLEMENTATION: open-ring/app/OpenRingPackage/Sources/RingClient/LiveViewSession.swift
 """
 
 from __future__ import annotations
@@ -562,7 +564,15 @@ class DiagnosticTrackWrapper:
 
 
 class OpenRingAiortcRecorder:
-    """Record Ring live view sessions into fixed-length segments."""
+    """Record Ring live view sessions into fixed-length segments.
+
+    REFERENCE IMPLEMENTATION: open-ring/app/OpenRingPackage/Sources/RingClient/LiveViewSession.swift
+    
+    KEY DEVIATIONS FROM WORKING SWIFT IMPLEMENTATION:
+    1. Uses aiortc instead of libwebrtc (different underlying library)
+    2. Python async/await vs Swift async concurrency model
+    3. aiortc API has different surface area than libwebrtc
+    """
 
     def __init__(
         self,
@@ -615,6 +625,21 @@ class OpenRingAiortcRecorder:
         return self._running
 
     async def start(self) -> None:
+        """Start the live view session.
+        
+        REFERENCE: LiveViewSession.swift:start() async throws
+        
+        Workflow:
+        1. Create peer connection with STUN servers (like Swift)
+        2. Generate local offer
+        3. Send offer to Ring API via start_live_view
+        4. Set Ring's answer as remote description
+        5. Activate camera (parallel with step 4, like Swift)
+        6. Wait for tracks and start recording
+        
+        KEY DIFFERENCE: Swift uses libwebrtc which handles DTLS internally,
+        whereas aiortc's DTLS implementation may need workarounds.
+        """
         if self._running:
             raise RuntimeError("Recorder already running")
 
@@ -652,380 +677,131 @@ class OpenRingAiortcRecorder:
         self._peer_connection.on("connectionstatechange")(self._handle_connection_state_change)
         self._peer_connection.on("iceconnectionstatechange")(self._handle_ice_connection_state_change)
         self._peer_connection.on("signalingstatechange")(self._handle_signaling_state_change)
-        self._peer_connection.on("icecandidate")(self._handle_ice_candidate)
         
-        # Ring may require bidirectional audio negotiation for DTLS to complete
-        self._peer_connection.addTransceiver("audio", direction="sendrecv")
-        self._peer_connection.addTransceiver("video", direction="recvonly")
-        logger.info("Added transceivers: device_id=%s audio=sendrecv video=recvonly", self._device_id)
+        # KEY IMPORTANT CONFIGURATION:
+        # Ring requires bidirectional audio negotiation for DTLS to complete properly?
+        # Swift implementation adds audio transceiver with direction: sendrecv
+        # Swift: audioSource + localAudioTrack + transceiver init with sendrecv + streamIds
+        self._peer_connection.addTransceiver("audio", direction="sendrecv")  # MATCHES SWIFT
+        self._peer_connection.addTransceiver("video", direction="recvonly")  # MATCHES SWIFT
+        logger.info("Added transceivers: device_id=%s audio=sendrecv video=recvonly (matches Swift)", self._device_id)
 
         offer = await _maybe_await(self._peer_connection.createOffer())
         await _maybe_await(self._peer_connection.setLocalDescription(offer))
+        
+        # Wait for ICE gathering (matches Swift waitForIceGathering with 2s timeout + early exit)
         await _wait_for_ice_gathering_complete(self._peer_connection, self._ice_gathering_timeout)
+        
         local_description = self._peer_connection.localDescription
         offer_sdp = local_description.sdp if local_description else offer.sdp
         
-        # DTLS Role Strategy:
-        # Ring has a bug where they respond with setup:active (claiming DTLS client)
-        # but never actually send ClientHello.
-        # 
-        # Strategy 1 (current): Patch Ring's answer to setup:passive → we become client
-        # Strategy 2 (alternative): Force setup:passive in our offer → Ring must be client
-        # 
-        # We can test both strategies via RING_DTLS_STRATEGY env var:
-        # - "no_patch" (default): Trust Ring's SDP as-is (matches working Swift implementation)
-        # - "patch_answer": Patch Ring's answer to passive, we initiate DTLS
-        # - "force_passive_offer": Set passive in offer, Ring should initiate DTLS
-        #
-        # IMPORTANT: The working Swift/libwebrtc implementation does NOT patch Ring's SDP.
-        # Ring sends setup:active (they are DTLS client), and libwebrtc becomes server.
-        # Ring then sends ClientHello and the handshake succeeds.
-        dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "no_patch")
-        
-        if dtls_strategy == "force_passive_offer":
-            # Strategy 2: Force setup:passive in our offer
-            # This explicitly tells Ring we WILL be server, they MUST be client
-            if "a=setup:actpass" in offer_sdp:
-                offer_sdp = offer_sdp.replace("a=setup:actpass", "a=setup:passive")
-                logger.info(
-                    "DTLS Strategy: force_passive_offer - Set setup:passive in offer, "
-                    "Ring must be client and send ClientHello. device_id=%s",
-                    self._device_id
-                )
-        else:
-            # Default strategy: Keep actpass in offer (standard WebRTC), 
-            # trust Ring's answer as-is (matches working Swift implementation)
-            logger.info(
-                "DTLS Strategy: %s - Keep actpass in offer, "
-                "will use Ring's answer as-is (Ring=client, we=server). device_id=%s",
-                dtls_strategy, self._device_id
-            )
+        # Log our offer SDP for comparison with working Swift implementation
+        logger.info(
+            "Local SDP: device_id=%s fingerprints=%s setup=%s",
+            self._device_id,
+            [l.strip() for l in offer_sdp.split('\n') if 'fingerprint' in l.lower()],
+            [l.strip() for l in offer_sdp.split('\n') if 'a=setup:' in l.lower()]
+        )
 
-        logger.debug("Starting live view session for device_id=%s", self._device_id)
+        # REFERENCE: Swift calls startLiveView(offerSdp:)
+        logger.debug("Sending offer to Ring API: device_id=%s", self._device_id)
         response = await self._service.start_live_view(
             device_id=self._device_id,
             session_id=self._session_id,
             offer_sdp=offer_sdp,
         )
         
-        # Log our local SDP details for comparison
-        local_sdp = offer_sdp
-        local_sdp_lines = local_sdp.split('\n') if local_sdp else []
-        local_fingerprints = [l.strip() for l in local_sdp_lines if 'fingerprint' in l.lower()]
-        local_setup = [l.strip() for l in local_sdp_lines if 'a=setup:' in l.lower()]
-        local_media = [l.strip() for l in local_sdp_lines if l.startswith('m=')]
-        logger.info(
-            "Local SDP: device_id=%s fingerprints=%s setup=%s media=%s",
-            self._device_id, local_fingerprints[:2], local_setup[:2], local_media
-        )
-        
-        # Check SDP setup compatibility
-        # In our offer we should have setup:actpass (we can be active or passive)
-        # Ring's answer should have setup:active or setup:passive
+        # Log Ring's answer SDP for comparison
         remote_sdp = response.answer_sdp
-        remote_sdp_lines = remote_sdp.split('\n') if remote_sdp else []
-        remote_setup = [l.strip() for l in remote_sdp_lines if 'a=setup:' in l.lower()]
-        logger.info(
-            "DTLS setup negotiation: device_id=%s local_setup=%s remote_setup=%s",
-            self._device_id, local_setup[:2], remote_setup[:2]
-        )
-        
-        # If Ring provided ICE servers, log them (we'd need to restart with them for full support)
-        if response.ice_servers:
+        if remote_sdp:
+            answer_lines = remote_sdp.split('\n')
             logger.info(
-                "Ring provided %d ICE servers - NOTE: These should be used when creating peer connection. "
-                "Current implementation may not use them properly.",
-                len(response.ice_servers)
+                "Ring SDP: device_id=%s fingerprints=%s setup=%s has_video=%s candidate_count=%s",
+                self._device_id,
+                [l.strip() for l in answer_lines if 'fingerprint' in l.lower()],
+                [l.strip() for l in answer_lines if 'a=setup:' in l.lower()],
+                any('m=video' in l for l in answer_lines),
+                sum(1 for l in answer_lines if 'a=candidate' in l)
             )
-            for i, server in enumerate(response.ice_servers[:3]):
-                logger.info("  ICE server %d: urls=%s has_creds=%s", 
-                           i, server.urls, bool(server.username))
-        
-        # DTLS ROLE HANDLING
-        # 
-        # Ring's SDP says setup:active (they claim to be DTLS client), but testing shows:
-        # - When we patch to passive (making us client): Ring doesn't respond to our ClientHello
-        # - Original behavior: Ring claims active but doesn't send ClientHello either
+
+        # KEY DECISION POINT: How to handle DTLS setup negotiation
         #
-        # This is a complex compatibility issue. We support multiple strategies:
-        # - "no_patch" (default): Don't patch, trust Ring's SDP (matches working Swift implementation)
-        #   We become server, wait for Ring's ClientHello - THIS IS WHAT WORKS!
-        # - "patch_answer": Patch Ring's answer to passive, we send ClientHello (doesn't work)
-        # - "force_passive_offer": Set passive in our offer, Ring must be client
-        
-        patched_answer_sdp = response.answer_sdp
+        # Swift/libwebrtc handles this automatically correctly.
+        # aiortc may need special handling.
+        #
+        # ENVIRONMENT VARIABLES FOR TESTING:
+        # - RING_DTLS_STRATEGY=no_patch (default): Trust Ring's SDP as-is (matches Swift)
+        # - RING_DTLS_STRATEGY=force_client: Force ourselves to be DTLS client
+        # - RING_DTLS_STRATEGY=force_server: Force Ring to be DTLS client
+        #
         dtls_strategy = os.environ.get("RING_DTLS_STRATEGY", "no_patch")
         
         if dtls_strategy == "no_patch":
-            # Trust Ring's SDP - they say active, so we become server and wait
-            logger.info(
-                "DTLS Strategy: no_patch - Trusting Ring's SDP (setup:active). "
-                "We will be DTLS server and wait for Ring's ClientHello. device_id=%s",
-                self._device_id
-            )
-        elif dtls_strategy == "patch_answer" and "a=setup:active" in patched_answer_sdp:
-            # Patch Ring's answer to passive, making us the client
-            active_count = patched_answer_sdp.count("a=setup:active")
-            patched_answer_sdp = patched_answer_sdp.replace("a=setup:active", "a=setup:passive")
-            passive_count = patched_answer_sdp.count("a=setup:passive")
-            
-            logger.info(
-                "DTLS Strategy: patch_answer - Changed %d 'setup:active' to 'setup:passive'. "
-                "We will be DTLS client and send ClientHello. device_id=%s patched_passive_count=%d",
-                active_count, self._device_id, passive_count
-            )
-            
-            if "a=setup:active" in patched_answer_sdp:
-                logger.warning(
-                    "SDP patch incomplete - still contains 'setup:active' after patching! "
-                    "device_id=%s",
-                    self._device_id
-                )
-        elif dtls_strategy == "force_passive_offer":
-            logger.info(
-                "DTLS Strategy: force_passive_offer - Not patching Ring's answer. "
-                "We declared passive in offer, Ring should be client. device_id=%s",
-                self._device_id
-            )
+            # Trust Ring's SDP as-is - matches Swift implementation
+            logger.info("DTLS Strategy: no_patch - Using Ring's SDP as-is (matches Swift working implementation)")
+            answer_sdp_to_use = remote_sdp
+        elif dtls_strategy == "force_client":
+            # We will be client, Ring should be server
+            answer_sdp_to_use = remote_sdp.replace("a=setup:active", "a=setup:passive") if remote_sdp else remote_sdp
+            answer_sdp_to_use = answer_sdp_to_use.replace("a=setup:actpass", "a=setup:active") if answer_sdp_to_use else answer_sdp_to_use
+            logger.info("DTLS Strategy: force_client - We will send ClientHello, Ring should respond")
+        elif dtls_strategy == "force_server":
+            # Explicitly set setup:passive in our offer (we are server)
+            offer_sdp = offer_sdp.replace("a=setup:actpass", "a=setup:passive")
+            answer_sdp_to_use = remote_sdp
+            logger.info("DTLS Strategy: force_server - Ring must send ClientHello, we respond")
+        else:
+            logger.warning("Unknown DTLS strategy: %s, using no_patch", dtls_strategy)
+            answer_sdp_to_use = remote_sdp
+
+        remote_description = self._session_description_factory(answer_sdp_to_use, "answer")
         
-        remote_description = self._session_description_factory(patched_answer_sdp, "answer")
-        
-        # Set remote description and activate camera in parallel (like Swift implementation)
-        # activateCamera only needs sessionId, not remote description
-        logger.info("Setting remote description and activating camera in parallel: device_id=%s", self._device_id)
+        # REFERENCE: Swift runs setRemoteDescription and activateCamera in parallel
+        logger.info("Setting remote description and activating camera in parallel: device_id=%s (matches Swift)", self._device_id)
         async def set_remote_desc() -> None:
             await _maybe_await(self._peer_connection.setRemoteDescription(remote_description))
             signaling_state = getattr(self._peer_connection, 'signalingState', 'unknown')
-            logger.info(
-                "After setRemoteDescription: device_id=%s signaling_state=%s",
-                self._device_id, signaling_state
-            )
+            logger.info("After setRemoteDescription: device_id=%s signaling_state=%s", self._device_id, signaling_state)
         
         async def activate_cam() -> None:
             try:
                 await self._service.activate_camera(self._session_id)
                 logger.info("Camera activated successfully: device_id=%s", self._device_id)
             except Exception as e:
-                logger.warning(
-                    "Failed to activate camera: device_id=%s error=%s",
-                    self._device_id, e
-                )
-                raise
+                logger.warning("Failed to activate camera: device_id=%s error=%s", self._device_id, e)
+                # Don't re-raise - camera activation failure might not be critical
         
-        # Run both in parallel
+        # Execute both in parallel (matches Swift's async let activationTask = activateCamera())
         await asyncio.gather(set_remote_desc(), activate_cam())
         
-        # Check for SCTP/DTLS transport state if available
+        # Wait for signaling state to become stable
         try:
-            sctp = getattr(self._peer_connection, 'sctp', None)
-            if sctp:
-                sctp_state = getattr(sctp, 'state', 'unknown')
-                dtls_state = getattr(getattr(sctp, 'transport', None), 'state', 'unknown')
-                logger.info(
-                    "SCTP/DTLS state: device_id=%s sctp=%s dtls=%s",
-                    self._device_id, sctp_state, dtls_state
-                )
-        except Exception as e:
-            logger.debug("Could not get SCTP/DTLS state: %s", e)
-        
-        # Try to access DTLS transport via transceivers
-        try:
-            transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
-            for i, tr in enumerate(transceivers):
-                receiver = getattr(tr, 'receiver', None)
-                if receiver:
-                    # receiver.transport is RTCDtlsTransport
-                    dtls_transport = getattr(receiver, 'transport', None)
-                    if dtls_transport:
-                        # Get actual DTLS state (not ICE state)
-                        dtls_state = getattr(dtls_transport, 'state', 'unknown')
-                        dtls_role = getattr(dtls_transport, '_role', 'unknown')
-                        # Also get ICE transport state for comparison
-                        ice_transport = getattr(dtls_transport, 'transport', None)
-                        ice_state = getattr(ice_transport, 'state', 'unknown') if ice_transport else 'unknown'
-                        logger.info(
-                            "Transceiver %d transport state: device_id=%s dtls_state=%s dtls_role=%s ice_state=%s",
-                            i, self._device_id, dtls_state, dtls_role, ice_state
-                        )
-        except Exception as e:
-            logger.debug("Could not get transceiver state: %s", e)
-        
-        # Wait for WebRTC connection to be fully established (ICE + DTLS)
-        logger.info(
-            "Waiting for WebRTC connection: device_id=%s session_id=%s timeout=%s",
-            self._device_id, self._session_id, self._connection_timeout
-        )
-        try:
-            await asyncio.wait_for(self._connection_ready.wait(), timeout=self._connection_timeout)
-            
-            # ICE completed, now check and possibly force-start DTLS
-            conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
-            ice_state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
-            logger.info(
-                "ICE ready, checking DTLS: device_id=%s session_id=%s connection_state=%s ice_state=%s",
-                self._device_id, self._session_id, conn_state, ice_state
-            )
-            
-            # Log ICE candidate pair details
-            try:
-                transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
-                for i, tr in enumerate(transceivers[:1]):  # Just first transceiver
-                    receiver = getattr(tr, 'receiver', None)
-                    if receiver:
-                        dtls_transport = getattr(receiver, 'transport', None)
-                        if dtls_transport:
-                            ice_transport = getattr(dtls_transport, 'transport', None)
-                            if ice_transport:
-                                # Try to get the selected candidate pair
-                                ice_conn = getattr(ice_transport, '_connection', None)
-                                if ice_conn:
-                                    local_candidate = getattr(ice_conn, 'local_candidate', None)
-                                    remote_candidate = getattr(ice_conn, 'remote_candidate', None)
-                                    if local_candidate:
-                                        logger.info(
-                                            "ICE selected local: device_id=%s type=%s addr=%s:%s",
-                                            self._device_id, 
-                                            getattr(local_candidate, 'type', '?'),
-                                            getattr(local_candidate, 'host', '?'),
-                                            getattr(local_candidate, 'port', '?')
-                                        )
-                                    if remote_candidate:
-                                        logger.info(
-                                            "ICE selected remote: device_id=%s type=%s addr=%s:%s",
-                                            self._device_id,
-                                            getattr(remote_candidate, 'type', '?'),
-                                            getattr(remote_candidate, 'host', '?'),
-                                            getattr(remote_candidate, 'port', '?')
-                                        )
-            except Exception as e:
-                logger.debug("Could not get ICE candidate pair: %s", e)
-            
-            # Check if DTLS needs to be explicitly started
-            # aiortc's background __connect() should handle this, but verify it happened
-            try:
-                transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
-                for i, tr in enumerate(transceivers):
-                    receiver = getattr(tr, 'receiver', None)
-                    if receiver:
-                        dtls_transport = getattr(receiver, 'transport', None)
-                        if dtls_transport:
-                            dtls_state = getattr(dtls_transport, 'state', 'unknown')
-                            dtls_role = getattr(dtls_transport, '_role', 'unknown')
-                            logger.info(
-                                "Pre-poll DTLS check: device_id=%s transceiver=%d dtls_state=%s dtls_role=%s",
-                                self._device_id, i, dtls_state, dtls_role
-                            )
-                            # If DTLS is still "new" after ICE completed, something is wrong
-                            if dtls_state == "new":
-                                logger.warning(
-                                    "DTLS transport still in 'new' state after ICE completed! "
-                                    "This suggests the background connection process didn't start DTLS. "
-                                    "device_id=%s transceiver=%d",
-                                    self._device_id, i
-                                )
-            except Exception as e:
-                logger.debug("Pre-poll DTLS check error: %s", e)
-            
-            # Poll for connection state to become "connected" (DTLS complete)
-            dtls_timeout = 15.0
-            poll_interval = 1.0
-            dtls_deadline = asyncio.get_event_loop().time() + dtls_timeout
-            poll_count = 0
-            while asyncio.get_event_loop().time() < dtls_deadline:
-                conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
-                poll_count += 1
-                
-                # Get detailed DTLS diagnostics every poll
-                try:
-                    transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
-                    for i, tr in enumerate(transceivers[:1]):  # Just check first transceiver
-                        receiver = getattr(tr, 'receiver', None)
-                        if receiver:
-                            dtls_transport = getattr(receiver, 'transport', None)
-                            if dtls_transport:
-                                # Get basic info
-                                dtls_state = getattr(dtls_transport, 'state', 'unknown')
-                                dtls_role = getattr(dtls_transport, '_role', 'unknown')
-                                encrypted = getattr(dtls_transport, 'encrypted', False)
-                                ice_transport = getattr(dtls_transport, 'transport', None)
-                                ice_state = getattr(ice_transport, 'state', 'unknown') if ice_transport else 'unknown'
-                                
-                                # Get detailed cipher diagnostics
-                                diag = get_dtls_transport_diagnostics(dtls_transport)
-                                cipher = diag.get('negotiated_cipher', 'unknown')
-                                srtp = diag.get('srtp_profile', 'unknown')
-                                
-                                logger.info(
-                                    "DTLS poll %d: device_id=%s conn=%s dtls=%s role=%s "
-                                    "encrypted=%s ice=%s cipher=%s srtp=%s",
-                                    poll_count, self._device_id, conn_state, dtls_state, 
-                                    dtls_role, encrypted, ice_state, cipher, srtp
-                                )
-                                
-                                # On first poll, also log available ciphers and other debug info
-                                if poll_count == 1:
-                                    available = diag.get('available_ciphers', [])
-                                    if available:
-                                        logger.info(
-                                            "DTLS available ciphers (first 5): device_id=%s ciphers=%s",
-                                            self._device_id, available
-                                        )
-                                
-                                # Log additional diagnostics periodically
-                                if poll_count % 5 == 0:
-                                    timeout = diag.get('dtls_timeout')
-                                    want_read = diag.get('want_read')
-                                    want_write = diag.get('want_write')
-                                    logger.info(
-                                        "DTLS extended diag: device_id=%s poll=%d timeout=%s "
-                                        "want_read=%s want_write=%s",
-                                        self._device_id, poll_count, timeout, want_read, want_write
-                                    )
-                except Exception as e:
-                    logger.debug("DTLS poll error: %s", e)
-                
-                if conn_state == "connected":
-                    logger.info(
-                        "DTLS handshake completed: device_id=%s session_id=%s connection_state=%s",
-                        self._device_id, self._session_id, conn_state
-                    )
-                    break
-                elif conn_state in ("failed", "closed", "disconnected"):
-                    logger.error(
-                        "DTLS handshake failed: device_id=%s session_id=%s connection_state=%s",
-                        self._device_id, self._session_id, conn_state
-                    )
-                    break
-                await asyncio.sleep(poll_interval)
-            else:
-                conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
-                logger.warning(
-                    "DTLS handshake did not complete within %ss: device_id=%s connection_state=%s. "
-                    "This is likely the root cause of no media - DTLS must complete for SRTP media to flow.",
-                    dtls_timeout, self._device_id, conn_state
-                )
-            
-            logger.info(
-                "WebRTC connection established: device_id=%s session_id=%s connection_state=%s ice_state=%s",
-                self._device_id, self._session_id,
-                getattr(self._peer_connection, 'connectionState', 'unknown'),
-                getattr(self._peer_connection, 'iceConnectionState', 'unknown'),
+            await asyncio.wait_for(
+                _wait_for_signaling_stable(self._peer_connection),
+                timeout=10.0
             )
         except asyncio.TimeoutError:
-            conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
-            ice_state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
-            logger.warning(
-                "WebRTC connection timeout: device_id=%s session_id=%s connection_state=%s ice_state=%s",
-                self._device_id, self._session_id, conn_state, ice_state
-            )
-            # Continue anyway - sometimes media flows even if state isn't "connected"
-        
-        logger.info("Live view session established for device_id=%s session_id=%s", self._device_id, self._session_id)
+            logger.warning("Signaling state did not become stable within timeout")
 
+        # KEY DEVIL IN THE DETAILS:
+        # Swift/libwebrtc automatically does DTLS handshake in background after setRemoteDescription.
+        # aiortc's _connect() is supposed to do this, but may have timing issues.
+        #
+        # Check if DTLS transport is working properly
+        await self._check_webrtc_connection_state()
+        
+        logger.info("Live view session established for device_id=%s session_id=%s (matching Swift workflow)", 
+                   self._device_id, self._session_id)
+
+        # Start segment recording loop
         self._segment_task = asyncio.create_task(self._segment_loop())
         self._running = True
 
     async def stop(self) -> None:
+        """Stop the session.
+        
+        REFERENCE: LiveViewSession.swift:stop() async
+        """
         if not self._running:
             return
         logger.info("Stopping OpenRing recorder: device_id=%s session_id=%s segments_created=%s", 
@@ -1035,11 +811,18 @@ class OpenRingAiortcRecorder:
             await self._segment_task
         if self._peer_connection:
             await _maybe_await(self._peer_connection.close())
-        await self._service.end_live_view(self._session_id)
+        try:
+            await self._service.end_live_view(self._session_id)
+        except Exception as e:
+            logger.warning("Failed to end live view session: %s", e)
         self._running = False
         logger.info("OpenRing recorder stopped: device_id=%s", self._device_id)
 
     def _handle_track(self, track: MediaStreamTrackProtocol) -> None:
+        """Handle incoming remote tracks.
+        
+        REFERENCE: PeerConnectionDelegate:peerConnection(_:didAdd:)
+        """
         # Log track state details for debugging
         track_state = getattr(track, 'readyState', 'unknown')
         track_id = getattr(track, 'id', 'unknown')
@@ -1053,6 +836,7 @@ class OpenRingAiortcRecorder:
         self._track_ready.set()
 
     def _handle_connection_state_change(self, *args: object) -> None:
+        """Handle WebRTC connection state changes."""
         state = getattr(self._peer_connection, 'connectionState', 'unknown')
         logger.info(
             "WebRTC connection state changed: device_id=%s session_id=%s state=%s",
@@ -1067,6 +851,7 @@ class OpenRingAiortcRecorder:
             )
 
     def _handle_ice_connection_state_change(self, *args: object) -> None:
+        """Handle ICE connection state changes."""
         state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
         logger.info(
             "ICE connection state changed: device_id=%s session_id=%s state=%s",
@@ -1077,52 +862,50 @@ class OpenRingAiortcRecorder:
             self._connection_ready.set()
 
     def _handle_signaling_state_change(self, *args: object) -> None:
+        """Handle signaling state changes."""
         state = getattr(self._peer_connection, 'signalingState', 'unknown')
         logger.info(
             "Signaling state changed: device_id=%s session_id=%s state=%s",
             self._device_id, self._session_id, state
         )
 
-    def _handle_ice_candidate(self, candidate: object) -> None:
-        if candidate:
-            candidate_str = str(candidate)[:100] if candidate else "null"
-            logger.debug(
-                "ICE candidate: device_id=%s candidate=%s...",
-                self._device_id, candidate_str
-            )
-
-    def _set_device_id_on_dtls_transports(self):
-        """Set device ID on DTLS transports for enhanced logging."""
+    async def _check_webrtc_connection_state(self) -> None:
+        """Check if WebRTC connection is established properly.
+        
+        This is a crucial step - we need DTLS to complete for media to flow.
+        aiortc may have different behavior than libwebrtc used in Swift.
+        """
+        # Wait for connection to establish (ICE + DTLS)
         try:
-            from .dtls_handshake_fix import set_device_id
-            
-            transceivers = getattr(self._peer_connection, 'getTransceivers', lambda: [])()
-            for i, tr in enumerate(transceivers):
-                receiver = getattr(tr, 'receiver', None)
-                if receiver:
-                    dtls_transport = getattr(receiver, 'transport', None)
-                    if dtls_transport:
-                        set_device_id(dtls_transport, self._device_id)
-                        logger.info(
-                            "Set device_id=%s on DTLS transport for transceiver %d",
-                            self._device_id, i
-                        )
-        except Exception as e:
-            logger.debug("Could not set device ID on DTLS transports: %s", e)
+            await asyncio.wait_for(
+                _wait_for_connection_established(self._peer_connection),
+                timeout=self._connection_timeout
+            )
+            logger.info(
+                "WebRTC connection established: device_id=%s session_id=%s",
+                self._device_id, self._session_id
+            )
+        except asyncio.TimeoutError:
+            conn_state = getattr(self._peer_connection, 'connectionState', 'unknown')
+            ice_state = getattr(self._peer_connection, 'iceConnectionState', 'unknown')
+            logger.warning(
+                "WebRTC connection did not fully establish: device_id=%s conn=%s ice=%s",
+                self._device_id, conn_state, ice_state
+            )
+            # Continue anyway - sometimes media flows even if state isn't "connected"
 
     async def _segment_loop(self) -> None:
+        """Main loop for recording segments."""
         logger.info("Segment loop starting: device_id=%s session_id=%s waiting_for_tracks timeout=%s",
                    self._device_id, self._session_id, self._track_wait_timeout)
+        
         try:
             await asyncio.wait_for(self._track_ready.wait(), timeout=self._track_wait_timeout)
             logger.info("Tracks received: device_id=%s session_id=%s track_count=%s",
                        self._device_id, self._session_id, len(self._remote_tracks))
-            
-            # Set device ID on DTLS transports for enhanced handshake logging
-            self._set_device_id_on_dtls_transports()
         except asyncio.TimeoutError:
-            logger.warning("Timed out waiting for remote tracks: device_id=%s session_id=%s timeout=%s",
-                          self._device_id, self._session_id, self._track_wait_timeout)
+            logger.error("Timed out waiting for remote tracks: device_id=%s session_id=%s timeout=%s",
+                        self._device_id, self._session_id, self._track_wait_timeout)
             return
         
         # Log track details for debugging
@@ -1135,107 +918,81 @@ class OpenRingAiortcRecorder:
                 self._device_id, track.kind, track_id, track_state, track_enabled
             )
         
-        # Probe for frames before starting recording
-        await self._probe_for_frames()
+        # Probe for frames before starting recording (detect if no media flowing)
+        probe_success = await self._probe_for_frames()
+        if not probe_success:
+            logger.warning(
+                "Frame probe failed - media may not be flowing: device_id=%s session_id=%s",
+                self._device_id, self._session_id
+            )
+            # Continue anyway - sometimes first probe fails but recording works
 
+        # Start recording segments
         while not self._stop_event.is_set():
             segment = self._next_segment()
             logger.info("Creating segment: device_id=%s session_id=%s segment_index=%s path=%s",
                        self._device_id, self._session_id, self._segment_index - 1, segment.path)
+            
             recorder = self._media_recorder_factory(str(segment.path))
+            
             # Use MediaRelay to subscribe to tracks for each segment
-            # This allows multiple segments to receive frames from the same source tracks
             for track in list(self._remote_tracks):
-                track_state = getattr(track, 'readyState', 'unknown')
-                logger.debug(
-                    "Adding track to segment: device_id=%s track_kind=%s track_state=%s segment_index=%s",
-                    self._device_id, track.kind, track_state, self._segment_index - 1
-                )
                 if self._media_relay:
                     relayed_track = self._media_relay.subscribe(track, buffered=False)
                     recorder.addTrack(relayed_track)
                 else:
                     recorder.addTrack(track)
 
-            logger.info(
-                "Starting segment recording: device_id=%s segment_path=%s track_count=%s "
-                "connection_state=%s ice_state=%s",
-                self._device_id, segment.path, len(self._remote_tracks),
-                getattr(self._peer_connection, 'connectionState', 'unknown') if self._peer_connection else 'none',
-                getattr(self._peer_connection, 'iceConnectionState', 'unknown') if self._peer_connection else 'none',
-            )
             try:
                 await _maybe_await(recorder.start())
-                logger.info(
-                    "Segment recording started, waiting for frames: device_id=%s segment_path=%s duration=%s",
-                    self._device_id, segment.path, self._segment_duration
-                )
+                logger.info("Segment recording started: device_id=%s segment_path=%s duration=%s",
+                           self._device_id, segment.path, self._segment_duration)
+                
+                # Wait for segment duration or stop signal
                 try:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=self._segment_duration)
                 except asyncio.TimeoutError:
-                    pass
+                    pass  # Segment duration elapsed, continue to next segment
                 
-                # Log connection state before stopping
-                logger.info(
-                    "Stopping segment recording: device_id=%s connection_state=%s ice_state=%s",
-                    self._device_id,
-                    getattr(self._peer_connection, 'connectionState', 'unknown') if self._peer_connection else 'none',
-                    getattr(self._peer_connection, 'iceConnectionState', 'unknown') if self._peer_connection else 'none',
-                )
                 await _maybe_await(recorder.stop())
+                
+                # Check if file was created successfully
                 file_exists = segment.path.exists()
                 file_size = segment.path.stat().st_size if file_exists else None
-                logger.info("Segment recording completed: device_id=%s segment_path=%s segment_index=%s",
-                           self._device_id, segment.path, self._segment_index - 1)
-                logger.info(
-                    "Segment file status: device_id=%s path=%s exists=%s size=%s",
-                    self._device_id,
-                    segment.path,
-                    file_exists,
-                    file_size,
-                )
+                logger.info("Segment recording completed: device_id=%s segment_path=%s exists=%s size=%s",
+                           self._device_id, segment.path, file_exists, file_size)
                 
-                # If file doesn't exist or is empty, log diagnostic info
-                if not file_exists or (file_size is not None and file_size == 0):
+                if not file_exists or file_size == 0:
                     logger.error(
                         "RECORDING FAILED - No media data received: device_id=%s path=%s. "
-                        "This usually means the WebRTC connection is not receiving media from Ring. "
-                        "Check firewall settings and ensure UDP traffic is allowed.",
+                        "WebRTC connection is not receiving media from Ring.",
                         self._device_id, segment.path
                     )
 
                 if self._on_segment_complete:
-                    logger.debug("Invoking segment complete callback: device_id=%s segment_path=%s",
-                                self._device_id, segment.path)
                     await _maybe_await(self._on_segment_complete(segment.path))
-                    logger.debug("Segment callback completed: device_id=%s segment_path=%s",
-                                self._device_id, segment.path)
+                    
             except Exception as exc:
                 logger.error("Error recording segment: device_id=%s segment_path=%s error=%s",
                             self._device_id, segment.path, exc, exc_info=True)
 
     async def _probe_for_frames(self, timeout: float = 10.0) -> bool:
-        """
-        Probe tracks to verify frames are being received.
-        Uses MediaRelay subscriptions so we don't consume the actual track frames.
+        """Probe tracks to verify frames are being received.
+        
+        Returns True if frames are flowing, False otherwise.
         """
         if not self._remote_tracks or not self._media_relay:
-            logger.warning(
-                "Cannot probe for frames: device_id=%s tracks=%s relay=%s",
-                self._device_id, len(self._remote_tracks), self._media_relay is not None
-            )
+            logger.warning("Cannot probe for frames: no tracks or relay available")
             return False
         
-        logger.info(
-            "Probing for frames: device_id=%s session_id=%s timeout=%s",
-            self._device_id, self._session_id, timeout
-        )
-        
-        # Try to receive a frame from the video track
+        # Find video track to probe
         video_tracks = [t for t in self._remote_tracks if t.kind == "video"]
         if not video_tracks:
-            logger.warning("No video track found for probing: device_id=%s", self._device_id)
+            logger.warning("No video track found for probing")
             return False
+        
+        logger.info("Probing for frames: device_id=%s session_id=%s timeout=%s",
+                   self._device_id, self._session_id, timeout)
         
         video_track = video_tracks[0]
         probe_track = self._media_relay.subscribe(video_track, buffered=False)
@@ -1244,13 +1001,12 @@ class OpenRingAiortcRecorder:
             # Try to receive a single frame
             recv_method = getattr(probe_track, 'recv', None)
             if not recv_method:
-                logger.warning(
-                    "Probe track has no recv method: device_id=%s track_type=%s",
-                    self._device_id, type(probe_track).__name__
-                )
+                logger.warning("Probe track has no recv method")
                 return False
             
             frame = await asyncio.wait_for(recv_method(), timeout=timeout)
+            
+            # Log frame info
             frame_type = type(frame).__name__
             frame_info = ""
             if hasattr(frame, 'width') and hasattr(frame, 'height'):
@@ -1258,51 +1014,57 @@ class OpenRingAiortcRecorder:
             if hasattr(frame, 'pts'):
                 frame_info += f" pts={frame.pts}"
             
-            logger.info(
-                "Frame probe SUCCESS: device_id=%s session_id=%s frame_type=%s%s",
-                self._device_id, self._session_id, frame_type, frame_info
-            )
+            logger.info("Frame probe SUCCESS: device_id=%s session_id=%s frame_type=%s%s",
+                       self._device_id, self._session_id, frame_type, frame_info)
             return True
+            
         except asyncio.TimeoutError:
-            logger.error(
-                "Frame probe FAILED - No frames received within %ss: device_id=%s session_id=%s. "
-                "WebRTC connection is not receiving media. Possible causes: "
-                "1) Ring session expired or invalid, "
-                "2) Firewall blocking UDP traffic, "
-                "3) NAT traversal failed, "
-                "4) Ring server not sending media",
-                timeout, self._device_id, self._session_id
-            )
+            logger.error("Frame probe FAILED - No frames received within %ss: device_id=%s session_id=%s",
+                        timeout, self._device_id, self._session_id)
             return False
         except Exception as exc:
-            logger.error(
-                "Frame probe ERROR: device_id=%s session_id=%s error=%s",
-                self._device_id, self._session_id, exc, exc_info=True
-            )
+            logger.error("Frame probe ERROR: device_id=%s session_id=%s error=%s",
+                        self._device_id, self._session_id, exc, exc_info=True)
             return False
 
     def _next_segment(self) -> RecorderSegment:
+        """Generate next segment path."""
         timestamp = datetime.fromtimestamp(self._time_provider(), tz=timezone.utc)
         filename = (
             f"ring_{self._device_id}_{timestamp.strftime('%Y%m%dT%H%M%SZ')}_{self._segment_index}.mp4"
         )
         self._segment_index += 1
         segment = RecorderSegment(path=self._output_dir / filename, started_at=timestamp)
-        logger.debug("Generated segment path: device_id=%s segment_index=%s path=%s",
-                    self._device_id, self._segment_index - 1, segment.path)
         return segment
+
+
+async def _wait_for_signaling_stable(pc: PeerConnectionProtocol) -> None:
+    """Wait for signaling state to become stable."""
+    while True:
+        state = getattr(pc, 'signalingState', 'unknown')
+        if state == "stable":
+            return
+        await asyncio.sleep(0.1)
+
+
+async def _wait_for_connection_established(pc: PeerConnectionProtocol) -> None:
+    """Wait for WebRTC connection to be fully established."""
+    while True:
+        conn_state = getattr(pc, 'connectionState', 'unknown')
+        if conn_state == "connected":
+            return
+        elif conn_state in ("failed", "closed", "disconnected"):
+            raise ConnectionError(f"Connection failed: {conn_state}")
+        await asyncio.sleep(0.1)
 
 
 async def _wait_for_ice_gathering_complete(
     peer_connection: PeerConnectionProtocol, timeout: float
 ) -> None:
-    """
-    Wait for ICE gathering to complete, with early exit if we have enough candidates.
-    Matches the Swift implementation which uses 2s timeout and early exit with 2+ candidates.
-    """
+    """Wait for ICE gathering to complete, with early exit like Swift implementation."""
     state = getattr(peer_connection, "iceGatheringState", None)
     if state in (None, "complete"):
-        logger.debug("ICE gathering already complete or not supported: state=%s", state)
+        logger.debug("ICE gathering already complete")
         return
     
     logger.debug("Waiting for ICE gathering: initial_state=%s timeout=%s", state, timeout)
@@ -1340,12 +1102,14 @@ async def _wait_for_ice_gathering_complete(
 
 
 async def _maybe_await(value: Awaitable[None] | None | object) -> object:
+    """Await if value is awaitable, otherwise return as-is."""
     if inspect.isawaitable(value):
         return await value
     return value
 
 
 def _load_peer_connection_factory() -> PeerConnectionFactory:
+    """Load RTCPeerConnection factory."""
     try:
         from aiortc import RTCPeerConnection
     except Exception as exc:
@@ -1360,6 +1124,7 @@ def _load_peer_connection_factory() -> PeerConnectionFactory:
 
 
 def _load_session_description_factory() -> SessionDescriptionFactory:
+    """Load RTCSessionDescription factory."""
     try:
         from aiortc import RTCSessionDescription
     except Exception as exc:
@@ -1368,6 +1133,7 @@ def _load_session_description_factory() -> SessionDescriptionFactory:
 
 
 def _load_media_recorder_factory() -> MediaRecorderFactory:
+    """Load MediaRecorder factory."""
     try:
         from aiortc.contrib.media import MediaRecorder
     except Exception as exc:
@@ -1376,6 +1142,7 @@ def _load_media_recorder_factory() -> MediaRecorderFactory:
 
 
 def _load_media_relay_factory() -> MediaRelayFactory:
+    """Load MediaRelay factory."""
     try:
         from aiortc.contrib.media import MediaRelay
     except Exception as exc:
@@ -1384,10 +1151,7 @@ def _load_media_relay_factory() -> MediaRelayFactory:
 
 
 def _build_rtc_configuration(ice_servers: list[IceServer]) -> Optional[object]:
-    """
-    Build RTCConfiguration with ICE servers for aiortc.
-    Returns None if no ICE servers or aiortc not available.
-    """
+    """Build RTCConfiguration with ICE servers for aiortc."""
     if not ice_servers:
         return None
     

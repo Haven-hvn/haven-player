@@ -861,19 +861,19 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
                     </IconButton>
                   </Box>
                   <Grid container spacing={2}>
-                    <Grid item xs={12} sm={6}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
                       <TextField fullWidth label="Name" value={endpoint.name} onChange={(e) => updateEndpoint(index, "name", e.target.value)} size="small" required />
                     </Grid>
-                    <Grid item xs={12} sm={6}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
                       <TextField fullWidth label="Base URL" value={endpoint.base_url} onChange={(e) => updateEndpoint(index, "base_url", e.target.value)} size="small" required placeholder="http://localhost:1234/v1" />
                     </Grid>
-                    <Grid item xs={12} sm={4}>
+                    <Grid size={{ xs: 12, sm: 4 }}>
                       <TextField fullWidth label="API Key" value={endpoint.api_key} onChange={(e) => updateEndpoint(index, "api_key", e.target.value)} size="small" required />
                     </Grid>
-                    <Grid item xs={12} sm={4}>
+                    <Grid size={{ xs: 12, sm: 4 }}>
                       <TextField fullWidth type="number" label="Weight" value={endpoint.weight} onChange={(e) => updateEndpoint(index, "weight", parseFloat(e.target.value))} inputProps={{ min: 1 }} size="small" required helperText="Higher = more traffic" />
                     </Grid>
-                    <Grid item xs={12} sm={4}>
+                    <Grid size={{ xs: 12, sm: 4 }}>
                       <TextField fullWidth type="number" label="Max Concurrent" value={endpoint.max_concurrent} onChange={(e) => updateEndpoint(index, "max_concurrent", parseInt(e.target.value, 10))} inputProps={{ min: 1 }} size="small" required helperText="Concurrent requests" />
                     </Grid>
                   </Grid>

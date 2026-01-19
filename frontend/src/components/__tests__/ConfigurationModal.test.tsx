@@ -26,6 +26,14 @@ const mockConfigResponse = {
   llm_base_url: "http://localhost:1234/v1",
   llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 2,
+  download_directory: "downloads",
+  vlm_frame_interval: 2.0,
+  vlm_threshold: 0.5,
+  vlm_return_timestamps: true,
+  vlm_return_confidence: true,
+  vlm_max_concurrent_requests: 15,
+  vlm_multiplexer_enabled: false,
+  vlm_multiplexer_endpoints: null,
   updated_at: "2024-01-15T10:30:00Z",
 };
 
@@ -133,6 +141,14 @@ describe("ConfigurationModal", () => {
           llm_base_url: mockConfigResponse.llm_base_url,
           llm_model: mockConfigResponse.llm_model,
           max_batch_size: mockConfigResponse.max_batch_size,
+          download_directory: mockConfigResponse.download_directory,
+          vlm_frame_interval: mockConfigResponse.vlm_frame_interval,
+          vlm_threshold: mockConfigResponse.vlm_threshold,
+          vlm_return_timestamps: mockConfigResponse.vlm_return_timestamps,
+          vlm_return_confidence: mockConfigResponse.vlm_return_confidence,
+          vlm_max_concurrent_requests: mockConfigResponse.vlm_max_concurrent_requests,
+          vlm_multiplexer_enabled: mockConfigResponse.vlm_multiplexer_enabled,
+          vlm_multiplexer_endpoints: mockConfigResponse.vlm_multiplexer_endpoints,
         });
       });
     });

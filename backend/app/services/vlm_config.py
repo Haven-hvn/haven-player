@@ -5,9 +5,33 @@ from app.models.database import SessionLocal
 from vlm_engine.config_models import EngineConfig, ModelConfig, PipelineConfig, PipelineModelConfig
 
 
+def validate_multiplexer_endpoints(endpoints: List[Dict[str, Any]]) -> None:
+    """Validate multiplexer endpoint configuration."""
+    if not endpoints:
+        raise ValueError("Multiplexer endpoints cannot be empty when enabled")
+    
+    for i, ep in enumerate(endpoints):
+        if not ep.get('base_url'):
+            raise ValueError(f"Endpoint {i}: base_url is required")
+        if not ep.get('name'):
+            raise ValueError(f"Endpoint {i}: name is required")
+        weight = ep.get('weight', 1)
+        if not isinstance(weight, int) or weight <= 0:
+            raise ValueError(f"Endpoint {i}: weight must be a positive integer")
+        max_concurrent = ep.get('max_concurrent', 5)
+        if not isinstance(max_concurrent, int) or max_concurrent <= 0:
+            raise ValueError(f"Endpoint {i}: max_concurrent must be a positive integer")
+
+
 def get_vlm_config() -> Dict[str, Any]:
     """
-    Load VLM configuration from database and merge with hardcoded defaults.
+    Load VLM configuration from database with new architectural requirements.
+    
+    Architecture Changes:
+    - Moved concurrency control from network layer (httpx) to application layer (multiplexer-llm)
+    - Each endpoint now requires max_concurrent for Intelligent Overflow Routing
+    - Global max_concurrent_requests acts as admission control gatekeeper
+    - Self-healing and per-request load balancing enabled
     """
     db = SessionLocal()
     try:
@@ -18,7 +42,7 @@ def get_vlm_config() -> Dict[str, Any]:
         # Convert comma-separated tags to list
         tag_list = [tag.strip() for tag in config.analysis_tags.split(',') if tag.strip()]
         
-        # Build model config
+        # Build model config with new multiplexer architecture
         model_config = {
             "type": "vlm_model",
             "model_file_name": "vlm_nsfw_model",
@@ -33,23 +57,37 @@ def get_vlm_config() -> Dict[str, Any]:
             "vlm_detected_tag_confidence": 0.99
         }
         
-        # Add multiplexer configuration if enabled
+        # Configure multiplexer with application-layer concurrency control
         if config.vlm_multiplexer_enabled:
             if config.vlm_multiplexer_endpoints:
-                # Use configured endpoints
+                # Validate and use configured endpoints
+                validate_multiplexer_endpoints(config.vlm_multiplexer_endpoints)
+                
                 model_config["use_multiplexer"] = True
                 model_config["multiplexer_endpoints"] = config.vlm_multiplexer_endpoints
+                
+                # Set global admission control based on sum of endpoint capacities
+                total_capacity = sum(ep['max_concurrent'] for ep in config.vlm_multiplexer_endpoints)
+                model_config["max_concurrent_requests"] = min(
+                    config.vlm_max_concurrent_requests,
+                    total_capacity + 5  # Small buffer above total capacity
+                )
+                
             elif config.llm_base_url:
-                # Create a single multiplexer endpoint from llm_base_url
-                model_config["use_multiplexer"] = True
-                model_config["multiplexer_endpoints"] = [
-                    {
-                        "base_url": config.llm_base_url,
-                        "api_key": "dummy_api_key",  # Placeholder if not needed
-                        "name": config.llm_model,
-                        "weight": 1
-                    }
-                ]
+                # Create single endpoint with reasonable defaults for backward compatibility
+                # This maintains functionality while requiring future migration to explicit endpoints
+                single_endpoint = {
+                    "base_url": config.llm_base_url,
+                    "name": "default_endpoint",
+                    "weight": 1,
+                    "max_concurrent": 5  # Conservative default
+                }
+                
+                model_config.update({
+                    "use_multiplexer": True,
+                    "multiplexer_endpoints": [single_endpoint],
+                    "max_concurrent_requests": min(config.vlm_max_concurrent_requests, 10)
+                })
         
         # Build the complete configuration
         return {
@@ -177,3 +215,41 @@ def get_vlm_processing_params() -> Dict[str, Any]:
         }
     finally:
         db.close()
+
+
+def get_example_multiplexer_config() -> str:
+    """
+    Return an example of proper multiplexer endpoint configuration.
+    
+    This demonstrates the new required format with smaller weights and explicit max_concurrent.
+    """
+    example_endpoints = [
+        {
+            "base_url": "http://primary-server:1234/v1",
+            "api_key": "your-api-key-here",
+            "name": "primary-server",
+            "weight": 8,
+            "max_concurrent": 10
+        },
+        {
+            "base_url": "http://secondary-server:1234/v1", 
+            "api_key": "your-api-key-here",
+            "name": "secondary-server",
+            "weight": 1,
+            "max_concurrent": 8
+        },
+        {
+            "base_url": "http://fallback-server:1234/v1",
+            "api_key": "your-api-key-here", 
+            "name": "fallback-server",
+            "weight": 1,
+            "max_concurrent": 2
+        }
+    ]
+    
+    import json
+    return json.dumps({
+        "vlm_multiplexer_enabled": True,
+        "vlm_multiplexer_endpoints": example_endpoints,
+        "vlm_max_concurrent_requests": 25  # Sum of capacities (10+8+2) + small buffer
+    }, indent=2)

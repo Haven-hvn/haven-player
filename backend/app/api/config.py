@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -73,12 +73,55 @@ def save_gateway_config(config: GatewayConfig) -> GatewayConfig:
     path.write_text(json.dumps({"base_url": config.base_url}, indent=2))
     return config
 
+class MultiplexerEndpoint(BaseModel):
+    """Individual endpoint configuration for VLM multiplexer load balancing."""
+    base_url: str
+    api_key: str
+    name: str
+    weight: int
+    max_concurrent: int
+
+    @field_validator('weight')
+    @classmethod
+    def validate_weight(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError('Weight must be a positive integer')
+        return v
+    
+    @field_validator('max_concurrent')
+    @classmethod
+    def validate_max_concurrent(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError('max_concurrent must be a positive integer')
+        return v
+
+class VLMMultiplexerConfig(BaseModel):
+    """Configuration model for VLM multiplexer architecture."""
+    enabled: bool
+    endpoints: List[MultiplexerEndpoint]
+    max_concurrent_requests: int
+
+    @field_validator('max_concurrent_requests')
+    @classmethod
+    def validate_max_concurrent_requests(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError('max_concurrent_requests must be a positive integer')
+        return v
+
 class ConfigUpdate(BaseModel):
     analysis_tags: str
     llm_base_url: str
     llm_model: str
     max_batch_size: int
     download_directory: str
+    vlm_frame_interval: float
+    vlm_threshold: float
+    vlm_return_timestamps: bool
+    vlm_return_confidence: bool
+    # New VLM concurrency control - application layer
+    vlm_max_concurrent_requests: int
+    vlm_multiplexer_enabled: bool
+    vlm_multiplexer_endpoints: List[MultiplexerEndpoint] | None
 
     @field_validator('analysis_tags')
     @classmethod
@@ -117,6 +160,27 @@ class ConfigUpdate(BaseModel):
         if not v or not v.strip():
             raise ValueError('Download directory cannot be empty')
         return v.strip()
+    
+    @field_validator('vlm_frame_interval')
+    @classmethod
+    def validate_frame_interval(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError('VLM frame interval must be positive')
+        return v
+    
+    @field_validator('vlm_threshold')
+    @classmethod
+    def validate_threshold(cls, v: float) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError('VLM threshold must be between 0 and 1')
+        return v
+    
+    @field_validator('vlm_max_concurrent_requests')
+    @classmethod
+    def validate_vlm_concurrent(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError('VLM max concurrent requests must be positive')
+        return v
 
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -128,6 +192,13 @@ class ConfigResponse(BaseModel):
     max_batch_size: int
     download_directory: str
     updated_at: datetime
+    vlm_frame_interval: float
+    vlm_threshold: float
+    vlm_return_timestamps: bool
+    vlm_return_confidence: bool
+    vlm_max_concurrent_requests: int
+    vlm_multiplexer_enabled: bool
+    vlm_multiplexer_endpoints: List[Dict[str, Any]] | None
 
 class AvailableModelsResponse(BaseModel):
     models: List[str]
@@ -159,6 +230,17 @@ def update_config(config_update: ConfigUpdate, db: Session = Depends(get_db)) ->
     config.llm_model = config_update.llm_model
     config.max_batch_size = config_update.max_batch_size
     config.download_directory = config_update.download_directory
+    config.vlm_frame_interval = config_update.vlm_frame_interval
+    config.vlm_threshold = config_update.vlm_threshold
+    config.vlm_return_timestamps = config_update.vlm_return_timestamps
+    config.vlm_return_confidence = config_update.vlm_return_confidence
+    config.vlm_max_concurrent_requests = config_update.vlm_max_concurrent_requests
+    config.vlm_multiplexer_enabled = config_update.vlm_multiplexer_enabled
+    
+    # Update multiplexer endpoints if provided
+    if config_update.vlm_multiplexer_endpoints is not None:
+        config.vlm_multiplexer_endpoints = [ep.model_dump() for ep in config_update.vlm_multiplexer_endpoints]
+    
     config.updated_at = datetime.now(timezone.utc)
     
     db.commit()

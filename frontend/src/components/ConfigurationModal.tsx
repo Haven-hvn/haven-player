@@ -24,6 +24,7 @@ import {
   Switch,
   FormHelperText,
   SelectChangeEvent,
+  Grid,
 } from "@mui/material";
 import {
   Save as SaveIcon,
@@ -38,6 +39,7 @@ import {
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
   ContentCopy as ContentCopyIcon,
+  Add as AddIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService, evmService } from "@/services/api";
@@ -69,7 +71,8 @@ interface AppConfig {
   vlm_return_timestamps: boolean;
   vlm_return_confidence: boolean;
   vlm_multiplexer_enabled: boolean;
-  vlm_multiplexer_endpoints: string | null;
+  vlm_multiplexer_endpoints: MultiplexerEndpoint[] | null;
+  vlm_max_concurrent_requests: number;
   // LLM Configuration
   llm_base_url: string;
   llm_model: string;
@@ -79,6 +82,14 @@ interface AppConfig {
 }
 
 type EditableAppConfig = Omit<AppConfig, "id" | "updated_at">;
+
+interface MultiplexerEndpoint {
+  base_url: string;
+  api_key: string;
+  name: string;
+  weight: number;
+  max_concurrent: number;
+}
 
 interface ConfigurationModalProps {
   open: boolean;
@@ -112,6 +123,7 @@ const defaultAppConfig: EditableAppConfig = {
   vlm_return_confidence: true,
   vlm_multiplexer_enabled: false,
   vlm_multiplexer_endpoints: null,
+  vlm_max_concurrent_requests: 15,
   llm_base_url: "http://localhost:1234/v1",
   llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 1,
@@ -153,6 +165,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [gatewayStatusMessage, setGatewayStatusMessage] = useState<string | null>(null);
   const [loadingGateway, setLoadingGateway] = useState(false);
   const [checkingBalance, setCheckingBalance] = useState(false);
+  const [showMultiplexer, setShowMultiplexer] = useState(false);
   const [balanceInfo, setBalanceInfo] = useState<{
     wallet_address: string;
     chain_name: string;
@@ -195,6 +208,26 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       if (!response.ok) throw new Error("Failed to load configuration");
 
       const data = await response.json();
+      
+      // Parse multiplexer endpoints from JSON response
+      let multiplexerEndpoints = null;
+      if (data.vlm_multiplexer_endpoints) {
+        if (Array.isArray(data.vlm_multiplexer_endpoints)) {
+          // Direct array (new format)
+          multiplexerEndpoints = data.vlm_multiplexer_endpoints;
+        } else if (typeof data.vlm_multiplexer_endpoints === 'string') {
+          try {
+            // Parse JSON string (legacy format)
+            const parsed = JSON.parse(data.vlm_multiplexer_endpoints);
+            if (Array.isArray(parsed)) {
+              multiplexerEndpoints = parsed;
+            }
+          } catch (e) {
+            console.warn('Failed to parse multiplexer endpoints JSON:', e);
+          }
+        }
+      }
+      
       setConfig({
         analysis_tags: data.analysis_tags,
         vlm_frame_interval: data.vlm_frame_interval ?? 2.0,
@@ -202,7 +235,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         vlm_return_timestamps: data.vlm_return_timestamps ?? true,
         vlm_return_confidence: data.vlm_return_confidence ?? true,
         vlm_multiplexer_enabled: data.vlm_multiplexer_enabled ?? false,
-        vlm_multiplexer_endpoints: data.vlm_multiplexer_endpoints ?? null,
+        vlm_multiplexer_endpoints: multiplexerEndpoints,
+        vlm_max_concurrent_requests: data.vlm_max_concurrent_requests ?? 15,
         llm_base_url: data.llm_base_url,
         llm_model: data.llm_model,
         max_batch_size: data.max_batch_size,
@@ -346,6 +380,37 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       setGatewayStatus("error");
       setGatewayStatusMessage("Gateway unreachable");
     }
+  };
+
+  const addEndpoint = () => {
+    const newEndpoint: MultiplexerEndpoint = {
+      base_url: "http://localhost:1234/v1",
+      api_key: "",
+      name: `endpoint-${(config.vlm_multiplexer_endpoints?.length || 0) + 1}`,
+      weight: 1,
+      max_concurrent: 5,
+    };
+    setConfig((prev) => ({
+      ...prev,
+      vlm_multiplexer_endpoints: [...(prev.vlm_multiplexer_endpoints || []), newEndpoint],
+    }));
+  };
+
+  const removeEndpoint = (index: number) => {
+    setConfig((prev) => ({
+      ...prev,
+      vlm_multiplexer_endpoints: prev.vlm_multiplexer_endpoints?.filter((_, i) => i !== index) || null,
+    }));
+  };
+
+  const updateEndpoint = (index: number, field: keyof MultiplexerEndpoint, value: string | number) => {
+    setConfig((prev) => {
+      const endpoints = prev.vlm_multiplexer_endpoints ? [...prev.vlm_multiplexer_endpoints] : [];
+      if (endpoints[index]) {
+        (endpoints[index] as any)[field] = value;
+      }
+      return { ...prev, vlm_multiplexer_endpoints: endpoints };
+    });
   };
 
   const handleSave = async () => {
@@ -757,9 +822,80 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         </FormControl>
       </Box>
 
-      <Divider sx={{ backgroundColor: "#F0F0F0" }} />
+      <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
 
+      {/* Multiplexer UI Section */}
       <Box>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 3 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <Box sx={{ width: 24, height: 24, backgroundColor: "#9C27B0", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <BatchIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
+            </Box>
+            <Typography variant="h6" sx={{ color: "#000000", fontWeight: 500, fontSize: "16px" }}>
+              LLM Multiplexer
+            </Typography>
+          </Box>
+          <FormControlLabel
+            control={<Switch checked={config.vlm_multiplexer_enabled} onChange={(e) => setConfig((prev) => ({ ...prev, vlm_multiplexer_enabled: e.target.checked }))} />}
+            label="Enable multiplexer"
+          />
+        </Box>
+
+        {config.vlm_multiplexer_enabled && (
+          <>
+            <Alert severity="info" sx={{ mb: 3 }}>
+              Multiplexer distributes requests across multiple LLM endpoints for load balancing and fault tolerance.
+              When enabled, single endpoint settings are ignored.
+            </Alert>
+            
+            {/* Add/Edit endpoints UI */}
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {config.vlm_multiplexer_endpoints?.map((endpoint, index) => (
+                <Box key={index} sx={{ p: 2, border: "1px solid #E0E0E0", borderRadius: "8px" }}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      Endpoint {index + 1}: {endpoint.name}
+                    </Typography>
+                    <IconButton size="small" onClick={() => removeEndpoint(index)} sx={{ color: "#FF5252" }} color="error">
+                      <CancelIcon />
+                    </IconButton>
+                  </Box>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6}>
+                      <TextField fullWidth label="Name" value={endpoint.name} onChange={(e) => updateEndpoint(index, "name", e.target.value)} size="small" required />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField fullWidth label="Base URL" value={endpoint.base_url} onChange={(e) => updateEndpoint(index, "base_url", e.target.value)} size="small" required placeholder="http://localhost:1234/v1" />
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <TextField fullWidth label="API Key" value={endpoint.api_key} onChange={(e) => updateEndpoint(index, "api_key", e.target.value)} size="small" required />
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <TextField fullWidth type="number" label="Weight" value={endpoint.weight} onChange={(e) => updateEndpoint(index, "weight", parseFloat(e.target.value))} inputProps={{ min: 1 }} size="small" required helperText="Higher = more traffic" />
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <TextField fullWidth type="number" label="Max Concurrent" value={endpoint.max_concurrent} onChange={(e) => updateEndpoint(index, "max_concurrent", parseInt(e.target.value, 10))} inputProps={{ min: 1 }} size="small" required helperText="Concurrent requests" />
+                    </Grid>
+                  </Grid>
+                </Box>
+              ))}
+              
+              <Button startIcon={<AddIcon />} onClick={addEndpoint} variant="outlined" sx={{ alignSelf: "flex-start" }}>
+                Add Endpoint
+              </Button>
+            </Box>
+            
+            <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
+            
+            <TextField fullWidth type="number" label="Global Max Concurrent Requests" value={config.vlm_max_concurrent_requests} onChange={(e) => setConfig((prev) => ({ ...prev, vlm_max_concurrent_requests: parseInt(e.target.value, 10) }))} inputProps={{ min: 1 }} helperText="Total concurrent requests across all endpoints" />
+          </>
+        )}
+      </Box>
+
+      <Divider sx={{ backgroundColor: "#F0F0F0" }} style={{ margin: '16px 0' }} />
+
+      {/* Single endpoint configuration - disabled when multiplexer is enabled */}
+      <Box sx={{ opacity: config.vlm_multiplexer_enabled ? 0.5 : 1, pointerEvents: config.vlm_multiplexer_enabled ? "none" : "auto" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}>
           <Box
             sx={{
@@ -787,6 +923,9 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
         </Box>
 
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <Typography variant="body2" color="text.secondary">
+            {config.vlm_multiplexer_enabled ? "Single endpoint settings are ignored when multiplexer is enabled" : "Configure a single LLM endpoint"}
+          </Typography>
           <TextField
             fullWidth
             label="LLM Base URL"

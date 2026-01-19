@@ -15,7 +15,9 @@ class AppConfig(Base):
     vlm_threshold: Mapped[float] = mapped_column(Float, default=0.5)
     vlm_return_timestamps: Mapped[bool] = mapped_column(Boolean, default=True)
     vlm_return_confidence: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Multiplexer Configuration
+    # Global VLM concurrency control - admission control gatekeeper
+    vlm_max_concurrent_requests: Mapped[int] = mapped_column(Integer, default=15)
+    # Multiplexer Configuration - application-layer load balancing
     vlm_multiplexer_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     vlm_multiplexer_endpoints: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
     # LLM Configuration
@@ -42,6 +44,7 @@ class AppConfig(Base):
             'vlm_threshold': self.vlm_threshold,
             'vlm_return_timestamps': self.vlm_return_timestamps,
             'vlm_return_confidence': self.vlm_return_confidence,
+            'vlm_max_concurrent_requests': self.vlm_max_concurrent_requests,
             'vlm_multiplexer_enabled': self.vlm_multiplexer_enabled,
             'vlm_multiplexer_endpoints': self.vlm_multiplexer_endpoints,
             'llm_base_url': self.llm_base_url,
@@ -54,4 +57,3 @@ class AppConfig(Base):
             'upload_coordinator_priority': self.upload_coordinator_priority,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
-

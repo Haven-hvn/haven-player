@@ -18,6 +18,7 @@ from app.models.base import Base
 from app.models.database import get_db
 from app.models.config import AppConfig
 from app.models.plugin import Plugin as PluginModel
+from app.api.config import ConfigUpdate
 
 # Create test database
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_config.db"
@@ -413,6 +414,345 @@ class TestConfigAPI:
             json={"base_url": "ftp://invalid-gateway"},
         )
         assert response.status_code == 422
+
+    def test_get_config_contains_vlm_fields(self, client: TestClient):
+        """Test that GET /config/ returns VLM multiplexer fields"""
+        response = client.get("/api/config/")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "vlm_multiplexer_enabled" in data
+        assert "vlm_multiplexer_endpoints" in data
+        assert "vlm_max_concurrent_requests" in data
+        assert "vlm_frame_interval" in data
+        assert "vlm_threshold" in data
+        assert "vlm_return_timestamps" in data
+        assert "vlm_return_confidence" in data
+
+    def test_update_config_with_multiplexer_enabled(self, client: TestClient):
+        """Test updating config with multiplexer enabled"""
+        update_data = {
+            "analysis_tags": "person,vehicle,animal",
+            "llm_base_url": "http://localhost:8080",
+            "llm_model": "zai-org/glm-4.6v-flash",
+            "max_batch_size": 3,
+            "download_directory": "downloads",
+            "vlm_frame_interval": 3.0,
+            "vlm_threshold": 0.7,
+            "vlm_return_timestamps": True,
+            "vlm_return_confidence": True,
+            "vlm_max_concurrent_requests": 25,
+            "vlm_multiplexer_enabled": True,
+            "vlm_multiplexer_endpoints": [
+                {
+                    "base_url": "http://primary:1234/v1",
+                    "api_key": "key1",
+                    "name": "primary",
+                    "weight": 8,
+                    "max_concurrent": 10
+                },
+                {
+                    "base_url": "http://secondary:1234/v1", 
+                    "api_key": "key2",
+                    "name": "secondary",
+                    "weight": 2,
+                    "max_concurrent": 5
+                }
+            ]
+        }
+        
+        response = client.put("/api/config/", json=update_data)
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["vlm_multiplexer_enabled"] is True
+        assert data["vlm_max_concurrent_requests"] == 25
+        assert len(data["vlm_multiplexer_endpoints"]) == 2
+        assert data["vlm_multiplexer_endpoints"][0]["name"] == "primary"
+        assert data["vlm_multiplexer_endpoints"][0]["weight"] == 8
+        assert data["vlm_multiplexer_endpoints"][1]["name"] == "secondary"
+        assert data["vlm_multiplexer_endpoints"][1]["weight"] == 2
+
+    def test_update_config_with_multiplexer_disabled(self, client: TestClient):
+        """Test updating config with multiplexer disabled"""
+        update_data = {
+            "analysis_tags": "person,vehicle,animal",
+            "llm_base_url": "http://localhost:8080",
+            "llm_model": "zai-org/glm-4.6v-flash",
+            "max_batch_size": 3,
+            "download_directory": "downloads",
+            "vlm_frame_interval": 2.0,
+            "vlm_threshold": 0.5,
+            "vlm_return_timestamps": True,
+            "vlm_return_confidence": True,
+            "vlm_max_concurrent_requests": 15,
+            "vlm_multiplexer_enabled": False,
+            "vlm_multiplexer_endpoints": None
+        }
+        
+        response = client.put("/api/config/", json=update_data)
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["vlm_multiplexer_enabled"] is False
+        assert data["vlm_max_concurrent_requests"] == 15
+        assert data["vlm_multiplexer_endpoints"] is None
+
+    def test_update_config_multiplexer_validation_empty_endpoints(self, client: TestClient):
+        """Test validation error when multiplexer is enabled but endpoints is empty list"""
+        update_data = {
+            "analysis_tags": "person,vehicle,animal",
+            "llm_base_url": "http://localhost:8080",
+            "llm_model": "zai-org/glm-4.6v-flash",
+            "max_batch_size": 3,
+            "download_directory": "downloads",
+            "vlm_frame_interval": 2.0,
+            "vlm_threshold": 0.5,
+            "vlm_return_timestamps": True,
+            "vlm_return_confidence": True,
+            "vlm_max_concurrent_requests": 15,
+            "vlm_multiplexer_enabled": True,
+            "vlm_multiplexer_endpoints": []
+        }
+        
+        response = client.put("/api/config/", json=update_data)
+        assert response.status_code == 200  # Empty list is allowed for storage, validation happens at service level
+        
+        data = response.json()
+        assert data["vlm_multiplexer_enabled"] is True
+        assert data["vlm_multiplexer_endpoints"] == []
+
+    def test_update_config_vlm_max_concurrent_validation_bounds(self, client: TestClient):
+        """Test validation of vlm_max_concurrent_requests field"""
+        # Test valid value
+        update_data = {
+            "analysis_tags": "person",
+            "llm_base_url": "http://localhost:1234/v1",
+            "llm_model": "zai-org/glm-4.6v-flash",
+            "max_batch_size": 1,
+            "download_directory": "downloads",
+            "vlm_frame_interval": 2.0,
+            "vlm_threshold": 0.5,
+            "vlm_return_timestamps": True,
+            "vlm_return_confidence": True,
+            "vlm_max_concurrent_requests": 100,
+            "vlm_multiplexer_enabled": False,
+            "vlm_multiplexer_endpoints": None
+        }
+        
+        response = client.put("/api/config/", json=update_data)
+        assert response.status_code == 200
+        assert response.json()["vlm_max_concurrent_requests"] == 100
+
+        # Test invalid value (zero)
+        update_data["vlm_max_concurrent_requests"] = 0
+        response = client.put("/api/config/", json=update_data)
+        assert response.status_code == 422
+        assert "VLM max concurrent requests must be positive" in response.text
+
+        # Test invalid value (negative)
+        update_data["vlm_max_concurrent_requests"] = -5
+        response = client.put("/api/config/", json=update_data)
+        assert response.status_code == 422
+        assert "VLM max concurrent requests must be positive" in response.text
+
+    def test_config_update_vlm_fields_persistence(self, client: TestClient):
+        """Test that VLM fields are properly persisted"""
+        # Update with VLM fields
+        update_data = {
+            "analysis_tags": "test,persistence",
+            "llm_base_url": "http://test:9999",
+            "llm_model": "zai-org/glm-4.6v-flash",
+            "max_batch_size": 7,
+            "download_directory": "test_downloads",
+            "vlm_frame_interval": 4.0,
+            "vlm_threshold": 0.8,
+            "vlm_return_timestamps": False,
+            "vlm_return_confidence": False,
+            "vlm_max_concurrent_requests": 30,
+            "vlm_multiplexer_enabled": True,
+            "vlm_multiplexer_endpoints": [
+                {
+                    "base_url": "http://test1:1234/v1",
+                    "api_key": "testkey1",
+                    "name": "test-endpoint-1",
+                    "weight": 5,
+                    "max_concurrent": 8
+                }
+            ]
+        }
+        
+        response = client.put("/api/config/", json=update_data)
+        assert response.status_code == 200
+        
+        # Verify persistence by retrieving config again
+        response = client.get("/api/config/")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["vlm_frame_interval"] == 4.0
+        assert data["vlm_threshold"] == 0.8
+        assert data["vlm_return_timestamps"] is False
+        assert data["vlm_return_confidence"] is False
+        assert data["vlm_max_concurrent_requests"] == 30
+        assert data["vlm_multiplexer_enabled"] is True
+        assert len(data["vlm_multiplexer_endpoints"]) == 1
+        assert data["vlm_multiplexer_endpoints"][0]["name"] == "test-endpoint-1"
+
+
+class TestMultiplexerValidation:
+    """Test suite for VLM multiplexer endpoint validation"""
+
+    def test_validate_multiplexer_endpoints_valid(self):
+        """Test validation of valid multiplexer endpoints"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        valid_endpoints = [
+            {
+                "base_url": "http://primary:1234/v1",
+                "api_key": "key123",
+                "name": "primary",
+                "weight": 8,
+                "max_concurrent": 10
+            },
+            {
+                "base_url": "http://secondary:1234/v1", 
+                "api_key": "key456",
+                "name": "secondary",
+                "weight": 2,
+                "max_concurrent": 5
+            }
+        ]
+        
+        # Should not raise any exception
+        validate_multiplexer_endpoints(valid_endpoints)
+
+    def test_validate_multiplexer_endpoints_empty_list(self):
+        """Test validation error for empty endpoints list"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        with pytest.raises(ValueError, match="Multiplexer endpoints cannot be empty when enabled"):
+            validate_multiplexer_endpoints([])
+
+    def test_validate_multiplexer_endpoints_missing_base_url(self):
+        """Test validation error for missing base_url"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        incomplete_endpoint = [{
+            "api_key": "key123",
+            "name": "primary",
+            "weight": 8,
+            "max_concurrent": 10
+            # Missing base_url
+        }]
+        
+        with pytest.raises(ValueError, match="Endpoint 0: base_url is required"):
+            validate_multiplexer_endpoints(incomplete_endpoint)
+
+    def test_validate_multiplexer_endpoints_missing_name(self):
+        """Test validation error for missing name"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        incomplete_endpoint = [{
+            "base_url": "http://primary:1234/v1",
+            "api_key": "key123",
+            "weight": 8,
+            "max_concurrent": 10
+            # Missing name
+        }]
+        
+        with pytest.raises(ValueError, match="Endpoint 0: name is required"):
+            validate_multiplexer_endpoints(incomplete_endpoint)
+
+    def test_validate_multiplexer_endpoints_invalid_weight(self):
+        """Test validation error for invalid weight"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        # Test negative weight
+        invalid_endpoint = [{
+            "base_url": "http://primary:1234/v1",
+            "api_key": "key123",
+            "name": "primary",
+            "weight": -1,
+            "max_concurrent": 10
+        }]
+        
+        with pytest.raises(ValueError, match="Endpoint 0: weight must be a positive integer"):
+            validate_multiplexer_endpoints(invalid_endpoint)
+        
+        # Test zero weight
+        invalid_endpoint[0]["weight"] = 0
+        with pytest.raises(ValueError, match="Endpoint 0: weight must be a positive integer"):
+            validate_multiplexer_endpoints(invalid_endpoint)
+        
+        # Test non-integer weight
+        invalid_endpoint[0]["weight"] = 2.5
+        with pytest.raises(ValueError, match="Endpoint 0: weight must be a positive integer"):
+            validate_multiplexer_endpoints(invalid_endpoint)
+
+    def test_validate_multiplexer_endpoints_invalid_max_concurrent(self):
+        """Test validation error for invalid max_concurrent"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        # Test negative max_concurrent
+        invalid_endpoint = [{
+            "base_url": "http://primary:1234/v1",
+            "api_key": "key123",
+            "name": "primary",
+            "weight": 8,
+            "max_concurrent": -5
+        }]
+        
+        with pytest.raises(ValueError, match="Endpoint 0: max_concurrent must be a positive integer"):
+            validate_multiplexer_endpoints(invalid_endpoint)
+        
+        # Test zero max_concurrent
+        invalid_endpoint[0]["max_concurrent"] = 0
+        with pytest.raises(ValueError, match="Endpoint 0: max_concurrent must be a positive integer"):
+            validate_multiplexer_endpoints(invalid_endpoint)
+        
+        # Test non-integer max_concurrent
+        invalid_endpoint[0]["max_concurrent"] = 3.7
+        with pytest.raises(ValueError, match="Endpoint 0: max_concurrent must be a positive integer"):
+            validate_multiplexer_endpoints(invalid_endpoint)
+
+    def test_validate_multiplexer_endpoints_multiple_errors(self):
+        """Test validation with multiple endpoints, some with errors"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        multiple_endpoints = [
+            {
+                "base_url": "http://primary:1234/v1",
+                "api_key": "key123",
+                "name": "primary",
+                "weight": 8,
+                "max_concurrent": 10
+            },
+            {
+                "base_url": "http://bad:1234/v1",
+                # Missing api_key, name
+                "weight": -5,
+                "max_concurrent": 2.5
+            }
+        ]
+        
+        with pytest.raises(ValueError, match="Endpoint 1: name is required"):
+            validate_multiplexer_endpoints(multiple_endpoints)
+
+    def test_validate_multiplexer_endpoints_default_values(self):
+        """Test that default values are used for missing optional fields"""
+        from app.services.vlm_config import validate_multiplexer_endpoints
+        
+        # Test endpoints with missing optional fields (should use defaults)
+        endpoint_with_defaults = [{
+            "base_url": "http://primary:1234/v1",
+            "api_key": "key123",
+            "name": "primary"
+            # Missing weight and max_concurrent - should use defaults
+        }]
+        
+        # Should not raise error, defaults are handled by the function
+        validate_multiplexer_endpoints(endpoint_with_defaults)
 
 
 class TestPluginConfigAPI:

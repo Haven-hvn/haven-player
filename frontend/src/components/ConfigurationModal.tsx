@@ -627,8 +627,8 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 
   return (
       <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { backgroundColor: liquidGlassTokens.canvas.base, color: "#fff", overflow: "hidden", border: glassPanelStyles.border, borderRadius: glassPanelStyles.borderRadius, boxShadow: glassPanelStyles.boxShadow } }} BackdropProps={{ sx: { backgroundColor: "rgba(0, 0, 0, 0.7)", backdropFilter: "blur(12px)" } }}>
-      <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pb: 1, px: 3, pt: 3, backgroundColor: liquidGlassTokens.canvas.elevated, borderBottom: `1px solid ${liquidGlassTokens.glass.border}` }}>
-        <Typography variant="h6" sx={{ fontWeight: 600, fontSize: "18px", color: "#fff", letterSpacing: "-0.01em" }}>Settings</Typography>
+      <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pb: 1, px: 3, pt: 3, backgroundColor: liquidGlassTokens.canvas.elevated, borderBottom: `1px solid ${liquidGlassTokens.glass.border}`, fontWeight: 600, fontSize: "18px", color: "#fff", letterSpacing: "-0.01em" }}>
+        Settings
         <IconButton onClick={onClose} sx={{ color: 'rgba(255, 255, 255, 0.6)', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.08)' } }}><CloseIcon /></IconButton>
       </DialogTitle>
 

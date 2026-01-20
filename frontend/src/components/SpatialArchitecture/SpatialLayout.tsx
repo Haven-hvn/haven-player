@@ -205,7 +205,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
         activeSourceFilter={activeSourceFilter}
         activeStateFilter={activeStateFilter}
         onSourceFilterChange={setSourceFilter}
-        onStateFilterChange={setStateFilter}
+        onStateFilterChange={(state: string) => setStateFilter(state as "all" | TransformationState)}
         onRefresh={refresh}
         onSettings={handleSettingsClick}
       />

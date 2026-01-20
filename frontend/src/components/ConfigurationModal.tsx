@@ -316,7 +316,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const updateEndpoint = (index: number, field: keyof MultiplexerEndpoint, value: string | number) => {
     setConfig((prev) => {
       const endpoints = prev.vlm_multiplexer_endpoints ? [...prev.vlm_multiplexer_endpoints] : [];
-      if (endpoints[index]) (endpoints[index] as Record<string, unknown>)[field] = value;
+      if (endpoints[index]) endpoints[index][field] = value as never;
       return { ...prev, vlm_multiplexer_endpoints: endpoints };
     });
   };
@@ -626,7 +626,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const saveLabel = isPlaybackTab ? "Save Playback Settings" : isFilecoinTab ? "Save Filecoin Settings" : isArkivTab ? "Save Arkiv Settings" : "Save Configuration";
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { backgroundColor: liquidGlassTokens.canvas.base, color: "#fff", border: `1px solid ${liquidGlassTokens.glass.border}`, borderRadius: liquidGlassTokens.radius.lg, boxShadow: "0 25px 80px rgba(0, 0, 0, 0.6)", overflow: "hidden", ...glassPanelStyles } }} BackdropProps={{ sx: { backgroundColor: "rgba(0, 0, 0, 0.7)", backdropFilter: "blur(12px)" } }}>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { backgroundColor: liquidGlassTokens.canvas.base, color: "#fff", overflow: "hidden", ...glassPanelStyles, boxShadow: "0 25px 80px rgba(0, 0, 0, 0.6)" } }} BackdropProps={{ sx: { backgroundColor: "rgba(0, 0, 0, 0.7)", backdropFilter: "blur(12px)" } }}>
       <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pb: 1, px: 3, pt: 3, backgroundColor: liquidGlassTokens.canvas.elevated, borderBottom: `1px solid ${liquidGlassTokens.glass.border}` }}>
         <Typography variant="h6" sx={{ fontWeight: 600, fontSize: "18px", color: "#fff", letterSpacing: "-0.01em" }}>Settings</Typography>
         <IconButton onClick={onClose} sx={{ color: 'rgba(255, 255, 255, 0.6)', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.08)' } }}><CloseIcon /></IconButton>

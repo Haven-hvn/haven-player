@@ -44,28 +44,15 @@ import {
 import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService, evmService } from "@/services/api";
 import type { SettingsTab } from "@/context/SettingsNavigationContext";
-
 import type { IpfsGatewayConfig } from "@/types/playback";
-import {
-  DEFAULT_IPFS_GATEWAY,
-  normalizeGatewayBase,
-} from "@/services/playbackResolver";
+import { DEFAULT_IPFS_GATEWAY, normalizeGatewayBase } from "@/services/playbackResolver";
 import { gatewayService } from "@/services/api";
 import { ipcRenderer } from "electron";
-
-// Explicitly define JSX.IntrinsicElements for missing types
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      "webview": React.DetailedHTMLProps<React.WebViewHTMLAttributes<HTMLWebViewElement>, HTMLWebViewElement>;
-    }
-  }
-}
+import { liquidGlassTokens, glowEffects } from "@/styles/liquidGlassTheme";
 
 interface AppConfig {
   id: number;
   analysis_tags: string;
-  // VLM Processing Configuration
   vlm_frame_interval: number;
   vlm_threshold: number;
   vlm_return_timestamps: boolean;
@@ -73,11 +60,10 @@ interface AppConfig {
   vlm_multiplexer_enabled: boolean;
   vlm_multiplexer_endpoints: MultiplexerEndpoint[] | null;
   vlm_max_concurrent_requests: number;
-  // LLM Configuration
   llm_base_url: string;
   llm_model: string;
   max_batch_size: number;
-  download_directory: string; /* Added global download directory */
+  download_directory: string;
   updated_at: string;
 }
 
@@ -105,7 +91,7 @@ const defaultArkivConfig: ArkivConfig = {
   rpcUrl: "https://mendoza.hoodi.arkiv.network/rpc",
   enabled: false,
   syncEnabled: false,
-  expirationWeeks: 4, // Default: 4 weeks
+  expirationWeeks: 4,
 };
 
 const defaultFilecoinConfig: FilecoinConfig = {
@@ -127,17 +113,97 @@ const defaultAppConfig: EditableAppConfig = {
   llm_base_url: "http://localhost:1234/v1",
   llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 1,
-  download_directory: "downloads", /* Added default download directory */
+  download_directory: "downloads",
 };
 
+// Glass panel styles for Liquid Glass design
+const glassPanelStyles = {
+  background: liquidGlassTokens.glass.fill,
+  backdropFilter: `blur(${liquidGlassTokens.glass.blur}) saturate(180%)`,
+  WebkitBackdropFilter: `blur(${liquidGlassTokens.glass.blur}) saturate(180%)`,
+  border: `1px solid ${liquidGlassTokens.glass.border}`,
+  borderRadius: liquidGlassTokens.radius.lg,
+  boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.5), 0 8px 32px rgba(0, 0, 0, 0.4)`,
+};
+
+// Glass input field styles
+const glassInputStyles = {
+  '& .MuiOutlinedInput-root': {
+    borderRadius: liquidGlassTokens.radius.sm,
+    background: 'rgba(255, 255, 255, 0.03)',
+    transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
+    '& fieldset': {
+      borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    '&:hover fieldset': {
+      borderColor: 'rgba(255, 255, 255, 0.2)',
+    },
+    '&.Mui-focused': {
+      background: `${liquidGlassTokens.neon.cyan}08`,
+      '& fieldset': {
+        borderColor: liquidGlassTokens.neon.cyan,
+        borderWidth: 1,
+        boxShadow: glowEffects.cyan(0.15),
+      },
+    },
+  },
+  '& .MuiInputLabel-root': {
+    color: 'rgba(255, 255, 255, 0.5)',
+    '&.Mui-focused': {
+      color: liquidGlassTokens.neon.cyan,
+    },
+  },
+  '& .MuiInputBase-input': {
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+  '& .MuiFormHelperText-root': {
+    color: 'rgba(255, 255, 255, 0.4)',
+  },
+};
+
+// Glass button styles
+const glassButtonStyles = {
+  primary: {
+    background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}25 0%, ${liquidGlassTokens.neon.cyan}15 100%)`,
+    border: `1px solid ${liquidGlassTokens.neon.cyan}50`,
+    color: liquidGlassTokens.neon.cyan,
+    borderRadius: liquidGlassTokens.radius.sm,
+    transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
+    '&:hover': {
+      background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}35 0%, ${liquidGlassTokens.neon.cyan}20 100%)`,
+      boxShadow: glowEffects.cyan(0.25),
+    },
+    '&:disabled': {
+      background: 'rgba(255, 255, 255, 0.05)',
+      borderColor: 'rgba(255, 255, 255, 0.1)',
+      color: 'rgba(255, 255, 255, 0.3)',
+    },
+  },
+  secondary: {
+    background: 'rgba(255, 255, 255, 0.05)',
+    border: `1px solid ${liquidGlassTokens.glass.border}`,
+    color: 'rgba(255, 255, 255, 0.7)',
+    borderRadius: liquidGlassTokens.radius.sm,
+    transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
+    '&:hover': {
+      background: 'rgba(255, 255, 255, 0.1)',
+      color: '#fff',
+    },
+  },
+};
+
+// Section header component
+const SectionHeader = ({ icon, title, color }: { icon: React.ReactNode; title: string; color: string }) => (
+  <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3, pt: 1 }}>
+    <Box sx={{ width: 28, height: 28, backgroundColor: color, borderRadius: liquidGlassTokens.radius.sm, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 12px ${color}40` }}>
+      {icon}
+    </Box>
+    <Typography variant="h6" sx={{ color: "#fff", fontWeight: 500, fontSize: "16px" }}>{title}</Typography>
+  </Box>
+);
+
 const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
-  open,
-  activeTab,
-  onTabChange,
-  onClose,
-  onSave,
-  onSaveFilecoin,
-  initialFilecoinConfig,
+  open, activeTab, onTabChange, onClose, onSave, onSaveFilecoin, initialFilecoinConfig,
 }: ConfigurationModalProps): JSX.Element => {
   const [loadingAi, setLoadingAi] = useState(false);
   const [loadingFilecoin, setLoadingFilecoin] = useState(false);
@@ -152,104 +218,40 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [backendRestartMessage, setBackendRestartMessage] = useState<string | null>(null);
   const [config, setConfig] = useState<EditableAppConfig>(defaultAppConfig);
-  const [filecoinConfig, setFilecoinConfig] =
-    useState<FilecoinConfig>(initialFilecoinConfig ?? defaultFilecoinConfig);
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig>(initialFilecoinConfig ?? defaultFilecoinConfig);
   const [arkivConfig, setArkivConfig] = useState<ArkivConfig>(defaultArkivConfig);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [gatewayConfig, setGatewayConfig] = useState<IpfsGatewayConfig>({
-    baseUrl: DEFAULT_IPFS_GATEWAY,
-  });
-  const [gatewayStatus, setGatewayStatus] = useState<
-    "idle" | "checking" | "ok" | "error"
-  >("idle");
+  const [gatewayConfig, setGatewayConfig] = useState<IpfsGatewayConfig>({ baseUrl: DEFAULT_IPFS_GATEWAY });
+  const [gatewayStatus, setGatewayStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [gatewayStatusMessage, setGatewayStatusMessage] = useState<string | null>(null);
   const [loadingGateway, setLoadingGateway] = useState(false);
   const [checkingBalance, setCheckingBalance] = useState(false);
-  const [showMultiplexer, setShowMultiplexer] = useState(false);
-  const [balanceInfo, setBalanceInfo] = useState<{
-    wallet_address: string;
-    chain_name: string;
-    native_token_symbol: string;
-    balance_ether: number;
-    has_sufficient_balance: boolean;
-  } | null>(null);
+  const [balanceInfo, setBalanceInfo] = useState<{ wallet_address: string; chain_name: string; native_token_symbol: string; balance_ether: number; has_sufficient_balance: boolean; } | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
 
-  const isFilecoinTab =
-    activeTab === "filecoin" || activeTab === "encryption";
+  const isFilecoinTab = activeTab === "filecoin" || activeTab === "encryption";
   const isArkivTab = activeTab === "arkiv";
   const isPlaybackTab = activeTab === "playback";
   const loading = loadingAi || loadingFilecoin || loadingArkiv || loadingGateway;
 
-  useEffect(() => {
-    if (open) {
-      setError(null);
-      setFilecoinError(null);
-      setArkivError(null);
-      loadConfig();
-      loadAvailableModels();
-      loadFilecoinConfig();
-      loadArkivConfig();
-      loadGatewayConfig();
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (initialFilecoinConfig) {
-      setFilecoinConfig(initialFilecoinConfig);
-    }
-  }, [initialFilecoinConfig]);
+  useEffect(() => { if (open) { setError(null); setFilecoinError(null); setArkivError(null); loadConfig(); loadAvailableModels(); loadFilecoinConfig(); loadArkivConfig(); loadGatewayConfig(); } }, [open]);
+  useEffect(() => { if (initialFilecoinConfig) setFilecoinConfig(initialFilecoinConfig); }, [initialFilecoinConfig]);
 
   const loadConfig = async () => {
     try {
-      setLoadingAi(true);
-      setError(null);
+      setLoadingAi(true); setError(null);
       const response = await fetch("http://localhost:8000/api/config/");
       if (!response.ok) throw new Error("Failed to load configuration");
-
       const data = await response.json();
-      
-      // Parse multiplexer endpoints from JSON response
       let multiplexerEndpoints = null;
       if (data.vlm_multiplexer_endpoints) {
-        if (Array.isArray(data.vlm_multiplexer_endpoints)) {
-          // Direct array (new format)
-          multiplexerEndpoints = data.vlm_multiplexer_endpoints;
-        } else if (typeof data.vlm_multiplexer_endpoints === 'string') {
-          try {
-            // Parse JSON string (legacy format)
-            const parsed = JSON.parse(data.vlm_multiplexer_endpoints);
-            if (Array.isArray(parsed)) {
-              multiplexerEndpoints = parsed;
-            }
-          } catch (e) {
-            console.warn('Failed to parse multiplexer endpoints JSON:', e);
-          }
+        if (Array.isArray(data.vlm_multiplexer_endpoints)) multiplexerEndpoints = data.vlm_multiplexer_endpoints;
+        else if (typeof data.vlm_multiplexer_endpoints === 'string') {
+          try { const parsed = JSON.parse(data.vlm_multiplexer_endpoints); if (Array.isArray(parsed)) multiplexerEndpoints = parsed; } catch {}
         }
       }
-      
-      setConfig({
-        analysis_tags: data.analysis_tags,
-        vlm_frame_interval: data.vlm_frame_interval ?? 2.0,
-        vlm_threshold: data.vlm_threshold ?? 0.5,
-        vlm_return_timestamps: data.vlm_return_timestamps ?? true,
-        vlm_return_confidence: data.vlm_return_confidence ?? true,
-        vlm_multiplexer_enabled: data.vlm_multiplexer_enabled ?? false,
-        vlm_multiplexer_endpoints: multiplexerEndpoints,
-        vlm_max_concurrent_requests: data.vlm_max_concurrent_requests ?? 15,
-        llm_base_url: data.llm_base_url,
-        llm_model: data.llm_model,
-        max_batch_size: data.max_batch_size,
-        download_directory: data.download_directory, /* Added global download directory */
-      });
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load configuration"
-      );
-      setConfig(defaultAppConfig);
-    } finally {
-      setLoadingAi(false);
-    }
+      setConfig({ analysis_tags: data.analysis_tags, vlm_frame_interval: data.vlm_frame_interval ?? 2.0, vlm_threshold: data.vlm_threshold ?? 0.5, vlm_return_timestamps: data.vlm_return_timestamps ?? true, vlm_return_confidence: data.vlm_return_confidence ?? true, vlm_multiplexer_enabled: data.vlm_multiplexer_enabled ?? false, vlm_multiplexer_endpoints: multiplexerEndpoints, vlm_max_concurrent_requests: data.vlm_max_concurrent_requests ?? 15, llm_base_url: data.llm_base_url, llm_model: data.llm_model, max_batch_size: data.max_batch_size, download_directory: data.download_directory });
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed to load configuration"); setConfig(defaultAppConfig); } finally { setLoadingAi(false); }
   };
 
   const loadFilecoinConfig = async () => {
@@ -257,705 +259,244 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     try {
       setLoadingFilecoin(true);
       const savedConfig = await ipcRenderer.invoke("get-filecoin-config");
-      if (savedConfig) {
-        const loadedConfig = {
-          privateKey: savedConfig.privateKey || "",
-          rpcUrl:
-            savedConfig.rpcUrl ||
-            "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
-          dataSetId: savedConfig.dataSetId,
-          encryptionEnabled: savedConfig.encryptionEnabled ?? false,
-        };
-        console.log(`[ConfigurationModal] Loaded Filecoin config from JSON - encryptionEnabled: ${loadedConfig.encryptionEnabled} (from savedConfig: ${savedConfig.encryptionEnabled})`);
-        setFilecoinConfig(loadedConfig);
-      } else {
-        console.log(`[ConfigurationModal] No saved config found, using defaults - encryptionEnabled: ${defaultFilecoinConfig.encryptionEnabled}`);
-        setFilecoinConfig(defaultFilecoinConfig);
-      }
-    } catch (err) {
-      console.error("Failed to load Filecoin config:", err);
-      setFilecoinConfig(defaultFilecoinConfig);
-    } finally {
-      setLoadingFilecoin(false);
-    }
+      if (savedConfig) setFilecoinConfig({ privateKey: savedConfig.privateKey || "", rpcUrl: savedConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1", dataSetId: savedConfig.dataSetId, encryptionEnabled: savedConfig.encryptionEnabled ?? false });
+      else setFilecoinConfig(defaultFilecoinConfig);
+    } catch { setFilecoinConfig(defaultFilecoinConfig); } finally { setLoadingFilecoin(false); }
   };
 
   const loadArkivConfig = async () => {
     try {
-      setLoadingArkiv(true);
-      setArkivError(null);
+      setLoadingArkiv(true); setArkivError(null);
       const savedConfig = await ipcRenderer.invoke("get-arkiv-config");
-      if (savedConfig) {
-        setArkivConfig({
-          rpcUrl: savedConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc",
-          enabled: savedConfig.enabled ?? false,
-          syncEnabled: savedConfig.syncEnabled ?? false,
-          expirationWeeks: savedConfig.expirationWeeks ?? 4,
-        });
-      } else {
-        setArkivConfig(defaultArkivConfig);
-      }
-    } catch (err) {
-      console.error("Failed to load Arkiv config:", err);
-      setArkivConfig(defaultArkivConfig);
-    } finally {
-      setLoadingArkiv(false);
-    }
+      if (savedConfig) setArkivConfig({ rpcUrl: savedConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc", enabled: savedConfig.enabled ?? false, syncEnabled: savedConfig.syncEnabled ?? false, expirationWeeks: savedConfig.expirationWeeks ?? 4 });
+      else setArkivConfig(defaultArkivConfig);
+    } catch { setArkivConfig(defaultArkivConfig); } finally { setLoadingArkiv(false); }
   };
 
   const loadAvailableModels = async () => {
     try {
-      const response = await fetch(
-        "http://localhost:8000/api/config/available-models/"
-      );
+      const response = await fetch("http://localhost:8000/api/config/available-models/");
       if (!response.ok) throw new Error("Failed to load available models");
-
       const data = await response.json();
       setAvailableModels(data.models);
-    } catch (err) {
-      console.error("Failed to load available models:", err);
-      setAvailableModels(["zai-org/glm-4.6v-flash"]);
-    }
+    } catch { setAvailableModels(["zai-org/glm-4.6v-flash"]); }
   };
 
   const loadGatewayConfig = async () => {
     try {
-      setLoadingGateway(true);
-      setGatewayStatus("idle");
-      setGatewayStatusMessage(null);
-      const savedGateway: IpfsGatewayConfig | null =
-        await ipcRenderer.invoke("playback:get-gateway-config");
-
+      setLoadingGateway(true); setGatewayStatus("idle"); setGatewayStatusMessage(null);
+      const savedGateway: IpfsGatewayConfig | null = await ipcRenderer.invoke("playback:get-gateway-config");
       let resolvedBase = savedGateway?.baseUrl ?? DEFAULT_IPFS_GATEWAY;
-
-      try {
-        const backendGateway = await gatewayService.get();
-        if (backendGateway?.baseUrl) {
-          resolvedBase = backendGateway.baseUrl;
-        }
-      } catch (backendError) {
-        console.error("Failed to load backend gateway config:", backendError);
-      }
-
+      try { const backendGateway = await gatewayService.get(); if (backendGateway?.baseUrl) resolvedBase = backendGateway.baseUrl; } catch {}
       setGatewayConfig({ baseUrl: normalizeGatewayBase(resolvedBase) });
-    } catch (err) {
-      console.error("Failed to load IPFS gateway config:", err);
-      setGatewayConfig({ baseUrl: DEFAULT_IPFS_GATEWAY });
-      setGatewayStatus("error");
-      setGatewayStatusMessage("Failed to load gateway settings");
-    } finally {
-      setLoadingGateway(false);
-    }
+    } catch { setGatewayConfig({ baseUrl: DEFAULT_IPFS_GATEWAY }); setGatewayStatus("error"); setGatewayStatusMessage("Failed to load gateway settings"); } finally { setLoadingGateway(false); }
   };
 
-  const handleGatewayChange = (value: string) => {
-    setGatewayConfig({ baseUrl: value });
-    setGatewayStatus("idle");
-    setGatewayStatusMessage(null);
-  };
-
-  const handleGatewayReset = () => {
-    setGatewayConfig({ baseUrl: DEFAULT_IPFS_GATEWAY });
-    setGatewayStatus("idle");
-    setGatewayStatusMessage(null);
-  };
+  const handleGatewayChange = (value: string) => { setGatewayConfig({ baseUrl: value }); setGatewayStatus("idle"); setGatewayStatusMessage(null); };
+  const handleGatewayReset = () => { setGatewayConfig({ baseUrl: DEFAULT_IPFS_GATEWAY }); setGatewayStatus("idle"); setGatewayStatusMessage(null); };
 
   const checkGatewayConnectivity = async () => {
     const normalizedBase = normalizeGatewayBase(gatewayConfig.baseUrl);
-    setGatewayConfig({ baseUrl: normalizedBase });
-    setGatewayStatus("checking");
-    setGatewayStatusMessage(null);
-
+    setGatewayConfig({ baseUrl: normalizedBase }); setGatewayStatus("checking"); setGatewayStatusMessage(null);
     try {
       const response = await fetch(normalizedBase, { method: "HEAD" });
       const isReachable = response.ok || response.status < 500;
       setGatewayStatus(isReachable ? "ok" : "error");
-      setGatewayStatusMessage(
-        isReachable
-          ? "Gateway reachable"
-          : `Gateway responded with status ${response.status}`
-      );
-    } catch (err) {
-      console.error("Gateway connectivity check failed:", err);
-      setGatewayStatus("error");
-      setGatewayStatusMessage("Gateway unreachable");
-    }
+      setGatewayStatusMessage(isReachable ? "Gateway reachable" : `Gateway responded with status ${response.status}`);
+    } catch { setGatewayStatus("error"); setGatewayStatusMessage("Gateway unreachable"); }
   };
 
   const addEndpoint = () => {
-    const newEndpoint: MultiplexerEndpoint = {
-      base_url: "http://localhost:1234/v1",
-      api_key: "",
-      name: `endpoint-${(config.vlm_multiplexer_endpoints?.length || 0) + 1}`,
-      weight: 1,
-      max_concurrent: 5,
-    };
-    setConfig((prev) => ({
-      ...prev,
-      vlm_multiplexer_endpoints: [...(prev.vlm_multiplexer_endpoints || []), newEndpoint],
-    }));
+    const newEndpoint: MultiplexerEndpoint = { base_url: "http://localhost:1234/v1", api_key: "", name: `endpoint-${(config.vlm_multiplexer_endpoints?.length || 0) + 1}`, weight: 1, max_concurrent: 5 };
+    setConfig((prev) => ({ ...prev, vlm_multiplexer_endpoints: [...(prev.vlm_multiplexer_endpoints || []), newEndpoint] }));
   };
 
-  const removeEndpoint = (index: number) => {
-    setConfig((prev) => ({
-      ...prev,
-      vlm_multiplexer_endpoints: prev.vlm_multiplexer_endpoints?.filter((_, i) => i !== index) || null,
-    }));
-  };
+  const removeEndpoint = (index: number) => setConfig((prev) => ({ ...prev, vlm_multiplexer_endpoints: prev.vlm_multiplexer_endpoints?.filter((_, i) => i !== index) || null }));
 
   const updateEndpoint = (index: number, field: keyof MultiplexerEndpoint, value: string | number) => {
     setConfig((prev) => {
       const endpoints = prev.vlm_multiplexer_endpoints ? [...prev.vlm_multiplexer_endpoints] : [];
-      if (endpoints[index]) {
-        (endpoints[index] as any)[field] = value;
-      }
+      if (endpoints[index]) (endpoints[index] as Record<string, unknown>)[field] = value;
       return { ...prev, vlm_multiplexer_endpoints: endpoints };
     });
   };
 
   const handleSave = async () => {
     try {
-      setSaving(true);
-      setError(null);
-      setFilecoinError(null);
-      setArkivError(null);
-      setRestoreSummary(null);
-
+      setSaving(true); setError(null); setFilecoinError(null); setArkivError(null); setRestoreSummary(null);
       if (isPlaybackTab) {
         const normalizedBase = normalizeGatewayBase(gatewayConfig.baseUrl);
-        const savedGateway: IpfsGatewayConfig = await ipcRenderer.invoke(
-          "playback:set-gateway-config",
-          { baseUrl: normalizedBase }
-        );
-        setGatewayConfig({
-          baseUrl: normalizeGatewayBase(savedGateway.baseUrl),
-        });
-        try {
-          await gatewayService.update({ baseUrl: normalizedBase });
-        } catch (syncError) {
-          console.error("Failed to sync gateway config to backend:", syncError);
-          setGatewayStatus("error");
-          setGatewayStatusMessage("Saved locally but backend sync failed");
-          return;
-        }
-        setGatewayStatus("ok");
-        setGatewayStatusMessage("Gateway saved");
+        const savedGateway: IpfsGatewayConfig = await ipcRenderer.invoke("playback:set-gateway-config", { baseUrl: normalizedBase });
+        setGatewayConfig({ baseUrl: normalizeGatewayBase(savedGateway.baseUrl) });
+        try { await gatewayService.update({ baseUrl: normalizedBase }); } catch { setGatewayStatus("error"); setGatewayStatusMessage("Saved locally but backend sync failed"); return; }
+        setGatewayStatus("ok"); setGatewayStatusMessage("Gateway saved");
       } else if (isFilecoinTab) {
-        if (!filecoinConfig.privateKey.trim()) {
-          setFilecoinError("Private key is required");
-          return;
-        }
-
-        // Automatically check gas balance when enabling Filecoin
-        setCheckingBalance(true);
-        setBalanceError(null);
-        setBalanceInfo(null);
-        
+        if (!filecoinConfig.privateKey.trim()) { setFilecoinError("Private key is required"); return; }
+        setCheckingBalance(true); setBalanceError(null); setBalanceInfo(null);
         try {
-          // Use HTTP RPC URL for balance checking (convert wss:// to https:// if needed)
           let rpcUrl = filecoinConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1";
-          if (rpcUrl.startsWith("wss://")) {
-            rpcUrl = rpcUrl.replace("wss://", "https://");
-          } else if (rpcUrl.startsWith("ws://")) {
-            rpcUrl = rpcUrl.replace("ws://", "http://");
-          }
-
+          if (rpcUrl.startsWith("wss://")) rpcUrl = rpcUrl.replace("wss://", "https://");
+          else if (rpcUrl.startsWith("ws://")) rpcUrl = rpcUrl.replace("ws://", "http://");
           const balance = await evmService.checkBalance(rpcUrl);
           setBalanceInfo(balance);
-          
-          // Warn if balance is insufficient but don't block save
-          if (!balance.has_sufficient_balance) {
-            setFilecoinError(
-              `⚠️ Low gas balance detected: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
-              `Please send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees. ` +
-              `Configuration saved, but you may encounter errors when uploading.`
-            );
-          }
-        } catch (balanceErr) {
-          // Log but don't block save - balance check is informational
-          console.warn("Failed to check gas balance:", balanceErr);
-          setBalanceError(
-            balanceErr instanceof Error ? balanceErr.message : "Failed to check gas balance"
-          );
-        } finally {
-          setCheckingBalance(false);
-        }
-
-        // Log what we're about to save
-        console.log(`[ConfigurationModal] Saving Filecoin config - encryptionEnabled: ${filecoinConfig.encryptionEnabled} (type: ${typeof filecoinConfig.encryptionEnabled})`);
-        
-        await ipcRenderer.invoke("save-filecoin-config", {
-          privateKey: filecoinConfig.privateKey,
-          rpcUrl: filecoinConfig.rpcUrl,
-          dataSetId: filecoinConfig.dataSetId,
-          encryptionEnabled: filecoinConfig.encryptionEnabled ?? false, // Explicitly ensure boolean
-        });
-
+          if (!balance.has_sufficient_balance) setFilecoinError(`⚠️ Low gas balance: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. Send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees.`);
+        } catch (err) { setBalanceError(err instanceof Error ? err.message : "Failed to check balance"); } finally { setCheckingBalance(false); }
+        await ipcRenderer.invoke("save-filecoin-config", { privateKey: filecoinConfig.privateKey, rpcUrl: filecoinConfig.rpcUrl, dataSetId: filecoinConfig.dataSetId, encryptionEnabled: filecoinConfig.encryptionEnabled ?? false });
         await onSaveFilecoin(filecoinConfig);
       } else if (isArkivTab) {
-        // Automatically check gas balance when enabling Arkiv sync
         if (arkivConfig.syncEnabled) {
-          setCheckingBalance(true);
-          setBalanceError(null);
-          setBalanceInfo(null);
-          
+          setCheckingBalance(true); setBalanceError(null); setBalanceInfo(null);
           try {
             const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
             const balance = await evmService.checkBalance(rpcUrl);
             setBalanceInfo(balance);
-            
-            // Warn if balance is insufficient but don't block save
-            if (!balance.has_sufficient_balance) {
-              setArkivError(
-                `⚠️ Low gas balance detected: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
-                `Please send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees. ` +
-                `Configuration saved, but Arkiv sync may fail.`
-              );
-            }
-          } catch (balanceErr) {
-            // Log but don't block save - balance check is informational
-            console.warn("Failed to check gas balance:", balanceErr);
-            setBalanceError(
-              balanceErr instanceof Error ? balanceErr.message : "Failed to check gas balance"
-            );
-          } finally {
-            setCheckingBalance(false);
-          }
+            if (!balance.has_sufficient_balance) setArkivError(`⚠️ Low gas balance: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. Send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees.`);
+          } catch (err) { setBalanceError(err instanceof Error ? err.message : "Failed to check balance"); } finally { setCheckingBalance(false); }
         }
-
-        await ipcRenderer.invoke("save-arkiv-config", {
-          rpcUrl: arkivConfig.rpcUrl,
-          syncEnabled: arkivConfig.syncEnabled,
-          expirationWeeks: arkivConfig.expirationWeeks,
-        });
-        // Reload to get updated enabled status
+        await ipcRenderer.invoke("save-arkiv-config", { rpcUrl: arkivConfig.rpcUrl, syncEnabled: arkivConfig.syncEnabled, expirationWeeks: arkivConfig.expirationWeeks });
         await loadArkivConfig();
-      } else {
-        await onSave(config);
-      }
-
-      // Only close if no critical errors (warnings are OK) and no glitter endpoint error
-      if (!filecoinError && !arkivError && !error) {
-        onClose();
-      }
+      } else { await onSave(config); }
+      if (!filecoinError && !arkivError && !error) onClose();
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to save configuration";
-      if (isFilecoinTab) {
-        setFilecoinError(message);
-      } else if (isArkivTab) {
-        setArkivError(message);
-      } else {
-        setError(message);
-      }
-    } finally {
-      setSaving(false);
-    }
+      const message = err instanceof Error ? err.message : "Failed to save configuration";
+      if (isFilecoinTab) setFilecoinError(message);
+      else if (isArkivTab) setArkivError(message);
+      else setError(message);
+    } finally { setSaving(false); }
   };
 
   const handleRestoreFromArkiv = async () => {
     try {
-      setRestoring(true);
-      setArkivError(null);
-      setRestoreSummary(null);
-      setRestoreProgress("Fetching entities from Arkiv...");
-      
-      // Step 1: Restore from Arkiv
+      setRestoring(true); setArkivError(null); setRestoreSummary(null); setRestoreProgress("Fetching entities from Arkiv...");
       setRestoreProgress("Restoring catalog from Arkiv...");
       const result = await restoreService.restoreFromArkiv();
-      
-      // Step 2: Decrypt encrypted CIDs for videos that need it
       try {
         setRestoreProgress("Checking for encrypted CIDs to decrypt...");
         const videosNeedingDecryption = await restoreService.getVideosNeedingDecryption();
         if (videosNeedingDecryption.length > 0) {
           const config: FilecoinConfig | null = await ipcRenderer.invoke('get-filecoin-config');
-          
           if (config?.privateKey) {
             let decryptedCount = 0;
             const total = videosNeedingDecryption.length;
-            
             for (let i = 0; i < videosNeedingDecryption.length; i++) {
               const video = videosNeedingDecryption[i];
               try {
                 setRestoreProgress(`Decrypting CID ${i + 1} of ${total}...`);
-                // Decrypt the CID using Lit Protocol
-                const decryptedCid = await ipcRenderer.invoke('decrypt-text-with-lit', {
-                  ciphertext: video.encrypted_filecoin_cid,
-                  metadataJson: video.cid_encryption_metadata,
-                });
-                
-                // Update the database with decrypted CID
+                const decryptedCid = await ipcRenderer.invoke('decrypt-text-with-lit', { ciphertext: video.encrypted_filecoin_cid, metadataJson: video.cid_encryption_metadata });
                 await restoreService.decryptVideoCid(video.path, decryptedCid);
                 decryptedCount++;
-              } catch (err) {
-                console.error(`Failed to decrypt CID for ${video.path}:`, err);
-              }
+              } catch {}
             }
-            
             setRestoreProgress(null);
-            if (decryptedCount > 0) {
-              setRestoreSummary(
-                `Restored ${result.restored}, skipped ${result.skipped}. Decrypted ${decryptedCount} CID(s).`
-              );
-            } else {
-      setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
-            }
+            setRestoreSummary(decryptedCount > 0 ? `Restored ${result.restored}, skipped ${result.skipped}. Decrypted ${decryptedCount} CID(s).` : `Restored ${result.restored}, skipped ${result.skipped}.`);
           } else {
             setRestoreProgress(null);
-            setRestoreSummary(
-              `Restored ${result.restored}, skipped ${result.skipped}. ${videosNeedingDecryption.length} CID(s) need decryption (private key required).`
-            );
+            setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}. ${videosNeedingDecryption.length} CID(s) need decryption (private key required).`);
           }
-        } else {
-          setRestoreProgress(null);
-          setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`);
-        }
-      } catch (decryptErr) {
-        console.error('Failed to decrypt CIDs:', decryptErr);
-        setRestoreProgress(null);
-        setRestoreSummary(
-          `Restored ${result.restored}, skipped ${result.skipped}. Warning: CID decryption failed.`
-        );
-      }
-    } catch (err) {
-      setRestoreProgress(null);
-      const message =
-        err instanceof Error ? err.message : "Failed to restore from Arkiv";
-      setArkivError(message);
-    } finally {
-      setRestoring(false);
-    }
+        } else { setRestoreProgress(null); setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}.`); }
+      } catch { setRestoreProgress(null); setRestoreSummary(`Restored ${result.restored}, skipped ${result.skipped}. Warning: CID decryption failed.`); }
+    } catch (err) { setRestoreProgress(null); setArkivError(err instanceof Error ? err.message : "Failed to restore from Arkiv"); } finally { setRestoring(false); }
   };
 
   const handleRestartBackend = async () => {
     try {
-      setRestartingBackend(true);
-      setArkivError(null);
-      setBackendRestartMessage(null);
+      setRestartingBackend(true); setArkivError(null); setBackendRestartMessage(null);
       const result = await ipcRenderer.invoke("restart-backend");
       setBackendRestartMessage(result.message || "Backend restarted successfully");
-      // Reload Arkiv config to update the enabled status
       await loadArkivConfig();
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to restart backend";
-      setArkivError(message);
-    } finally {
-      setRestartingBackend(false);
-    }
+    } catch (err) { setArkivError(err instanceof Error ? err.message : "Failed to restart backend"); } finally { setRestartingBackend(false); }
   };
 
-  const handleTagsChange = (value: string) => {
-    setConfig((prev: EditableAppConfig) => ({ ...prev, analysis_tags: value }));
+  const handleCheckBalance = async () => {
+    try {
+      setCheckingBalance(true); setBalanceError(null); setBalanceInfo(null);
+      let rpcUrl = filecoinConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1";
+      if (rpcUrl.startsWith("wss://")) rpcUrl = rpcUrl.replace("wss://", "https://");
+      else if (rpcUrl.startsWith("ws://")) rpcUrl = rpcUrl.replace("ws://", "http://");
+      const balance = await evmService.checkBalance(rpcUrl);
+      setBalanceInfo(balance);
+    } catch (err) { setBalanceError(err instanceof Error ? err.message : "Failed to check balance"); } finally { setCheckingBalance(false); }
   };
 
-  const tagList = useMemo(
-    () =>
-      config.analysis_tags
-        .split(",")
-        .map((tag: string) => tag.trim())
-        .filter((tag: string) => tag),
-    [config.analysis_tags]
-  );
+  const tagList = useMemo(() => config.analysis_tags.split(",").map((tag: string) => tag.trim()).filter((tag: string) => tag), [config.analysis_tags]);
 
   const renderAiContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Box sx={{ mt: 2 }}>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 2,
-            mb: 3,
-            pt: 1,
-          }}
-        >
-          <Box
-            sx={{
-              width: 24,
-              height: 24,
-              backgroundColor: "#F9A825",
-              borderRadius: "6px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <AIIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
-          </Box>
-          <Typography
-            variant="h6"
-            sx={{
-              color: "#000000",
-              fontWeight: 500,
-              fontSize: "16px",
-            }}
-          >
-            Analysis Tags
-          </Typography>
-        </Box>
-
-        <TextField
-          fullWidth
-          label="Analysis Tags (comma-separated)"
-          value={config.analysis_tags}
-          onChange={(
-            e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-          ) => handleTagsChange(e.target.value)}
-          placeholder="person,car,bicycle,walking,running..."
-          multiline
-          rows={3}
-        />
-
+        <SectionHeader icon={<AIIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Analysis Tags" color={liquidGlassTokens.neon.amber} />
+        <TextField fullWidth label="Analysis Tags (comma-separated)" value={config.analysis_tags} onChange={(e) => setConfig((prev) => ({ ...prev, analysis_tags: e.target.value }))} placeholder="person,car,bicycle,walking,running..." multiline rows={3} sx={glassInputStyles} />
         {tagList.length > 0 && (
           <Box sx={{ mt: 3 }}>
-            <Typography
-              variant="body2"
-              sx={{
-                color: "#6B6B6B",
-                mb: 2,
-                fontSize: "12px",
-                fontWeight: 500,
-              }}
-            >
-              TAGS PREVIEW ({tagList.length} tags)
-            </Typography>
-            <Box
-              sx={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 1,
-                maxHeight: 120,
-                overflow: "auto",
-                p: 2,
-                backgroundColor: "#F7F7F7",
-                borderRadius: "8px",
-                border: "1px solid #F0F0F0",
-              }}
-            >
-              {tagList.map((tag: string) => (
-                <Chip
-                  key={tag}
-                  label={tag}
-                  size="small"
-                  sx={{
-                    backgroundColor: "#FFFFFF",
-                    color: "#000000",
-                    border: "1px solid #E0E0E0",
-                    borderRadius: "16px",
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    "&:hover": {
-                      backgroundColor: "#F5F5F5",
-                      borderColor: "#BDBDBD",
-                    },
-                  }}
-                />
-              ))}
+            <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.5)', mb: 2, fontSize: "12px", fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tags Preview ({tagList.length} tags)</Typography>
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, maxHeight: 120, overflow: "auto", p: 2, ...glassPanelStyles }}>
+              {tagList.map((tag: string) => <Chip key={tag} label={tag} size="small" sx={{ backgroundColor: 'rgba(255, 255, 255, 0.08)', color: '#fff', border: `1px solid ${liquidGlassTokens.glass.border}`, borderRadius: '16px', fontSize: '12px', fontWeight: 500 }} />)}
             </Box>
           </Box>
         )}
       </Box>
 
-      <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
+      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
 
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        VLM Processing Parameters
-      </Typography>
-
-      <Box sx={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-        <TextField
-          sx={{ flex: 1, minWidth: 200 }}
-          label="Frame Interval (seconds)"
-          type="number"
-          value={config.vlm_frame_interval}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setConfig((prev: EditableAppConfig) => ({
-              ...prev,
-              vlm_frame_interval: parseFloat(e.target.value) || 2.0,
-            }))
-          }
-          inputProps={{ step: 0.1, min: 0.1, max: 60.0 }}
-          helperText="Seconds between frame samples"
-        />
-
-        <TextField
-          sx={{ flex: 1, minWidth: 200 }}
-          label="Confidence Threshold"
-          type="number"
-          value={config.vlm_threshold}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setConfig((prev: EditableAppConfig) => ({
-              ...prev,
-              vlm_threshold: parseFloat(e.target.value) || 0.5,
-            }))
-          }
-          inputProps={{ step: 0.01, min: 0.0, max: 1.0 }}
-          helperText="Min confidence for tag detection"
-        />
-
-        <FormControl sx={{ flex: 1, minWidth: 150 }}>
-          <InputLabel style={{ backgroundColor: "#2A2A2A", padding: "0 4px" }}>
-            VLM Settings
-          </InputLabel>
-          <Select
-            multiple
-            value={[
-              ...[config.vlm_return_timestamps ? "Timestamps" : ""],
-              ...[config.vlm_return_confidence ? "Confidence" : ""],
-            ].filter(Boolean)}
-            label="VLM Settings"
-            onChange={(e: SelectChangeEvent<string[]>) => {
-              const values = e.target.value;
-              setConfig((prev: EditableAppConfig) => ({
-                ...prev,
-                vlm_return_timestamps: values.includes("Timestamps"),
-                vlm_return_confidence: values.includes("Confidence"),
-              }));
-            }}
-            renderValue={(selected: string[]) => selected.join(", ")}
-          >
-            <MenuItem value={"Timestamps"}>Include Timestamps</MenuItem>
-            <MenuItem value={"Confidence"}>Include Confidence</MenuItem>
-          </Select>
-        </FormControl>
+      <Box>
+        <SectionHeader icon={<BatchIcon sx={{ color: "#fff", fontSize: 16 }} />} title="VLM Processing Parameters" color={liquidGlassTokens.neon.magenta} />
+        <Box sx={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+          <TextField sx={{ flex: 1, minWidth: 200, ...glassInputStyles }} label="Frame Interval (seconds)" type="number" value={config.vlm_frame_interval} onChange={(e) => setConfig((prev) => ({ ...prev, vlm_frame_interval: parseFloat(e.target.value) || 2.0 }))} inputProps={{ step: 0.1, min: 0.1, max: 60.0 }} helperText="Seconds between frame samples" />
+          <TextField sx={{ flex: 1, minWidth: 200, ...glassInputStyles }} label="Confidence Threshold" type="number" value={config.vlm_threshold} onChange={(e) => setConfig((prev) => ({ ...prev, vlm_threshold: parseFloat(e.target.value) || 0.5 }))} inputProps={{ step: 0.01, min: 0.0, max: 1.0 }} helperText="Min confidence for tag detection" />
+          <FormControl sx={{ flex: 1, minWidth: 150, ...glassInputStyles }}>
+            <InputLabel sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>VLM Settings</InputLabel>
+            <Select multiple value={[...[config.vlm_return_timestamps ? "Timestamps" : ""], ...[config.vlm_return_confidence ? "Confidence" : ""]].filter(Boolean)} label="VLM Settings" onChange={(e: SelectChangeEvent<string[]>) => { const values = e.target.value; setConfig((prev: EditableAppConfig) => ({ ...prev, vlm_return_timestamps: values.includes("Timestamps"), vlm_return_confidence: values.includes("Confidence") })); }} renderValue={(selected: string[]) => selected.join(", ")} sx={{ '& .MuiSelect-select': { color: 'rgba(255, 255, 255, 0.9)' } }}>
+              <MenuItem value="Timestamps">Include Timestamps</MenuItem>
+              <MenuItem value="Confidence">Include Confidence</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
       </Box>
 
-      <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
+      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
 
-      {/* Multiplexer UI Section */}
       <Box>
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 3 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-            <Box sx={{ width: 24, height: 24, backgroundColor: "#9C27B0", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <BatchIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
-            </Box>
-            <Typography variant="h6" sx={{ color: "#000000", fontWeight: 500, fontSize: "16px" }}>
-              LLM Multiplexer
-            </Typography>
-          </Box>
-          <FormControlLabel
-            control={<Switch checked={config.vlm_multiplexer_enabled} onChange={(e) => setConfig((prev) => ({ ...prev, vlm_multiplexer_enabled: e.target.checked }))} />}
-            label="Enable multiplexer"
-          />
+          <SectionHeader icon={<BatchIcon sx={{ color: "#fff", fontSize: 16 }} />} title="LLM Multiplexer" color={liquidGlassTokens.neon.cyan} />
+          <FormControlLabel control={<Switch checked={config.vlm_multiplexer_enabled} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig((prev: EditableAppConfig) => ({ ...prev, vlm_multiplexer_enabled: e.target.checked }))} sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: liquidGlassTokens.neon.cyan }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: `${liquidGlassTokens.neon.cyan}60` } }} />} label={<Typography sx={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '14px' }}>Enable multiplexer</Typography>} />
         </Box>
-
         {config.vlm_multiplexer_enabled && (
           <>
-            <Alert severity="info" sx={{ mb: 3 }}>
-              Multiplexer distributes requests across multiple LLM endpoints for load balancing and fault tolerance.
-              When enabled, single endpoint settings are ignored.
-            </Alert>
-            
-            {/* Add/Edit endpoints UI */}
+            <Alert severity="info" sx={{ mb: 3, backgroundColor: `${liquidGlassTokens.neon.cyan}10`, border: `1px solid ${liquidGlassTokens.neon.cyan}30`, color: liquidGlassTokens.neon.cyan, '& .MuiAlert-icon': { color: liquidGlassTokens.neon.cyan } }}>Multiplexer distributes requests across multiple LLM endpoints for load balancing and fault tolerance.</Alert>
             <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {config.vlm_multiplexer_endpoints?.map((endpoint, index) => (
-                <Box key={index} sx={{ p: 2, border: "1px solid #E0E0E0", borderRadius: "8px" }}>
+                <Box key={index} sx={{ p: 2, ...glassPanelStyles }}>
                   <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                      Endpoint {index + 1}: {endpoint.name}
-                    </Typography>
-                    <IconButton size="small" onClick={() => removeEndpoint(index)} sx={{ color: "#FF5252" }} color="error">
-                      <CancelIcon />
-                    </IconButton>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#fff' }}>Endpoint {index + 1}: {endpoint.name}</Typography>
+                    <IconButton size="small" onClick={() => removeEndpoint(index)} sx={{ color: liquidGlassTokens.neon.error }}><CancelIcon /></IconButton>
                   </Box>
                   <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <TextField fullWidth label="Name" value={endpoint.name} onChange={(e) => updateEndpoint(index, "name", e.target.value)} size="small" required />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <TextField fullWidth label="Base URL" value={endpoint.base_url} onChange={(e) => updateEndpoint(index, "base_url", e.target.value)} size="small" required placeholder="http://localhost:1234/v1" />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                      <TextField fullWidth label="API Key" value={endpoint.api_key} onChange={(e) => updateEndpoint(index, "api_key", e.target.value)} size="small" required />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                      <TextField fullWidth type="number" label="Weight" value={endpoint.weight} onChange={(e) => updateEndpoint(index, "weight", parseFloat(e.target.value))} inputProps={{ min: 1 }} size="small" required helperText="Higher = more traffic" />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                      <TextField fullWidth type="number" label="Max Concurrent" value={endpoint.max_concurrent} onChange={(e) => updateEndpoint(index, "max_concurrent", parseInt(e.target.value, 10))} inputProps={{ min: 1 }} size="small" required helperText="Concurrent requests" />
-                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}><TextField fullWidth label="Name" value={endpoint.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateEndpoint(index, "name", e.target.value)} size="small" sx={glassInputStyles} /></Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}><TextField fullWidth label="Base URL" value={endpoint.base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateEndpoint(index, "base_url", e.target.value)} size="small" sx={glassInputStyles} /></Grid>
+                    <Grid size={{ xs: 12, sm: 4 }}><TextField fullWidth label="API Key" value={endpoint.api_key} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateEndpoint(index, "api_key", e.target.value)} size="small" sx={glassInputStyles} /></Grid>
+                    <Grid size={{ xs: 12, sm: 4 }}><TextField fullWidth type="number" label="Weight" value={endpoint.weight} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateEndpoint(index, "weight", parseFloat(e.target.value))} inputProps={{ min: 1 }} size="small" helperText="Higher = more traffic" sx={glassInputStyles} /></Grid>
+                    <Grid size={{ xs: 12, sm: 4 }}><TextField fullWidth type="number" label="Max Concurrent" value={endpoint.max_concurrent} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateEndpoint(index, "max_concurrent", parseInt(e.target.value, 10))} inputProps={{ min: 1 }} size="small" sx={glassInputStyles} /></Grid>
                   </Grid>
                 </Box>
               ))}
-              
-              <Button startIcon={<AddIcon />} onClick={addEndpoint} variant="outlined" sx={{ alignSelf: "flex-start" }}>
-                Add Endpoint
-              </Button>
+              <Button startIcon={<AddIcon />} onClick={addEndpoint} variant="outlined" sx={{ alignSelf: "flex-start", ...glassButtonStyles.secondary }}>Add Endpoint</Button>
             </Box>
-            
-            <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
-            
-            <TextField fullWidth type="number" label="Global Max Concurrent Requests" value={config.vlm_max_concurrent_requests} onChange={(e) => setConfig((prev) => ({ ...prev, vlm_max_concurrent_requests: parseInt(e.target.value, 10) }))} inputProps={{ min: 1 }} helperText="Total concurrent requests across all endpoints" />
+            <Divider sx={{ borderColor: liquidGlassTokens.glass.border, my: 2 }} />
+            <TextField fullWidth type="number" label="Global Max Concurrent Requests" value={config.vlm_max_concurrent_requests} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig((prev: EditableAppConfig) => ({ ...prev, vlm_max_concurrent_requests: parseInt(e.target.value, 10) }))} inputProps={{ min: 1 }} helperText="Total concurrent requests across all endpoints" sx={glassInputStyles} />
           </>
         )}
       </Box>
 
-      <Divider sx={{ backgroundColor: "#F0F0F0" }} style={{ margin: '16px 0' }} />
+      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
 
-      {/* Single endpoint configuration - disabled when multiplexer is enabled */}
       <Box sx={{ opacity: config.vlm_multiplexer_enabled ? 0.5 : 1, pointerEvents: config.vlm_multiplexer_enabled ? "none" : "auto" }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}>
-          <Box
-            sx={{
-              width: 24,
-              height: 24,
-              backgroundColor: "#4CAF50",
-              borderRadius: "6px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <PlaybackIcon sx={{ color: "#FFFFFF", fontSize: 14 }} />
-          </Box>
-          <Typography
-            variant="h6"
-            sx={{
-              color: "#000000",
-              fontWeight: 500,
-              fontSize: "16px",
-            }}
-          >
-            Language Model Configuration
-          </Typography>
-        </Box>
-
+        <SectionHeader icon={<PlaybackIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Language Model Configuration" color={liquidGlassTokens.neon.success} />
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          <Typography variant="body2" color="text.secondary">
-            {config.vlm_multiplexer_enabled ? "Single endpoint settings are ignored when multiplexer is enabled" : "Configure a single LLM endpoint"}
-          </Typography>
-          <TextField
-            fullWidth
-            label="LLM Base URL"
-            value={config.llm_base_url}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              setConfig((prev: EditableAppConfig) => ({
-                ...prev,
-                llm_base_url: e.target.value,
-              }))
-            }
-            placeholder="http://localhost:1234/v1"
-          />
-
-          <FormControl fullWidth>
-            <InputLabel>Visual Language Model</InputLabel>
-            <Select
-              value={config.llm_model}
-              label="Visual Language Model"
-              onChange={(e: SelectChangeEvent<string>) =>
-                setConfig((prev: EditableAppConfig) => ({
-                  ...prev,
-                  llm_model: e.target.value as string,
-                }))
-              }
-            >
-              {availableModels.map((model: string) => (
-                <MenuItem key={model} value={model}>
-                  {model}
-                </MenuItem>
-              ))}
+          <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>{config.vlm_multiplexer_enabled ? "Single endpoint settings are ignored when multiplexer is enabled" : "Configure a single LLM endpoint"}</Typography>
+          <TextField fullWidth label="LLM Base URL" value={config.llm_base_url} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig((prev: EditableAppConfig) => ({ ...prev, llm_base_url: e.target.value }))} placeholder="http://localhost:1234/v1" sx={glassInputStyles} />
+          <FormControl fullWidth sx={glassInputStyles}>
+            <InputLabel sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>Visual Language Model</InputLabel>
+            <Select value={config.llm_model} label="Visual Language Model" onChange={(e: SelectChangeEvent<string>) => setConfig((prev: EditableAppConfig) => ({ ...prev, llm_model: e.target.value }))} sx={{ '& .MuiSelect-select': { color: 'rgba(255, 255, 255, 0.9)' } }}>
+              {availableModels.map((model: string) => <MenuItem key={model} value={model}>{model}</MenuItem>)}
             </Select>
           </FormControl>
         </Box>
@@ -963,819 +504,138 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     </Box>
   );
 
-  const renderPlaybackContent = (): JSX.Element => {
-    const statusSeverity =
-      gatewayStatus === "ok"
-        ? "success"
-        : gatewayStatus === "error"
-        ? "error"
-        : "info";
-
-    return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-        <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-          Playback Preferences
-        </Typography>
-        <Typography variant="body2" sx={{ color: "#6B6B6B" }}>
-          Haven Player prefers your local file when it exists. If it is missing,
-          playback streams from the configured IPFS gateway.
-        </Typography>
-        <TextField
-          fullWidth
-          label="IPFS Gateway URL"
-          value={gatewayConfig.baseUrl}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            handleGatewayChange(e.target.value)
-          }
-          placeholder={DEFAULT_IPFS_GATEWAY}
-          helperText="Used for remote playback. /ipfs/ is added automatically."
-        />
-        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-          <Button
-            variant="outlined"
-            onClick={checkGatewayConnectivity}
-            disabled={gatewayStatus === "checking"}
-          >
-            {gatewayStatus === "checking" ? "Checking..." : "Check gateway"}
-          </Button>
-          <Button variant="text" onClick={handleGatewayReset}>
-            Reset to default
-          </Button>
-        </Box>
-        {gatewayStatusMessage && (
-          <Alert severity={statusSeverity}>{gatewayStatusMessage}</Alert>
-        )}
-      </Box>
-    );
-  };
-
-  const renderProcessingContent = (): JSX.Element => (
+  const renderPlaybackContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        Processing Configuration
-      </Typography>
-      <TextField
-        fullWidth
-        label="Max Batch Size"
-        type="number"
-        value={config.max_batch_size}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-          setConfig((prev: EditableAppConfig) => ({
-            ...prev,
-            max_batch_size: parseInt(e.target.value, 10) || 1,
-          }))
-        }
-        inputProps={{ min: 1, max: 10 }}
-        helperText="Number of videos to process simultaneously (1-10)"
-      />
-
-      <Divider sx={{ backgroundColor: "#F0F0F0", my: 2 }} />
-
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        Download Directory
-      </Typography>
-      <TextField
-        fullWidth
-        label="Global Download Directory"
-        value={config.download_directory}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-          setConfig((prev: EditableAppConfig) => ({
-            ...prev,
-            download_directory: e.target.value,
-          }))
-        }
-        placeholder="downloads"
-        helperText="The default directory for all plugin downloads"
-      />
+      <SectionHeader icon={<PlaybackIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Playback Preferences" color={liquidGlassTokens.neon.cyan} />
+      <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>Haven Player prefers your local file when it exists. If it is missing, playback streams from the configured IPFS gateway.</Typography>
+      <TextField fullWidth label="IPFS Gateway URL" value={gatewayConfig.baseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleGatewayChange(e.target.value)} placeholder={DEFAULT_IPFS_GATEWAY} helperText="Used for remote playback. /ipfs/ is added automatically." sx={glassInputStyles} />
+      <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+        <Button variant="outlined" onClick={checkGatewayConnectivity} disabled={gatewayStatus === "checking"} sx={glassButtonStyles.primary}>{gatewayStatus === "checking" ? "Checking..." : "Check gateway"}</Button>
+        <Button variant="text" onClick={handleGatewayReset} sx={glassButtonStyles.secondary}>Reset to default</Button>
+      </Box>
+      {gatewayStatusMessage && <Alert severity={gatewayStatus === "ok" ? "success" : gatewayStatus === "error" ? "error" : "info"} sx={{ backgroundColor: gatewayStatus === "ok" ? `${liquidGlassTokens.neon.success}10` : gatewayStatus === "error" ? `${liquidGlassTokens.neon.error}10` : `${liquidGlassTokens.neon.cyan}10`, border: `1px solid ${gatewayStatus === "ok" ? liquidGlassTokens.neon.success : gatewayStatus === "error" ? liquidGlassTokens.neon.error : liquidGlassTokens.neon.cyan}30`, color: gatewayStatus === "ok" ? liquidGlassTokens.neon.success : gatewayStatus === "error" ? liquidGlassTokens.neon.error : liquidGlassTokens.neon.cyan }}>{gatewayStatusMessage}</Alert>}
     </Box>
   );
 
-  const handleCheckBalance = async () => {
-    try {
-      setCheckingBalance(true);
-      setBalanceError(null);
-      setBalanceInfo(null);
-
-      // Use HTTP RPC URL for balance checking (convert wss:// to https:// if needed)
-      let rpcUrl = filecoinConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1";
-      // Convert WebSocket URL to HTTP for balance checking
-      if (rpcUrl.startsWith("wss://")) {
-        rpcUrl = rpcUrl.replace("wss://", "https://");
-      } else if (rpcUrl.startsWith("ws://")) {
-        rpcUrl = rpcUrl.replace("ws://", "http://");
-      }
-
-      const balance = await evmService.checkBalance(rpcUrl);
-      setBalanceInfo(balance);
-    } catch (err) {
-      setBalanceError(
-        err instanceof Error ? err.message : "Failed to check balance"
-      );
-    } finally {
-      setCheckingBalance(false);
-    }
-  };
+  const renderProcessingContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <SectionHeader icon={<BatchIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Processing Configuration" color={liquidGlassTokens.neon.magenta} />
+      <TextField fullWidth label="Max Batch Size" type="number" value={config.max_batch_size} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig((prev: EditableAppConfig) => ({ ...prev, max_batch_size: parseInt(e.target.value, 10) || 1 }))} inputProps={{ min: 1, max: 10 }} helperText="Number of videos to process simultaneously (1-10)" sx={glassInputStyles} />
+      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
+      <SectionHeader icon={<CloudUploadIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Download Directory" color={liquidGlassTokens.neon.cyan} />
+      <TextField fullWidth label="Global Download Directory" value={config.download_directory} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig((prev: EditableAppConfig) => ({ ...prev, download_directory: e.target.value }))} placeholder="downloads" helperText="The default directory for all plugin downloads" sx={glassInputStyles} />
+    </Box>
+  );
 
   const renderFilecoinContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        Filecoin Configuration
-      </Typography>
-      <TextField
-        fullWidth
-        label="Private Key"
-        value={filecoinConfig.privateKey}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-          setFilecoinConfig((prev: FilecoinConfig) => ({
-            ...prev,
-            privateKey: e.target.value,
-          }));
-          // Clear balance info when private key changes
-          setBalanceInfo(null);
-          setBalanceError(null);
-        }}
-        placeholder="Enter your private key from MetaMask"
-        type="password"
-        required
-        helperText="Your Ethereum private key (0x prefix will be added automatically if missing)"
-      />
-
-      <TextField
-        fullWidth
-        label="RPC URL (optional)"
-        value={filecoinConfig.rpcUrl ?? ""}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-          setFilecoinConfig((prev: FilecoinConfig) => ({
-            ...prev,
-            rpcUrl: e.target.value,
-          }));
-          // Clear balance info when RPC URL changes
-          setBalanceInfo(null);
-          setBalanceError(null);
-        }}
-        placeholder="wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1"
-        helperText="Filecoin RPC endpoint (WebSocket wss:// or HTTP https://). Default: Calibration testnet WebSocket"
-      />
-
-      <TextField
-        fullWidth
-        label="Data Set ID (optional)"
-        type="number"
-        value={filecoinConfig.dataSetId ?? ""}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-          setFilecoinConfig((prev: FilecoinConfig) => ({
-            ...prev,
-            dataSetId: e.target.value ? parseInt(e.target.value, 10) : undefined,
-          }))
-        }
-        placeholder="Leave empty to create new"
-        helperText="Use existing data set ID or leave empty to create a new one"
-      />
-
-      <Divider sx={{ my: 1 }} />
-
+      <SectionHeader icon={<CloudUploadIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Filecoin Configuration" color={liquidGlassTokens.neon.cyan} />
+      <TextField fullWidth label="Private Key" value={filecoinConfig.privateKey} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setFilecoinConfig((prev: FilecoinConfig) => ({ ...prev, privateKey: e.target.value })); setBalanceInfo(null); setBalanceError(null); }} placeholder="Enter your private key from MetaMask" type="password" required helperText="Your Ethereum private key (0x prefix will be added automatically if missing)" sx={glassInputStyles} />
+      <TextField fullWidth label="RPC URL (optional)" value={filecoinConfig.rpcUrl ?? ""} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setFilecoinConfig((prev: FilecoinConfig) => ({ ...prev, rpcUrl: e.target.value })); setBalanceInfo(null); setBalanceError(null); }} placeholder="wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1" helperText="Filecoin RPC endpoint. Default: Calibration testnet WebSocket" sx={glassInputStyles} />
+      <TextField fullWidth label="Data Set ID (optional)" type="number" value={filecoinConfig.dataSetId ?? ""} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilecoinConfig((prev: FilecoinConfig) => ({ ...prev, dataSetId: e.target.value ? parseInt(e.target.value, 10) : undefined }))} placeholder="Leave empty to create new" helperText="Use existing data set ID or leave empty to create a new one" sx={glassInputStyles} />
+      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 500, color: "#424242" }}>
-          Gas Balance Check
-        </Typography>
-        <Button
-          variant="outlined"
-          onClick={handleCheckBalance}
-              disabled={checkingBalance}
-          startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />}
-          sx={{
-            alignSelf: "flex-start",
-            textTransform: "none",
-          }}
-        >
-          {checkingBalance ? "Checking..." : "Check Gas Balance"}
-        </Button>
-
+        <Typography variant="subtitle2" sx={{ fontWeight: 500, color: 'rgba(255, 255, 255, 0.7)' }}>Gas Balance Check</Typography>
+        <Button variant="outlined" onClick={handleCheckBalance} disabled={checkingBalance} startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />} sx={{ alignSelf: "flex-start", ...glassButtonStyles.primary }}>{checkingBalance ? "Checking..." : "Check Gas Balance"}</Button>
         {balanceInfo && (
-          <Alert
-            severity={balanceInfo.has_sufficient_balance ? "success" : "warning"}
-            sx={{
-              "& .MuiAlert-icon": {
-                color: balanceInfo.has_sufficient_balance ? "#4CAF50" : "#FF9800",
-              },
-            }}
-          >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-              <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                Wallet: {balanceInfo.wallet_address}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() => {
-                  navigator.clipboard.writeText(balanceInfo.wallet_address);
-                }}
-                sx={{
-                  padding: 0.5,
-                  "&:hover": {
-                    backgroundColor: "rgba(0, 0, 0, 0.04)",
-                  },
-                }}
-                title="Copy wallet address"
-              >
-                <ContentCopyIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            </Box>
-            <Typography variant="body2">
-              Chain: {balanceInfo.chain_name}
-            </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-              Balance: {balanceInfo.balance_ether.toFixed(6)} {balanceInfo.native_token_symbol}
-            </Typography>
-            {!balanceInfo.has_sufficient_balance && (
-              <Typography variant="body2" sx={{ mt: 1, fontStyle: "italic" }}>
-                ⚠️ Low balance! Please send {balanceInfo.native_token_symbol} to this address for gas fees.
-              </Typography>
-            )}
+          <Alert severity={balanceInfo.has_sufficient_balance ? "success" : "warning"} sx={{ backgroundColor: balanceInfo.has_sufficient_balance ? `${liquidGlassTokens.neon.success}10` : `${liquidGlassTokens.neon.amber}10`, border: `1px solid ${balanceInfo.has_sufficient_balance ? liquidGlassTokens.neon.success : liquidGlassTokens.neon.amber}30`, color: balanceInfo.has_sufficient_balance ? liquidGlassTokens.neon.success : liquidGlassTokens.neon.amber }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}><Typography variant="body2" sx={{ fontWeight: 500 }}>Wallet: {balanceInfo.wallet_address}</Typography><IconButton size="small" onClick={() => navigator.clipboard.writeText(balanceInfo.wallet_address)} sx={{ padding: 0.5, color: 'inherit' }}><ContentCopyIcon sx={{ fontSize: 16 }} /></IconButton></Box>
+            <Typography variant="body2">Chain: {balanceInfo.chain_name}</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>Balance: {balanceInfo.balance_ether.toFixed(6)} {balanceInfo.native_token_symbol}</Typography>
+            {!balanceInfo.has_sufficient_balance && <Typography variant="body2" sx={{ mt: 1, fontStyle: "italic" }}>⚠️ Low balance! Please send {balanceInfo.native_token_symbol} to this address for gas fees.</Typography>}
           </Alert>
         )}
-
-        {balanceError && (
-          <Alert severity="error">
-            {balanceError}
-          </Alert>
-        )}
+        {balanceError && <Alert severity="error" sx={{ backgroundColor: `${liquidGlassTokens.neon.error}10`, border: `1px solid ${liquidGlassTokens.neon.error}30`, color: liquidGlassTokens.neon.error }}>{balanceError}</Alert>}
       </Box>
-
-      <Alert
-        severity="info"
-        sx={{
-          backgroundColor: "#E3F2FD",
-          color: "#1976D2",
-          border: "1px solid #BBDEFB",
-          borderRadius: "8px",
-          "& .MuiAlert-icon": {
-            color: "#1976D2",
-          },
-        }}
-      >
-        <Typography
-          sx={{
-            fontSize: "12px",
-            fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-          }}
-        >
-          <strong>Note:</strong> This uses Filecoin Calibration testnet. You'll
-          need test FIL for gas and test USDFC for storage payments. Private keys
-          are encrypted and stored securely on your device.
-        </Typography>
-      </Alert>
-
-      {filecoinError && (
-        <Alert severity="error" sx={{ mt: 2 }}>
-          {filecoinError}
-        </Alert>
-      )}
+      <Alert severity="info" sx={{ backgroundColor: `${liquidGlassTokens.neon.cyan}10`, border: `1px solid ${liquidGlassTokens.neon.cyan}30`, color: liquidGlassTokens.neon.cyan }}><Typography sx={{ fontSize: "12px" }}><strong>Note:</strong> This uses Filecoin Calibration testnet. Private keys are encrypted and stored securely on your device.</Typography></Alert>
+      {filecoinError && <Alert severity="error" sx={{ backgroundColor: `${liquidGlassTokens.neon.error}10`, border: `1px solid ${liquidGlassTokens.neon.error}30`, color: liquidGlassTokens.neon.error }}>{filecoinError}</Alert>}
     </Box>
   );
 
   const renderEncryptionContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        Encryption
-      </Typography>
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 1,
-          p: 2,
-          backgroundColor: filecoinConfig.encryptionEnabled ? "#E8F5E9" : "#FAFAFA",
-          borderRadius: "8px",
-          border: filecoinConfig.encryptionEnabled
-            ? "1px solid #4CAF50"
-            : "1px solid #E0E0E0",
-          transition: "all 0.2s ease-in-out",
-        }}
-      >
+      <SectionHeader icon={<LockIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Encryption" color={liquidGlassTokens.neon.magenta} />
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, p: 2, backgroundColor: filecoinConfig.encryptionEnabled ? `${liquidGlassTokens.neon.success}10` : 'rgba(255, 255, 255, 0.03)', borderRadius: liquidGlassTokens.radius.md, border: `1px solid ${filecoinConfig.encryptionEnabled ? liquidGlassTokens.neon.success : liquidGlassTokens.glass.border}`, transition: "all 0.2s ease-in-out" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <LockIcon
-            sx={{
-              color: filecoinConfig.encryptionEnabled ? "#4CAF50" : "#9E9E9E",
-              fontSize: 20,
-            }}
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={filecoinConfig.encryptionEnabled}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setFilecoinConfig((prev: FilecoinConfig) => ({
-                    ...prev,
-                    encryptionEnabled: e.target.checked,
-                  }))
-                }
-                sx={{
-                  "& .MuiSwitch-switchBase.Mui-checked": {
-                    color: "#4CAF50",
-                  },
-                  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
-                    backgroundColor: "#4CAF50",
-                  },
-                }}
-              />
-            }
-            label={
-              <Typography
-                sx={{
-                  fontWeight: 500,
-                  fontSize: "14px",
-                  color: "#000000",
-                }}
-              >
-                Encrypt videos before upload
-              </Typography>
-            }
-            sx={{ margin: 0 }}
-          />
+          <LockIcon sx={{ color: filecoinConfig.encryptionEnabled ? liquidGlassTokens.neon.success : 'rgba(255, 255, 255, 0.4)', fontSize: 20 }} />
+          <FormControlLabel control={<Switch checked={filecoinConfig.encryptionEnabled} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilecoinConfig((prev: FilecoinConfig) => ({ ...prev, encryptionEnabled: e.target.checked }))} sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: liquidGlassTokens.neon.success }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: `${liquidGlassTokens.neon.success}60` } }} />} label={<Typography sx={{ fontWeight: 500, fontSize: "14px", color: "#fff" }}>Encrypt videos before upload</Typography>} sx={{ margin: 0 }} />
         </Box>
-        <Typography
-          sx={{
-            fontSize: "12px",
-            color: "#6B6B6B",
-            ml: 4.5,
-          }}
-        >
-          {filecoinConfig.encryptionEnabled
-            ? "Videos will be encrypted with Lit Protocol before uploading to Filecoin. Only your wallet can decrypt them."
-            : "Videos will be uploaded to Filecoin without encryption."}
-        </Typography>
-        <FormHelperText sx={{ ml: 4.5, mt: 1 }}>
-          Encryption preferences are stored locally in the Filecoin settings.
-        </FormHelperText>
+        <Typography sx={{ fontSize: "12px", color: 'rgba(255, 255, 255, 0.5)', ml: 4.5 }}>{filecoinConfig.encryptionEnabled ? "Videos will be encrypted with Lit Protocol before uploading. Only your wallet can decrypt them." : "Videos will be uploaded without encryption."}</Typography>
+        <FormHelperText sx={{ ml: 4.5, mt: 1, color: 'rgba(255, 255, 255, 0.4)' }}>Encryption preferences are stored locally in the Filecoin settings.</FormHelperText>
       </Box>
     </Box>
   );
 
-  const saveLabel = isPlaybackTab
-    ? "Save Playback Settings"
-    : isFilecoinTab
-    ? "Save Filecoin Settings"
-    : isArkivTab
-    ? "Save Arkiv Settings"
-    : "Save Configuration";
-
   const renderArkivContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-      <Typography variant="h6" sx={{ fontWeight: 500, fontSize: "16px" }}>
-        Arkiv Configuration
-      </Typography>
-
-      {/* Enable/Disable Toggle */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          p: 2,
-          borderRadius: "8px",
-          backgroundColor: arkivConfig.syncEnabled ? "#E8F5E9" : "#F5F5F5",
-          border: `1px solid ${arkivConfig.syncEnabled ? "#4CAF50" : "#E0E0E0"}`,
-        }}
-      >
+      <SectionHeader icon={<ArkivIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Arkiv Configuration" color={liquidGlassTokens.neon.magenta} />
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", p: 2, borderRadius: liquidGlassTokens.radius.md, backgroundColor: arkivConfig.syncEnabled ? `${liquidGlassTokens.neon.success}10` : 'rgba(255, 255, 255, 0.03)', border: `1px solid ${arkivConfig.syncEnabled ? liquidGlassTokens.neon.success : liquidGlassTokens.glass.border}` }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          {arkivConfig.syncEnabled ? (
-            <CheckCircleIcon sx={{ color: "#4CAF50", fontSize: 24 }} />
-          ) : (
-            <CancelIcon sx={{ color: "#9E9E9E", fontSize: 24 }} />
-          )}
+          {arkivConfig.syncEnabled ? <CheckCircleIcon sx={{ color: liquidGlassTokens.neon.success, fontSize: 24 }} /> : <CancelIcon sx={{ color: 'rgba(255, 255, 255, 0.4)', fontSize: 24 }} />}
           <Box>
-            <Typography
-              sx={{
-                fontWeight: 500,
-                fontSize: "14px",
-                color: "#000000",
-                mb: 0.5,
-              }}
-            >
-              Sync videos to Arkiv blockchain
-            </Typography>
-            <Typography
-              sx={{
-                fontSize: "12px",
-                color: "#6B6B6B",
-              }}
-            >
-              {arkivConfig.syncEnabled
-                ? "Videos with sharing enabled will be synced to Arkiv"
-                : "Arkiv sync is disabled"}
-            </Typography>
+            <Typography sx={{ fontWeight: 500, fontSize: "14px", color: "#fff", mb: 0.5 }}>Sync videos to Arkiv blockchain</Typography>
+            <Typography sx={{ fontSize: "12px", color: 'rgba(255, 255, 255, 0.5)' }}>{arkivConfig.syncEnabled ? "Videos with sharing enabled will be synced to Arkiv" : "Arkiv sync is disabled"}</Typography>
           </Box>
         </Box>
-        <FormControlLabel
-          control={
-            <Switch
-              checked={arkivConfig.syncEnabled}
-              onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
-                const newSyncEnabled = e.target.checked;
-                setArkivConfig((prev: ArkivConfig) => ({
-                  ...prev,
-                  syncEnabled: newSyncEnabled,
-                }));
-                
-                // Automatically check balance when enabling Arkiv sync
-                if (newSyncEnabled) {
-                  setCheckingBalance(true);
-                  setBalanceError(null);
-                  setBalanceInfo(null);
-                  
-                  try {
-                    const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
-                    const balance = await evmService.checkBalance(rpcUrl);
-                    setBalanceInfo(balance);
-                    
-                    // Warn if balance is insufficient
-                    if (!balance.has_sufficient_balance) {
-                      setArkivError(
-                        `⚠️ Low gas balance: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}. ` +
-                        `Send ${balance.native_token_symbol} to ${balance.wallet_address} for gas fees.`
-                      );
-                    } else {
-                      setArkivError(null);
-                    }
-                  } catch (balanceErr) {
-                    console.warn("Failed to check gas balance:", balanceErr);
-                    setBalanceError(
-                      balanceErr instanceof Error ? balanceErr.message : "Failed to check gas balance"
-                    );
-                  } finally {
-                    setCheckingBalance(false);
-                  }
-                } else if (!newSyncEnabled) {
-                  // Clear balance info when disabling
-                  setBalanceInfo(null);
-                  setBalanceError(null);
-                  setArkivError(null);
-                }
-              }}
-              disabled={!arkivConfig.enabled}
-              color="success"
-            />
-          }
-          label=""
-        />
+        <FormControlLabel control={<Switch checked={arkivConfig.syncEnabled} onChange={async (e: React.ChangeEvent<HTMLInputElement>) => { const newSyncEnabled = e.target.checked; setArkivConfig((prev: ArkivConfig) => ({ ...prev, syncEnabled: newSyncEnabled })); if (newSyncEnabled) { setCheckingBalance(true); setBalanceError(null); setBalanceInfo(null); try { const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc"; const balance = await evmService.checkBalance(rpcUrl); setBalanceInfo(balance); if (!balance.has_sufficient_balance) setArkivError(`⚠️ Low gas balance: ${balance.balance_ether.toFixed(6)} ${balance.native_token_symbol}.`); else setArkivError(null); } catch (err) { setBalanceError(err instanceof Error ? err.message : "Failed to check balance"); } finally { setCheckingBalance(false); } } else { setBalanceInfo(null); setBalanceError(null); setArkivError(null); } }} disabled={!arkivConfig.enabled} color="success" />} label="" />
       </Box>
-
-      {/* Private Key Status */}
-      {!arkivConfig.enabled && (
-        <Alert
-          severity="warning"
-          sx={{
-            backgroundColor: "#FFF3E0",
-            color: "#E65100",
-            border: "1px solid #FFCC80",
-            borderRadius: "8px",
-            "& .MuiAlert-icon": {
-              color: "#E65100",
-            },
-          }}
-        >
-          <Typography sx={{ fontSize: "12px" }}>
-            <strong>Private key required:</strong> Configure a private key in the Filecoin settings tab to enable Arkiv sync.
-          </Typography>
-        </Alert>
-      )}
-
-      <TextField
-        fullWidth
-        label="Arkiv RPC URL"
-        value={arkivConfig.rpcUrl ?? ""}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-          setArkivConfig((prev: ArkivConfig) => ({
-            ...prev,
-            rpcUrl: e.target.value,
-          }));
-          // Clear balance info when RPC URL changes
-          setBalanceInfo(null);
-          setBalanceError(null);
-        }}
-        placeholder="https://mendoza.hoodi.arkiv.network/rpc"
-        helperText="Ethereum RPC endpoint for Arkiv blockchain. Default: https://mendoza.hoodi.arkiv.network/rpc"
-        disabled={!arkivConfig.syncEnabled}
-      />
-
-      <TextField
-        fullWidth
-        label="Video Expiration (weeks)"
-        type="number"
-        value={arkivConfig.expirationWeeks ?? 4}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-          const weeks = parseInt(e.target.value, 10);
-          setArkivConfig((prev: ArkivConfig) => ({
-            ...prev,
-            expirationWeeks: isNaN(weeks) || weeks < 1 ? 1 : weeks,
-          }));
-        }}
-        inputProps={{ min: 1, max: 520 }} // 1 week to 10 years (520 weeks)
-        helperText="How long (in weeks) videos will be able to be restored from Arkiv. After expiration, data is automatically pruned from the blockchain. Default: 4 weeks"
-        disabled={!arkivConfig.syncEnabled}
-      />
-
+      {!arkivConfig.enabled && <Alert severity="warning" sx={{ backgroundColor: `${liquidGlassTokens.neon.amber}10`, border: `1px solid ${liquidGlassTokens.neon.amber}30`, color: liquidGlassTokens.neon.amber }}><Typography sx={{ fontSize: "12px" }}><strong>Private key required:</strong> Configure a private key in the Filecoin settings tab to enable Arkiv sync.</Typography></Alert>}
+      <TextField fullWidth label="Arkiv RPC URL" value={arkivConfig.rpcUrl ?? ""} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setArkivConfig((prev: ArkivConfig) => ({ ...prev, rpcUrl: e.target.value })); setBalanceInfo(null); setBalanceError(null); }} placeholder="https://mendoza.hoodi.arkiv.network/rpc" helperText="Ethereum RPC endpoint for Arkiv blockchain" disabled={!arkivConfig.syncEnabled} sx={glassInputStyles} />
+      <TextField fullWidth label="Video Expiration (weeks)" type="number" value={arkivConfig.expirationWeeks ?? 4} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const weeks = parseInt(e.target.value, 10); setArkivConfig((prev: ArkivConfig) => ({ ...prev, expirationWeeks: isNaN(weeks) || weeks < 1 ? 1 : weeks })); }} inputProps={{ min: 1, max: 520 }} helperText="How long videos can be restored from Arkiv. Default: 4 weeks" disabled={!arkivConfig.syncEnabled} sx={glassInputStyles} />
       {arkivConfig.enabled && (
         <>
-          <Divider sx={{ my: 1 }} />
+          <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 500, color: "#424242" }}>
-              Gas Balance Check
-            </Typography>
-            <Button
-              variant="outlined"
-              onClick={async () => {
-                try {
-                  setCheckingBalance(true);
-                  setBalanceError(null);
-                  setBalanceInfo(null);
-
-                  const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc";
-                  const balance = await evmService.checkBalance(rpcUrl);
-                  setBalanceInfo(balance);
-                } catch (err) {
-                  setBalanceError(
-                    err instanceof Error ? err.message : "Failed to check balance"
-                  );
-                } finally {
-                  setCheckingBalance(false);
-                }
-              }}
-              disabled={checkingBalance || !arkivConfig.enabled}
-              startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />}
-              sx={{
-                alignSelf: "flex-start",
-                textTransform: "none",
-              }}
-            >
-              {checkingBalance ? "Checking..." : "Check Gas Balance"}
-            </Button>
-
-            {balanceInfo && (
-              <Alert
-                severity={balanceInfo.has_sufficient_balance ? "success" : "warning"}
-                sx={{
-                  "& .MuiAlert-icon": {
-                    color: balanceInfo.has_sufficient_balance ? "#4CAF50" : "#FF9800",
-                  },
-                }}
-              >
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    Wallet: {balanceInfo.wallet_address}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() => {
-                      navigator.clipboard.writeText(balanceInfo.wallet_address);
-                    }}
-                    sx={{
-                      padding: 0.5,
-                      "&:hover": {
-                        backgroundColor: "rgba(0, 0, 0, 0.04)",
-                      },
-                    }}
-                    title="Copy wallet address"
-                  >
-                    <ContentCopyIcon sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Box>
-                <Typography variant="body2">
-                  Chain: {balanceInfo.chain_name}
-                </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                  Balance: {balanceInfo.balance_ether.toFixed(6)} {balanceInfo.native_token_symbol}
-                </Typography>
-                {!balanceInfo.has_sufficient_balance && (
-                  <Typography variant="body2" sx={{ mt: 1, fontStyle: "italic" }}>
-                    ⚠️ Low balance! Please send {balanceInfo.native_token_symbol} to this address for gas fees.
-                  </Typography>
-                )}
-              </Alert>
-            )}
-
-            {balanceError && (
-              <Alert severity="error">
-                {balanceError}
-              </Alert>
-            )}
+            <Typography variant="subtitle2" sx={{ fontWeight: 500, color: 'rgba(255, 255, 255, 0.7)' }}>Gas Balance Check</Typography>
+            <Button variant="outlined" onClick={async () => { try { setCheckingBalance(true); setBalanceError(null); setBalanceInfo(null); const rpcUrl = arkivConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc"; const balance = await evmService.checkBalance(rpcUrl); setBalanceInfo(balance); } catch (err) { setBalanceError(err instanceof Error ? err.message : "Failed to check balance"); } finally { setCheckingBalance(false); } }} disabled={checkingBalance || !arkivConfig.enabled} startIcon={checkingBalance ? <CircularProgress size={16} /> : <RefreshIcon />} sx={{ alignSelf: "flex-start", ...glassButtonStyles.primary }}>{checkingBalance ? "Checking..." : "Check Gas Balance"}</Button>
+            {balanceInfo && <Alert severity={balanceInfo.has_sufficient_balance ? "success" : "warning"} sx={{ backgroundColor: balanceInfo.has_sufficient_balance ? `${liquidGlassTokens.neon.success}10` : `${liquidGlassTokens.neon.amber}10`, border: `1px solid ${balanceInfo.has_sufficient_balance ? liquidGlassTokens.neon.success : liquidGlassTokens.neon.amber}30`, color: balanceInfo.has_sufficient_balance ? liquidGlassTokens.neon.success : liquidGlassTokens.neon.amber }}><Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}><Typography variant="body2" sx={{ fontWeight: 500 }}>Wallet: {balanceInfo.wallet_address}</Typography><IconButton size="small" onClick={() => navigator.clipboard.writeText(balanceInfo.wallet_address)} sx={{ padding: 0.5, color: 'inherit' }}><ContentCopyIcon sx={{ fontSize: 16 }} /></IconButton></Box><Typography variant="body2">Chain: {balanceInfo.chain_name}</Typography><Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>Balance: {balanceInfo.balance_ether.toFixed(6)} {balanceInfo.native_token_symbol}</Typography>{!balanceInfo.has_sufficient_balance && <Typography variant="body2" sx={{ mt: 1, fontStyle: "italic" }}>⚠️ Low balance! Please send {balanceInfo.native_token_symbol} to this address for gas fees.</Typography>}</Alert>}
+            {balanceError && <Alert severity="error" sx={{ backgroundColor: `${liquidGlassTokens.neon.error}10`, border: `1px solid ${liquidGlassTokens.neon.error}30`, color: liquidGlassTokens.neon.error }}>{balanceError}</Alert>}
           </Box>
         </>
       )}
-
-      <Alert
-        severity="info"
-        sx={{
-          backgroundColor: "#E3F2FD",
-          color: "#1976D2",
-          border: "1px solid #BBDEFB",
-          borderRadius: "8px",
-          "& .MuiAlert-icon": {
-            color: "#1976D2",
-          },
-        }}
-      >
-        <Typography
-          sx={{
-            fontSize: "12px",
-            fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-          }}
-        >
-          <strong>Note:</strong> Arkiv uses the same private key as Filecoin
-          (configured in Filecoin settings). The RPC URL is for the Ethereum
-          network where Arkiv entities are stored. Enable sharing for individual
-          videos via the context menu to sync them to Arkiv.
-        </Typography>
-      </Alert>
-
+      <Alert severity="info" sx={{ backgroundColor: `${liquidGlassTokens.neon.cyan}10`, border: `1px solid ${liquidGlassTokens.neon.cyan}30`, color: liquidGlassTokens.neon.cyan }}><Typography sx={{ fontSize: "12px" }}><strong>Note:</strong> Arkiv uses the same private key as Filecoin. Enable sharing for individual videos via the context menu.</Typography></Alert>
       <Box sx={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2, mt: 2 }}>
-        <Button
-          variant="outlined"
-          disabled={restoring || !arkivConfig.enabled}
-          onClick={handleRestoreFromArkiv}
-          startIcon={restoring ? <CircularProgress size={16} /> : undefined}
-          sx={{
-            borderColor: arkivConfig.enabled ? "#4CAF50" : "#E0E0E0",
-            color: arkivConfig.enabled ? "#4CAF50" : "#9E9E9E",
-            "&:hover": {
-              borderColor: arkivConfig.enabled ? "#45A049" : "#E0E0E0",
-              backgroundColor: arkivConfig.enabled ? "#F1F8F4" : "#FAFAFA",
-            },
-          }}
-        >
-          {restoring ? (restoreProgress || "Restoring...") : "Restore Catalog from Arkiv"}
-        </Button>
-        {restoreProgress && restoring && (
-          <Typography variant="body2" sx={{ mt: 1, color: "text.secondary", fontStyle: "italic" }}>
-            {restoreProgress}
-          </Typography>
-        )}
-        {restoreSummary && (
-          <Typography variant="body2" sx={{ color: "#4CAF50" }}>
-            {restoreSummary}
-          </Typography>
-        )}
+        <Button variant="outlined" disabled={restoring || !arkivConfig.enabled} onClick={handleRestoreFromArkiv} startIcon={restoring ? <CircularProgress size={16} /> : undefined} sx={{ ...glassButtonStyles.primary, borderColor: arkivConfig.enabled ? liquidGlassTokens.neon.success : liquidGlassTokens.glass.border, color: arkivConfig.enabled ? liquidGlassTokens.neon.success : 'rgba(255, 255, 255, 0.4)' }}>{restoring ? (restoreProgress || "Restoring...") : "Restore Catalog from Arkiv"}</Button>
+        {restoreSummary && <Typography variant="body2" sx={{ color: liquidGlassTokens.neon.success }}>{restoreSummary}</Typography>}
       </Box>
-      {!arkivConfig.enabled && (
-        <Typography variant="body2" sx={{ color: "#9E9E9E", fontSize: "12px", mt: -1 }}>
-          Configure a private key in Filecoin settings to enable restore functionality.
-        </Typography>
-      )}
-
-      <Divider sx={{ my: 2 }} />
-
+      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 500, color: "#424242" }}>
-          Backend Configuration
-        </Typography>
-        <Typography variant="body2" sx={{ color: "#6B6B6B", fontSize: "12px" }}>
-          After changing Arkiv settings (sync toggle, RPC URL) or Filecoin private key, you must restart the backend for changes to take effect.
-        </Typography>
+        <Typography variant="subtitle2" sx={{ fontWeight: 500, color: 'rgba(255, 255, 255, 0.7)' }}>Backend Configuration</Typography>
+        <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.4)', fontSize: "12px" }}>After changing settings, restart the backend for changes to take effect.</Typography>
         <Box sx={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
-          <Button
-            variant="contained"
-            disabled={restartingBackend}
-            onClick={handleRestartBackend}
-            startIcon={restartingBackend ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
-            sx={{
-              backgroundColor: "#1976D2",
-              color: "#FFFFFF",
-              "&:hover": {
-                backgroundColor: "#1565C0",
-              },
-              "&:disabled": {
-                backgroundColor: "#BDBDBD",
-              },
-            }}
-          >
-            {restartingBackend ? "Restarting..." : "Restart Backend"}
-          </Button>
-          {backendRestartMessage && (
-            <Typography variant="body2" sx={{ color: "#4CAF50" }}>
-              {backendRestartMessage}
-            </Typography>
-          )}
+          <Button variant="contained" disabled={restartingBackend} onClick={handleRestartBackend} startIcon={restartingBackend ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />} sx={{ background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}30 0%, ${liquidGlassTokens.neon.magenta}30 100%)`, border: `1px solid ${liquidGlassTokens.neon.cyan}50`, color: '#fff', '&:hover': { background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}40 0%, ${liquidGlassTokens.neon.magenta}40 100%)`, boxShadow: glowEffects.cyan(0.3) } }}>{restartingBackend ? "Restarting..." : "Restart Backend"}</Button>
+          {backendRestartMessage && <Typography variant="body2" sx={{ color: liquidGlassTokens.neon.success }}>{backendRestartMessage}</Typography>}
         </Box>
       </Box>
-
-      {arkivError && (
-        <Alert severity="error" sx={{ mt: 2 }}>
-          {arkivError}
-        </Alert>
-      )}
+      {arkivError && <Alert severity="error" sx={{ mt: 2, backgroundColor: `${liquidGlassTokens.neon.error}10`, border: `1px solid ${liquidGlassTokens.neon.error}30`, color: liquidGlassTokens.neon.error }}>{arkivError}</Alert>}
     </Box>
   );
 
   const renderContent = (): JSX.Element | null => {
     switch (activeTab) {
-      case "ai":
-        return renderAiContent();
-      case "playback":
-        return renderPlaybackContent();
-      case "processing":
-        return renderProcessingContent();
-      case "filecoin":
-        return renderFilecoinContent();
-      case "encryption":
-        return renderEncryptionContent();
-      case "arkiv":
-        return renderArkivContent();
-      default:
-        return null;
+      case "ai": return renderAiContent();
+      case "playback": return renderPlaybackContent();
+      case "processing": return renderProcessingContent();
+      case "filecoin": return renderFilecoinContent();
+      case "encryption": return renderEncryptionContent();
+      case "arkiv": return renderArkivContent();
+      default: return null;
     }
   };
 
+  const saveLabel = isPlaybackTab ? "Save Playback Settings" : isFilecoinTab ? "Save Filecoin Settings" : isArkivTab ? "Save Arkiv Settings" : "Save Configuration";
+
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      maxWidth="md"
-      fullWidth
-      PaperProps={{
-        sx: {
-          backgroundColor: "#FFFFFF",
-          color: "#000000",
-          border: "1px solid #F0F0F0",
-          borderRadius: "16px",
-          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-          overflow: "hidden",
-        },
-      }}
-      BackdropProps={{
-        sx: {
-          backgroundColor: "rgba(0, 0, 0, 0.4)",
-          backdropFilter: "blur(8px)",
-        },
-      }}
-    >
-      <DialogTitle
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          pb: 1,
-          px: 3,
-          pt: 3,
-          backgroundColor: "#FAFAFA",
-          borderBottom: "1px solid #F0F0F0",
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Typography
-            variant="h6"
-            sx={{
-              fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-              fontWeight: 600,
-              fontSize: "18px",
-              color: "#000000",
-              letterSpacing: "-0.01em",
-            }}
-          >
-            Settings
-          </Typography>
-        </Box>
-        <IconButton
-          onClick={onClose}
-          sx={{
-            color: "#6B6B6B",
-            "&:hover": {
-              backgroundColor: "#F5F5F5",
-            },
-          }}
-          aria-label="Close settings"
-        >
-          <CloseIcon />
-        </IconButton>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { backgroundColor: liquidGlassTokens.canvas.base, color: "#fff", border: `1px solid ${liquidGlassTokens.glass.border}`, borderRadius: liquidGlassTokens.radius.lg, boxShadow: "0 25px 80px rgba(0, 0, 0, 0.6)", overflow: "hidden", ...glassPanelStyles } }} BackdropProps={{ sx: { backgroundColor: "rgba(0, 0, 0, 0.7)", backdropFilter: "blur(12px)" } }}>
+      <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pb: 1, px: 3, pt: 3, backgroundColor: liquidGlassTokens.canvas.elevated, borderBottom: `1px solid ${liquidGlassTokens.glass.border}` }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, fontSize: "18px", color: "#fff", letterSpacing: "-0.01em" }}>Settings</Typography>
+        <IconButton onClick={onClose} sx={{ color: 'rgba(255, 255, 255, 0.6)', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.08)' } }}><CloseIcon /></IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ px: 3, py: 3 }}>
-        {(error || filecoinError || arkivError) && (
-          <Alert
-            severity="error"
-            sx={{
-              backgroundColor: "#FFF5F5",
-              color: "#FF4D4D",
-              border: "1px solid #FFE0E0",
-              borderRadius: "8px",
-              mb: 2,
-              "& .MuiAlert-icon": {
-                color: "#FF4D4D",
-              },
-            }}
-          >
-            {error || filecoinError || arkivError}
-          </Alert>
-        )}
+      <DialogContent sx={{ px: 3, py: 3, backgroundColor: liquidGlassTokens.canvas.base }}>
+        {(error || filecoinError || arkivError) && <Alert severity="error" sx={{ backgroundColor: `${liquidGlassTokens.neon.error}10`, color: liquidGlassTokens.neon.error, border: `1px solid ${liquidGlassTokens.neon.error}30`, borderRadius: liquidGlassTokens.radius.md, mb: 2 }}>{error || filecoinError || arkivError}</Alert>}
 
-        <Tabs
-          value={activeTab}
-          onChange={(event: SyntheticEvent, value: SettingsTab) => {
-            event.preventDefault();
-            onTabChange(value);
-          }}
-          variant="scrollable"
-          scrollButtons="auto"
-        >
+        <Tabs value={activeTab} onChange={(_e: SyntheticEvent, value: SettingsTab) => onTabChange(value)} variant="scrollable" scrollButtons="auto" sx={{ '& .MuiTab-root': { color: 'rgba(255, 255, 255, 0.5)', textTransform: 'none', minHeight: 48, '&.Mui-selected': { color: liquidGlassTokens.neon.cyan } }, '& .MuiTabs-indicator': { backgroundColor: liquidGlassTokens.neon.cyan, height: 2, boxShadow: `0 0 8px ${liquidGlassTokens.neon.cyan}60` } }}>
           <Tab label="AI / LLM" value="ai" icon={<AIIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Processing" value="processing" icon={<BatchIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Playback" value="playback" icon={<PlaybackIcon fontSize="small" />} iconPosition="start" />
@@ -1784,74 +644,12 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           <Tab label="Arkiv" value="arkiv" icon={<ArkivIcon fontSize="small" />} iconPosition="start" />
         </Tabs>
 
-        {loading ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-            <CircularProgress sx={{ color: "#000000" }} />
-          </Box>
-        ) : (
-          <Box sx={{ mt: 3 }}>{renderContent()}</Box>
-        )}
+        {loading ? <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}><CircularProgress sx={{ color: liquidGlassTokens.neon.cyan }} /></Box> : <Box sx={{ mt: 3 }}>{renderContent()}</Box>}
       </DialogContent>
 
-      <DialogActions
-        sx={{
-          px: 3,
-          pb: 3,
-          pt: 2,
-          backgroundColor: "#FAFAFA",
-          borderTop: "1px solid #F0F0F0",
-          gap: 2,
-        }}
-      >
-        <Button
-          onClick={onClose}
-          disabled={saving}
-          sx={{
-            color: "#6B6B6B",
-            fontSize: "14px",
-            fontWeight: 500,
-            px: 3,
-            py: 1,
-            borderRadius: "8px",
-            "&:hover": {
-              backgroundColor: "#F5F5F5",
-            },
-          }}
-        >
-          Cancel
-        </Button>
-        <Button
-          onClick={handleSave}
-          disabled={loading || saving || (isFilecoinTab && !filecoinConfig.privateKey.trim())}
-          variant="contained"
-          sx={{
-            background: "linear-gradient(135deg, #000000 0%, #424242 100%)",
-            color: "#FFFFFF",
-            fontSize: "14px",
-            fontWeight: 500,
-            px: 4,
-            py: 1,
-            borderRadius: "8px",
-            boxShadow: "none",
-            "&:hover": {
-              background: "linear-gradient(135deg, #424242 0%, #000000 100%)",
-              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
-            },
-            "&:disabled": {
-              backgroundColor: "#E0E0E0",
-              color: "#9E9E9E",
-            },
-          }}
-          startIcon={
-            saving ? (
-              <CircularProgress size={16} sx={{ color: "#FFFFFF" }} />
-            ) : (
-              <SaveIcon />
-            )
-          }
-        >
-          {saving ? "Saving..." : saveLabel}
-        </Button>
+      <DialogActions sx={{ px: 3, pb: 3, pt: 2, backgroundColor: liquidGlassTokens.canvas.elevated, borderTop: `1px solid ${liquidGlassTokens.glass.border}`, gap: 2 }}>
+        <Button onClick={onClose} disabled={saving} sx={glassButtonStyles.secondary}>Cancel</Button>
+        <Button onClick={handleSave} disabled={loading || saving || (isFilecoinTab && !filecoinConfig.privateKey.trim())} variant="contained" startIcon={saving ? <CircularProgress size={16} sx={{ color: "#fff" }} /> : <SaveIcon />} sx={{ background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}30 0%, ${liquidGlassTokens.neon.magenta}30 100%)`, border: `1px solid ${liquidGlassTokens.neon.cyan}50`, color: '#fff', px: 4, '&:hover': { background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}40 0%, ${liquidGlassTokens.neon.magenta}40 100%)`, boxShadow: glowEffects.cyan(0.3) }, '&:disabled': { background: 'rgba(255, 255, 255, 0.05)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.3)' } }}>{saving ? "Saving..." : saveLabel}</Button>
       </DialogActions>
     </Dialog>
   );

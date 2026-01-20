@@ -7,7 +7,8 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { ThemeProvider, CssBaseline, Box, Snackbar, Alert } from "@mui/material";
-import { createTheme } from "@mui/material/styles";
+import { liquidGlassTheme, liquidGlassTokens } from "@/styles/liquidGlassTheme";
+import { CircuitSubstrate } from "@/components/LiquidGlass";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import VideoAnalysisList from "@/components/VideoAnalysisList";
@@ -41,148 +42,6 @@ import {
   isFilecoinConfigured,
 } from "@/utils/settingsValidation";
 
-const modernTheme = createTheme({
-  palette: {
-    mode: "light",
-    primary: {
-      main: "#000000",
-      light: "#6B6B6B",
-      contrastText: "#FFFFFF",
-    },
-    secondary: {
-      main: "#F9A825",
-      light: "#4CAF50",
-    },
-    background: {
-      default: "#FFFFFF",
-      paper: "#F7F7F7",
-    },
-    text: {
-      primary: "#000000",
-      secondary: "#6B6B6B",
-    },
-    error: {
-      main: "#FF4D4D",
-    },
-    grey: {
-      50: "#FAFAFA",
-      100: "#F5F5F5",
-      200: "#EEEEEE",
-      300: "#E0E0E0",
-      400: "#BDBDBD",
-      500: "#9E9E9E",
-    },
-  },
-  typography: {
-    fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-    h1: {
-      fontWeight: 500,
-      fontSize: "2rem",
-    },
-    h2: {
-      fontWeight: 500,
-      fontSize: "1.5rem",
-    },
-    h3: {
-      fontWeight: 500,
-      fontSize: "1.25rem",
-    },
-    body1: {
-      fontWeight: 400,
-      fontSize: "0.875rem",
-      lineHeight: 1.5,
-    },
-    body2: {
-      fontWeight: 400,
-      fontSize: "0.75rem",
-      lineHeight: 1.4,
-    },
-    button: {
-      fontWeight: 500,
-      textTransform: "none",
-      fontSize: "0.875rem",
-    },
-  },
-  shape: {
-    borderRadius: 12,
-  },
-  components: {
-    MuiButton: {
-      styleOverrides: {
-        root: {
-          borderRadius: "8px",
-          textTransform: "none",
-          fontWeight: 500,
-          boxShadow: "none",
-          "&:hover": {
-            boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
-          },
-        },
-        contained: {
-          background: "linear-gradient(135deg, #000000 0%, #424242 100%)",
-          "&:hover": {
-            background: "linear-gradient(135deg, #424242 0%, #000000 100%)",
-          },
-        },
-      },
-    },
-    MuiPaper: {
-      styleOverrides: {
-        root: {
-          borderRadius: "12px",
-          boxShadow: "0 2px 12px rgba(0, 0, 0, 0.08)",
-          border: "1px solid #F0F0F0",
-        },
-        elevation1: {
-          boxShadow: "0 1px 4px rgba(0, 0, 0, 0.06)",
-        },
-      },
-    },
-    MuiCard: {
-      styleOverrides: {
-        root: {
-          borderRadius: "12px",
-          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
-          border: "1px solid #F0F0F0",
-          transition: "all 0.2s ease-in-out",
-          "&:hover": {
-            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
-            transform: "translateY(-2px)",
-          },
-        },
-      },
-    },
-    MuiTextField: {
-      styleOverrides: {
-        root: {
-          "& .MuiOutlinedInput-root": {
-            borderRadius: "8px",
-            backgroundColor: "#FAFAFA",
-            "& fieldset": {
-              borderColor: "#E0E0E0",
-            },
-            "&:hover fieldset": {
-              borderColor: "#BDBDBD",
-            },
-            "&.Mui-focused fieldset": {
-              borderColor: "#000000",
-              borderWidth: "2px",
-            },
-          },
-        },
-      },
-    },
-    MuiChip: {
-      styleOverrides: {
-        root: {
-          borderRadius: "20px",
-          fontWeight: 500,
-          fontSize: "0.75rem",
-        },
-      },
-    },
-  },
-});
 
 const MainApp: React.FC = () => {
   const navigate = useNavigate();
@@ -1074,8 +933,7 @@ const PumpFunStreamsWrapper: React.FC = () => {
 
 import OpenRingDevicesView from "@/components/Plugins/OpenRingDevicesView";
 import useOpenRingSources from "@/hooks/useOpenRingSources";
-
-// ... existing imports ...
+import { SpatialLayout } from "@/components/SpatialArchitecture";
 
 // Wrapper component for OpenRingPlugin devices view
 const OpenRingDevicesWrapper: React.FC = () => {
@@ -1137,20 +995,75 @@ const OpenRingDevicesWrapper: React.FC = () => {
   );
 };
 
+// Wrapper component for SpatialLayout with upload handling
+const SpatialLayoutWrapper: React.FC = () => {
+  const { refreshVideos } = useVideos();
+  const { uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
+  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+  const { openSettings } = useSettingsNavigation();
+
+  // Load Filecoin config on mount
+  useEffect(() => {
+    const loadFilecoinConfig = async () => {
+      try {
+        const { ipcRenderer } = require("electron");
+        const config = await ipcRenderer.invoke("get-filecoin-config");
+        if (config) {
+          setFilecoinConfig(config);
+        }
+      } catch (error) {
+        console.error("Failed to load Filecoin config:", error);
+      }
+    };
+    loadFilecoinConfig();
+  }, []);
+
+  const handleUploadVideo = useCallback(
+    async (item: any) => {
+      if (!filecoinConfig) {
+        openSettings("filecoin");
+        return;
+      }
+
+      try {
+        // Find the video path from the item
+        const videoPath = item.sourceIdentity;
+        await uploadVideoToFilecoin(videoPath, filecoinConfig);
+        console.log(`✅ Uploaded ${item.title} to Filecoin`);
+        await refreshVideos();
+      } catch (error) {
+        console.error(`❌ Failed to upload ${item.title} to Filecoin:`, error);
+      }
+    },
+    [filecoinConfig, uploadVideoToFilecoin, refreshVideos, openSettings]
+  );
+
+  return <SpatialLayout onUploadVideo={handleUploadVideo} />;
+};
+
 const App: React.FC = () => {
   return (
     <SettingsNavigationProvider>
-      <ThemeProvider theme={modernTheme}>
+      <ThemeProvider theme={liquidGlassTheme}>
         <CssBaseline />
         <Box
           sx={{
-            backgroundColor: "#F5F5F5",
+            backgroundColor: liquidGlassTokens.canvas.base,
             minHeight: "100vh",
             padding: "0",
+            position: "relative",
           }}
         >
+          {/* Global Circuit Substrate Background */}
+          <CircuitSubstrate
+            density={4}
+            opacity={0.06}
+            animated={true}
+          />
           <Router>
             <Routes>
+              {/* New Spatial Architecture Layout */}
+              <Route path="/archive" element={<SpatialLayoutWrapper />} />
               <Route path="/" element={<MainApp />} />
               <Route path="/my-videos" element={<MyVideosPage />} />
               <Route

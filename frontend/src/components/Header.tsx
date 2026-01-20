@@ -23,6 +23,7 @@ import {
   GridView as GridViewIcon,
   ViewList as ViewListIcon,
 } from "@mui/icons-material";
+import { liquidGlassTokens, glowEffects, glassStyles } from "@/styles/liquidGlassTheme";
 
 interface HeaderProps {
   videoCount: number;
@@ -44,6 +45,7 @@ const Header: React.FC<HeaderProps> = ({
   onViewModeChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -84,15 +86,26 @@ const Header: React.FC<HeaderProps> = ({
     <Box
       sx={{
         height: "72px",
-        backgroundColor: "#FFFFFF",
+        background: liquidGlassTokens.canvas.elevated,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         px: 4,
-        borderBottom: "1px solid #F0F0F0",
-        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)",
+        borderBottom: `1px solid rgba(255, 255, 255, 0.06)`,
         position: "relative",
         zIndex: 10,
+        backdropFilter: "blur(12px)",
+        
+        // Subtle top highlight
+        "&::before": {
+          content: '""',
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: "1px",
+          background: "linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent)",
+        },
       }}
     >
       {/* Left side - Navigation and branding */}
@@ -102,12 +115,14 @@ const Header: React.FC<HeaderProps> = ({
           <IconButton
             size="small"
             sx={{
-              color: "#6B6B6B",
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
               width: 32,
               height: 32,
+              borderRadius: `${liquidGlassTokens.radius.sm}px`,
+              transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
               "&:hover": {
-                backgroundColor: "#F5F5F5",
-                color: "#000000",
+                backgroundColor: "rgba(255, 255, 255, 0.06)",
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
               },
             }}
           >
@@ -116,12 +131,14 @@ const Header: React.FC<HeaderProps> = ({
           <IconButton
             size="small"
             sx={{
-              color: "#6B6B6B",
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
               width: 32,
               height: 32,
+              borderRadius: `${liquidGlassTokens.radius.sm}px`,
+              transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
               "&:hover": {
-                backgroundColor: "#F5F5F5",
-                color: "#000000",
+                backgroundColor: "rgba(255, 255, 255, 0.06)",
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
               },
             }}
           >
@@ -133,9 +150,9 @@ const Header: React.FC<HeaderProps> = ({
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           <Typography
             sx={{
-              color: "#000000",
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
               fontSize: "16px",
-              fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+              fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
               fontWeight: 500,
               letterSpacing: "-0.01em",
             }}
@@ -147,19 +164,19 @@ const Header: React.FC<HeaderProps> = ({
             onClick={onAddVideo}
             size="small"
             sx={{
-              color: "#000000",
-              backgroundColor: "#F7F7F7",
-              border: "1px solid #E0E0E0",
-              borderRadius: "8px",
+              color: liquidGlassTokens.neon.cyan,
+              background: `${liquidGlassTokens.neon.cyan}15`,
+              border: `1px solid ${liquidGlassTokens.neon.cyan}30`,
+              borderRadius: `${liquidGlassTokens.radius.sm}px`,
               width: 36,
               height: 36,
+              transition: `all ${liquidGlassTokens.motion.durationFast} ${liquidGlassTokens.motion.enter}`,
               "&:hover": {
-                backgroundColor: "#F0F0F0",
-                borderColor: "#BDBDBD",
+                background: `${liquidGlassTokens.neon.cyan}25`,
+                borderColor: `${liquidGlassTokens.neon.cyan}50`,
                 transform: "translateY(-1px)",
-                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.08)",
+                boxShadow: glowEffects.cyan(0.25),
               },
-              transition: "all 0.2s ease-in-out",
             }}
           >
             <AddIcon fontSize="small" />
@@ -182,12 +199,22 @@ const Header: React.FC<HeaderProps> = ({
           placeholder="Search videos... ⌘K"
           value={searchQuery}
           onChange={handleSearchChange}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
           size="small"
           inputRef={searchInputRef}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <SearchIcon sx={{ color: "#6B6B6B", fontSize: 20 }} />
+                <SearchIcon 
+                  sx={{ 
+                    color: searchFocused 
+                      ? liquidGlassTokens.neon.cyan 
+                      : `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                    fontSize: 20,
+                    transition: `color ${liquidGlassTokens.motion.durationFast} ease`,
+                  }} 
+                />
               </InputAdornment>
             ),
             endAdornment: searchQuery && (
@@ -196,12 +223,12 @@ const Header: React.FC<HeaderProps> = ({
                   size="small"
                   onClick={handleClearSearch}
                   sx={{
-                    color: "#6B6B6B",
+                    color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
                     width: 24,
                     height: 24,
                     "&:hover": {
-                      backgroundColor: "#F5F5F5",
-                      color: "#000000",
+                      backgroundColor: "rgba(255, 255, 255, 0.08)",
+                      color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
                     },
                   }}
                 >
@@ -212,29 +239,30 @@ const Header: React.FC<HeaderProps> = ({
           }}
           sx={{
             "& .MuiOutlinedInput-root": {
-              backgroundColor: "#F7F7F7",
-              borderRadius: "12px",
-              border: "1px solid #E0E0E0",
+              background: "rgba(255, 255, 255, 0.04)",
+              borderRadius: `${liquidGlassTokens.radius.md}px`,
+              border: `1px solid rgba(255, 255, 255, 0.08)`,
               height: 44,
-              fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+              fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
               fontSize: "14px",
+              transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
               "& fieldset": {
                 border: "none",
               },
               "&:hover": {
-                backgroundColor: "#F0F0F0",
-                borderColor: "#BDBDBD",
+                background: "rgba(255, 255, 255, 0.06)",
+                borderColor: "rgba(255, 255, 255, 0.12)",
               },
               "&.Mui-focused": {
-                backgroundColor: "#FFFFFF",
-                borderColor: "#000000",
-                boxShadow: "0 0 0 3px rgba(0, 0, 0, 0.08)",
+                background: `${liquidGlassTokens.neon.cyan}08`,
+                borderColor: `${liquidGlassTokens.neon.cyan}50`,
+                boxShadow: glowEffects.cyan(0.15),
               },
             },
             "& .MuiInputBase-input": {
-              color: "#000000",
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
               "&::placeholder": {
-                color: "#6B6B6B",
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
                 opacity: 1,
                 fontWeight: 400,
               },
@@ -249,10 +277,10 @@ const Header: React.FC<HeaderProps> = ({
         {searchQuery && (
           <Typography
             sx={{
-              color: "#6B6B6B",
+              color: liquidGlassTokens.neon.cyan,
               fontSize: "12px",
-              fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-              fontWeight: 400,
+              fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+              fontWeight: 500,
               mr: 1,
             }}
           >
@@ -267,35 +295,33 @@ const Header: React.FC<HeaderProps> = ({
           onChange={handleViewModeChange}
           sx={{
             height: 36,
+            background: "rgba(255, 255, 255, 0.04)",
+            borderRadius: `${liquidGlassTokens.radius.sm}px`,
+            border: "1px solid rgba(255, 255, 255, 0.08)",
             "& .MuiToggleButton-root": {
-              border: "1px solid #E0E0E0",
-              borderRadius: "8px",
-              color: "#6B6B6B",
+              border: "none",
+              borderRadius: `${liquidGlassTokens.radius.sm - 2}px`,
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
               width: 36,
-              height: 36,
+              height: 34,
+              margin: "1px",
+              transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
               "&:hover": {
-                backgroundColor: "#F5F5F5",
-                borderColor: "#BDBDBD",
+                backgroundColor: "rgba(255, 255, 255, 0.06)",
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
               },
               "&.Mui-selected": {
-                backgroundColor: "#000000",
-                color: "#FFFFFF",
-                borderColor: "#000000",
+                backgroundColor: `${liquidGlassTokens.neon.cyan}20`,
+                color: liquidGlassTokens.neon.cyan,
                 "&:hover": {
-                  backgroundColor: "#424242",
+                  backgroundColor: `${liquidGlassTokens.neon.cyan}30`,
                 },
               },
             },
             "& .MuiToggleButtonGroup-grouped": {
               "&:not(:first-of-type)": {
-                borderLeft: "1px solid #E0E0E0",
+                borderLeft: "none",
                 marginLeft: 0,
-                borderTopLeftRadius: "8px",
-                borderBottomLeftRadius: "8px",
-              },
-              "&:not(:last-of-type)": {
-                borderTopRightRadius: "8px",
-                borderBottomRightRadius: "8px",
               },
             },
           }}
@@ -312,12 +338,14 @@ const Header: React.FC<HeaderProps> = ({
         <IconButton
           size="small"
           sx={{
-            color: "#6B6B6B",
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
             width: 36,
             height: 36,
+            borderRadius: `${liquidGlassTokens.radius.sm}px`,
+            transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
             "&:hover": {
-              backgroundColor: "#F5F5F5",
-              color: "#000000",
+              backgroundColor: "rgba(255, 255, 255, 0.06)",
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
             },
           }}
         >
@@ -331,75 +359,42 @@ const Header: React.FC<HeaderProps> = ({
           startIcon={<AnalyticsIcon fontSize="small" />}
           sx={{
             background: isAnalyzing
-              ? "rgba(0, 0, 0, 0.5)"
-              : "linear-gradient(135deg, #000000 0%, #424242 100%)",
-            color: "#FFFFFF",
+              ? "rgba(255, 255, 255, 0.1)"
+              : `linear-gradient(135deg, ${liquidGlassTokens.neon.magenta}25 0%, ${liquidGlassTokens.neon.magenta}15 100%)`,
+            border: `1px solid ${isAnalyzing ? 'rgba(255, 255, 255, 0.1)' : liquidGlassTokens.neon.magenta}40`,
+            color: isAnalyzing 
+              ? `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})` 
+              : liquidGlassTokens.neon.magenta,
             fontSize: "14px",
-            fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+            fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
             fontWeight: 500,
             textTransform: "none",
-            borderRadius: "8px",
+            borderRadius: `${liquidGlassTokens.radius.sm}px`,
             px: 3,
             py: 1,
             height: 36,
             boxShadow: "none",
             letterSpacing: "-0.01em",
+            transition: `all ${liquidGlassTokens.motion.durationFast} ${liquidGlassTokens.motion.enter}`,
             "&:hover": {
               background: isAnalyzing
-                ? "rgba(0, 0, 0, 0.5)"
-                : "linear-gradient(135deg, #424242 0%, #000000 100%)",
-              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.12)",
-              transform: "translateY(-1px)",
+                ? "rgba(255, 255, 255, 0.1)"
+                : `linear-gradient(135deg, ${liquidGlassTokens.neon.magenta}35 0%, ${liquidGlassTokens.neon.magenta}20 100%)`,
+              borderColor: `${liquidGlassTokens.neon.magenta}60`,
+              boxShadow: isAnalyzing ? "none" : glowEffects.magenta(0.3),
+              transform: isAnalyzing ? "none" : "translateY(-1px)",
             },
             "&:disabled": {
-              background: "#E0E0E0",
-              color: "#9E9E9E",
+              background: "rgba(255, 255, 255, 0.05)",
+              borderColor: "rgba(255, 255, 255, 0.08)",
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
               transform: "none",
               boxShadow: "none",
             },
-            transition: "all 0.2s ease-in-out",
           }}
         >
           {isAnalyzing ? "Analyzing..." : "Analyze All"}
         </Button>
-
-        {/* User avatar with notification */}
-        {/* <Box sx={{ ml: 1 }}>
-          <Badge
-            overlap="circular"
-            anchorOrigin={{ vertical: "top", horizontal: "right" }}
-            badgeContent={
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  backgroundColor: "#FF4D4D",
-                  borderRadius: "50%",
-                  border: "2px solid #FFFFFF",
-                }}
-              />
-            }
-          >
-            <Avatar
-              sx={{
-                width: 32,
-                height: 32,
-                backgroundColor: "#F7F7F7",
-                color: "#6B6B6B",
-                border: "1px solid #E0E0E0",
-                fontSize: 16,
-                "&:hover": {
-                  backgroundColor: "#F0F0F0",
-                  borderColor: "#BDBDBD",
-                },
-                cursor: "pointer",
-                transition: "all 0.2s ease-in-out",
-              }}
-            >
-              <AccountCircleIcon fontSize="small" />
-            </Avatar>
-          </Badge>
-        </Box> */}
       </Box>
     </Box>
   );

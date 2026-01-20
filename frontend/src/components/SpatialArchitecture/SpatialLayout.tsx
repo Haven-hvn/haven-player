@@ -37,7 +37,7 @@ import DetailPanel from './DetailPanel';
 import { useLayoutMode } from './hooks/useLayoutMode';
 
 import { useTransformationPipeline } from '@/hooks/useTransformationPipeline';
-import type { TransformationItem } from '@/types/transformation';
+import type { TransformationItem, TransformationState } from '@/types/transformation';
 
 interface SpatialLayoutProps {
   onUploadVideo?: (item: TransformationItem) => void;

@@ -50,7 +50,7 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
   sx = {},
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const animationRef = useRef<number | undefined>();
+  const animationRef = useRef<number | undefined>(undefined);
   
   // Generate circuit pattern based on density
   const circuit = useMemo<Circuit>(() => {

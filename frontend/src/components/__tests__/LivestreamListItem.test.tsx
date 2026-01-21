@@ -29,6 +29,7 @@ const mockStream: StreamInfo = {
   mint_id: 'mint-123',
   name: 'Test Stream',
   symbol: 'TST',
+  title: 'Test Stream Title',
   thumbnail: 'https://example.com/image.jpg',
   num_participants: 123,
   is_currently_live: true,

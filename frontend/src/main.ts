@@ -371,7 +371,7 @@ async function handleSelectVideo(): Promise<string | null> {
   return result.filePaths[0];
 }
 
-async function handleAddMagnetUrl(_event: Electron.IpcMainInvokeEvent, magnetUrl: string): Promise<unknown>
+async function handleAddMagnetUrl(_event: Electron.IpcMainInvokeEvent, magnetUrl: string): Promise<unknown> {
   try {
     const infohashMatch = magnetUrl.match(/urn:btih:([a-zA-Z0-9]{40})/);
     if (!infohashMatch) {

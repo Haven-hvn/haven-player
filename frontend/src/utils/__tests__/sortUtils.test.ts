@@ -88,6 +88,7 @@ describe("sortUtils", () => {
       mint_id: mintId,
       name,
       symbol: name.substring(0, 3).toUpperCase(),
+      title: name,
       num_participants: numParticipants,
       is_currently_live: isLive,
       nsfw: false,

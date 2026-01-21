@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Box,
   Drawer,
@@ -16,6 +17,7 @@ import {
   FilterList as FilterIcon,
   Terminal as TerminalIcon,
 } from '@mui/icons-material';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 
 // Design tokens from Liquid Glass system
 const glassTokens = {
@@ -54,13 +56,89 @@ interface LogEntry {
   args: unknown[];
 }
 
+const getLogColor = (level: LogEntry['level']) => {
+  switch (level) {
+    case 'error': return glassTokens.state.error;
+    case 'warn': return glassTokens.state.warning;
+    case 'info': return glassTokens.neon.cyan;
+    default: return glassTokens.text.tertiary;
+  }
+};
+
+// Memoized log entry component
+const LogEntryItem = React.memo<{ log: LogEntry }>(({ log }) => (
+  <Box
+    sx={{
+      mb: 1,
+      p: 1.5,
+      borderRadius: '10px',
+      backgroundColor: glassTokens.glass.fill,
+      border: `1px solid ${alpha(getLogColor(log.level), 0.2)}`,
+      transition: 'all 0.2s cubic-bezier(0.4, 0.0, 0.2, 1)',
+      contain: 'layout style paint',
+      '&:hover': {
+        backgroundColor: glassTokens.glass.fillHover,
+        borderColor: alpha(getLogColor(log.level), 0.4),
+        boxShadow: `0 0 12px ${alpha(getLogColor(log.level), 0.15)}`,
+      },
+    }}
+  >
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+      <Chip
+        label={log.level.toUpperCase()}
+        size="small"
+        sx={{
+          backgroundColor: alpha(getLogColor(log.level), 0.15),
+          color: getLogColor(log.level),
+          fontSize: '9px',
+          height: '18px',
+          fontWeight: 700,
+          letterSpacing: '0.05em',
+          border: `1px solid ${alpha(getLogColor(log.level), 0.3)}`,
+          '& .MuiChip-label': {
+            px: 1,
+          },
+        }}
+      />
+      <Typography
+        sx={{
+          color: glassTokens.text.tertiary,
+          fontSize: '10px',
+          fontFamily: 'inherit',
+        }}
+      >
+        {log.timestamp}
+      </Typography>
+    </Box>
+    <Typography
+      sx={{
+        color: glassTokens.text.secondary,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        fontSize: '11px',
+        lineHeight: 1.6,
+        fontFamily: 'inherit',
+      }}
+    >
+      {log.message}
+    </Typography>
+  </Box>
+), (prevProps, nextProps) => {
+  return prevProps.log.id === nextProps.log.id;
+});
+
+LogEntryItem.displayName = 'LogEntryItem';
+
 const LogViewer: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<string>('');
-  const [maxLogs, setMaxLogs] = useState<number>(500);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [maxLogs] = useState<number>(500);
   const logIdRef = useRef<number>(0);
+  const parentRef = useRef<HTMLDivElement>(null);
+  
+  // Debounce filter for performance
+  const debouncedFilter = useDebouncedValue(filter, 300);
 
   useEffect(() => {
     // Capture console methods
@@ -126,33 +204,38 @@ const LogViewer: React.FC = () => {
     };
   }, [maxLogs]);
 
-  useEffect(() => {
-    // Auto-scroll to bottom
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
-
-  const filteredLogs = logs.filter(log => {
-    if (!filter) return true;
-    const searchLower = filter.toLowerCase();
-    return (
+  const filteredLogs = React.useMemo(() => {
+    if (!debouncedFilter) return logs;
+    const searchLower = debouncedFilter.toLowerCase();
+    return logs.filter(log => 
       log.message.toLowerCase().includes(searchLower) ||
       log.level.toLowerCase().includes(searchLower) ||
       log.timestamp.includes(searchLower)
     );
+  }, [logs, debouncedFilter]);
+
+  // Virtualization for log entries
+  const rowVirtualizer = useVirtualizer({
+    count: filteredLogs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80, // Approximate height of each log entry
+    overscan: 5,
   });
 
-  const getLogColor = (level: LogEntry['level']) => {
-    switch (level) {
-      case 'error': return glassTokens.state.error;
-      case 'warn': return glassTokens.state.warning;
-      case 'info': return glassTokens.neon.cyan;
-      default: return glassTokens.text.tertiary;
+  // Auto-scroll to bottom when new logs arrive
+  useEffect(() => {
+    if (parentRef.current && filteredLogs.length > 0) {
+      rowVirtualizer.scrollToIndex(filteredLogs.length - 1, { align: 'end' });
     }
-  };
+  }, [filteredLogs.length, rowVirtualizer]);
 
-  const clearLogs = () => {
+  const clearLogs = useCallback(() => {
     setLogs([]);
-  };
+  }, []);
+
+  const handleFilterChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setFilter(e.target.value);
+  }, []);
 
   return (
     <>
@@ -305,7 +388,7 @@ const LogViewer: React.FC = () => {
               size="small"
               placeholder="Filter logs..."
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={handleFilterChange}
               InputProps={{
                 startAdornment: <FilterIcon sx={{ mr: 1, color: glassTokens.text.tertiary, fontSize: 18 }} />,
               }}
@@ -336,8 +419,9 @@ const LogViewer: React.FC = () => {
             />
           </Box>
 
-          {/* Logs */}
+          {/* Virtualized Logs */}
           <Box
+            ref={parentRef}
             sx={{
               flex: 1,
               overflow: 'auto',
@@ -345,6 +429,7 @@ const LogViewer: React.FC = () => {
               backgroundColor: glassTokens.canvas.elevated,
               fontFamily: '"JetBrains Mono", "Fira Code", monospace',
               fontSize: '12px',
+              contain: 'strict',
               '&::-webkit-scrollbar': {
                 width: '8px',
               },
@@ -396,66 +481,32 @@ const LogViewer: React.FC = () => {
                 </Typography>
               </Box>
             ) : (
-              filteredLogs.map((log) => (
-                <Box
-                  key={log.id}
-                  sx={{
-                    mb: 1,
-                    p: 1.5,
-                    borderRadius: '10px',
-                    backgroundColor: glassTokens.glass.fill,
-                    border: `1px solid ${alpha(getLogColor(log.level), 0.2)}`,
-                    transition: 'all 0.2s cubic-bezier(0.4, 0.0, 0.2, 1)',
-                    '&:hover': {
-                      backgroundColor: glassTokens.glass.fillHover,
-                      borderColor: alpha(getLogColor(log.level), 0.4),
-                      boxShadow: `0 0 12px ${alpha(getLogColor(log.level), 0.15)}`,
-                    },
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
-                    <Chip
-                      label={log.level.toUpperCase()}
-                      size="small"
+              <Box
+                sx={{
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                  width: '100%',
+                  position: 'relative',
+                }}
+              >
+                {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+                  const log = filteredLogs[virtualItem.index];
+                  return (
+                    <Box
+                      key={virtualItem.key}
                       sx={{
-                        backgroundColor: alpha(getLogColor(log.level), 0.15),
-                        color: getLogColor(log.level),
-                        fontSize: '9px',
-                        height: '18px',
-                        fontWeight: 700,
-                        letterSpacing: '0.05em',
-                        border: `1px solid ${alpha(getLogColor(log.level), 0.3)}`,
-                        '& .MuiChip-label': {
-                          px: 1,
-                        },
-                      }}
-                    />
-                    <Typography
-                      sx={{
-                        color: glassTokens.text.tertiary,
-                        fontSize: '10px',
-                        fontFamily: 'inherit',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualItem.start}px)`,
                       }}
                     >
-                      {log.timestamp}
-                    </Typography>
-                  </Box>
-                  <Typography
-                    sx={{
-                      color: glassTokens.text.secondary,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      fontSize: '11px',
-                      lineHeight: 1.6,
-                      fontFamily: 'inherit',
-                    }}
-                  >
-                    {log.message}
-                  </Typography>
-                </Box>
-              ))
+                      <LogEntryItem log={log} />
+                    </Box>
+                  );
+                })}
+              </Box>
             )}
-            <div ref={logEndRef} />
           </Box>
         </Box>
       </Drawer>

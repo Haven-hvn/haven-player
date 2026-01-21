@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import { Video, Timestamp, VideoCreate, TimestampCreate, StreamInfo, VideoGroup } from '@/types/video';
 import type { IpfsGatewayConfig } from '@/types/playback';
 import {
@@ -26,6 +26,68 @@ const api = axios.create({
   },
 });
 
+// ============================================
+// Request Deduplication
+// ============================================
+
+/**
+ * Map of pending requests to prevent duplicate concurrent requests.
+ * Key is a unique identifier for the request, value is the pending promise.
+ */
+const pendingRequests = new Map<string, Promise<any>>();
+
+/**
+ * Deduplicates concurrent requests with the same key.
+ * If a request with the same key is already in flight, returns the existing promise.
+ * Otherwise, executes the request and caches the promise until it resolves.
+ * 
+ * @param key - Unique identifier for the request
+ * @param request - Function that returns a promise for the request
+ * @returns The result of the request
+ * 
+ * @example
+ * ```ts
+ * // Multiple calls with same key will only make one actual request
+ * const result = await deduplicateRequest('videos:getAll', () => api.get('/videos/'));
+ * ```
+ */
+export const deduplicateRequest = async <T>(
+  key: string,
+  request: () => Promise<T>
+): Promise<T> => {
+  // Check if there's already a pending request with this key
+  if (pendingRequests.has(key)) {
+    return pendingRequests.get(key) as Promise<T>;
+  }
+
+  // Create the request promise and cache it
+  const promise = request().finally(() => {
+    // Remove from cache when request completes (success or failure)
+    pendingRequests.delete(key);
+  });
+
+  pendingRequests.set(key, promise);
+  return promise;
+};
+
+/**
+ * Creates an AbortController for cancellable requests.
+ * Useful for cleaning up requests when components unmount.
+ * 
+ * @returns Object with controller and signal
+ */
+export const createAbortController = (): { controller: AbortController; signal: AbortSignal } => {
+  const controller = new AbortController();
+  return { controller, signal: controller.signal };
+};
+
+/**
+ * Clears all pending requests (useful for testing or cleanup)
+ */
+export const clearPendingRequests = (): void => {
+  pendingRequests.clear();
+};
+
 // Job-related types
 export interface JobProgress {
   id: number;
@@ -45,13 +107,17 @@ export interface JobCreateResponse {
 
 export const videoService = {
   getAll: async (): Promise<Video[]> => {
-    const response = await api.get<Video[]>('/videos/');
-    return response.data;
+    return deduplicateRequest('videos:getAll', async () => {
+      const response = await api.get<Video[]>('/videos/');
+      return response.data;
+    });
   },
 
   getGrouped: async (): Promise<VideoGroup[]> => {
-    const response = await api.get<VideoGroup[]>('/videos/grouped');
-    return response.data;
+    return deduplicateRequest('videos:getGrouped', async () => {
+      const response = await api.get<VideoGroup[]>('/videos/grouped');
+      return response.data;
+    });
   },
 
   create: async (video: VideoCreate): Promise<Video> => {

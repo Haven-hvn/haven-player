@@ -19,6 +19,72 @@ const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'devel
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
 
+// ============================================================================
+// PHASE 1: Centralized IPC Handler Management
+// ============================================================================
+
+// Registry to track all IPC handlers for proper cleanup
+const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
+
+// ============================================================================
+// PHASE 2: Memory Monitoring
+// ============================================================================
+
+let memoryCheckInterval: NodeJS.Timeout | null = null;
+
+function startMemoryMonitoring(): void {
+  if (memoryCheckInterval) {
+    clearInterval(memoryCheckInterval);
+  }
+  
+  memoryCheckInterval = setInterval(() => {
+    const memoryUsage = process.memoryUsage();
+    
+    console.log('📊 Main process memory:', {
+      rss: `${(memoryUsage.rss / 1024 / 1024).toFixed(2)} MB`,
+      heapUsed: `${(memoryUsage.heapUsed / 1024 / 1024).toFixed(2)} MB`,
+      heapTotal: `${(memoryUsage.heapTotal / 1024 / 1024).toFixed(2)} MB`,
+      external: `${(memoryUsage.external / 1024 / 1024).toFixed(2)} MB`,
+    });
+
+    // Warn if heap exceeds 200MB when idle
+    if (memoryUsage.heapUsed > 200 * 1024 * 1024) {
+      console.warn('⚠️ Main process memory high - heap exceeds 200MB');
+      
+      // Trigger manual GC in development if available
+      if (!app.isPackaged && (global as NodeJS.Global & { gc?: () => void }).gc) {
+        console.log('🗑️ Running manual GC...');
+        (global as NodeJS.Global & { gc?: () => void }).gc!();
+      }
+    }
+  }, 60000); // Every minute
+  
+  console.log('📊 Memory monitoring started (interval: 60s)');
+}
+
+function stopMemoryMonitoring(): void {
+  if (memoryCheckInterval) {
+    clearInterval(memoryCheckInterval);
+    memoryCheckInterval = null;
+    console.log('🛑 Memory monitoring stopped');
+  }
+}
+
+// ============================================================================
+// PHASE 4: Window Event Listener Tracking
+// ============================================================================
+
+// Track webContents event listeners for cleanup
+interface TrackedListener {
+  event: string;
+  listener: (...args: unknown[]) => void;
+}
+let webContentsListeners: TrackedListener[] = [];
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
 // Helper function to find Python executable and venv info, checking for virtual environment first
 function findPythonExecutable(backendDir: string): { pythonPath: string; venvPath: string | null } {
   const isWindows = platform() === 'win32';
@@ -49,7 +115,7 @@ function findPythonExecutable(backendDir: string): { pythonPath: string; venvPat
 }
 
 // Helper function to activate venv environment variables
-function activateVenvEnvironment(venvPath: string | null, backendDir: string, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function activateVenvEnvironment(venvPath: string | null, _backendDir: string, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const isWindows = platform() === 'win32';
   const env = { ...baseEnv };
   
@@ -101,21 +167,16 @@ function spawnBackendProcess(
   let childProcess: ChildProcess;
   
   if (isWindows) {
-    // On Windows, spawn a visible cmd window so users can see backend logs
-    // Use exec with 'start' command to open a new window
-    // /k keeps the window open after the command finishes (so we can see errors)
-    
     const fullCommand = `start "HavenPlayerBackend" cmd /k ""${pythonExecutable}" ${uvicornArgs.join(' ')}"`;
     
     console.log(`📝 Windows command: ${fullCommand}`);
     console.log(`📁 Working directory: ${backendDir}`);
     
-    // Use exec for shell commands on Windows - it handles the parsing correctly
     const execProcess = exec(fullCommand, {
       cwd: backendDir,
       env,
       windowsHide: false,
-    }, (error, stdout, stderr) => {
+    }, (error: Error | null, stdout: string, stderr: string) => {
       if (error) {
         console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
         console.error(`   stdout: ${stdout}`);
@@ -123,10 +184,8 @@ function spawnBackendProcess(
       }
     });
     
-    // Return a ChildProcess-like object
     childProcess = execProcess as ChildProcess;
   } else {
-    // On Unix-like systems, use standard spawn with inherited stdio
     console.log(`📝 Command: ${pythonExecutable} ${uvicornArgs.join(' ')}`);
     
     childProcess = spawn(pythonExecutable, uvicornArgs, {
@@ -135,7 +194,7 @@ function spawnBackendProcess(
       stdio: 'inherit',
     });
     
-    childProcess.on('error', (error) => {
+    childProcess.on('error', (error: Error) => {
       console.error(`❌ Failed to start backend process: ${error.message}`);
       console.error(`   Python executable: ${pythonExecutable}`);
       console.error(`   Backend directory: ${backendDir}`);
@@ -148,127 +207,151 @@ function spawnBackendProcess(
   return childProcess;
 }
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      // TODO: Improve security later with preload script
-    },
-  });
-
-  registerRenderCrashLogger(mainWindow.webContents);
-
-  // Always load from local files unless explicitly in dev mode with --dev flag
-  const indexPath = path.join(__dirname, 'index.html');
-  
-  if (isDev) {
-    console.log('Loading from development server: http://localhost:3000');
-    mainWindow.loadURL('http://localhost:3000');
-    mainWindow.webContents.openDevTools();
-  } else {
-    console.log('Loading from local file:', indexPath);
-    mainWindow.loadFile(indexPath);
-    // DevTools not opened by default - use Cmd+Shift+I / Ctrl+Shift+I to toggle
-    // Or use the bug icon in the UI to view console logs via LogViewer
-  }
-  
-  // Add keyboard shortcut to toggle DevTools (Cmd+Option+I or Ctrl+Shift+I)
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') {
-      if (mainWindow) {
-        mainWindow.webContents.toggleDevTools();
-      }
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+// Get MIME type from file extension
+function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska',
+    '.ts': 'video/mp2t',
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
 }
 
-// Attempt to start backend automatically if config is available
-async function tryStartBackend(): Promise<void> {
+// Helper function to detect chain and token from RPC URL
+function detectChainFromRpcUrl(rpcUrl: string): { chainName: string; tokenSymbol: string } {
+  const rpcLower = rpcUrl.toLowerCase();
+  
+  if (rpcLower.includes('ethereum') || rpcLower.includes('mainnet') || rpcLower.includes('eth')) {
+    if (rpcLower.includes('sepolia') || rpcLower.includes('goerli')) {
+      return { chainName: 'Ethereum Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Ethereum', tokenSymbol: 'ETH' };
+  }
+  
+  if (rpcLower.includes('polygon') || rpcLower.includes('matic')) {
+    if (rpcLower.includes('mumbai') || rpcLower.includes('testnet')) {
+      return { chainName: 'Polygon Testnet', tokenSymbol: 'MATIC' };
+    }
+    return { chainName: 'Polygon', tokenSymbol: 'MATIC' };
+  }
+  
+  if (rpcLower.includes('bsc') || rpcLower.includes('binance')) {
+    if (rpcLower.includes('testnet')) {
+      return { chainName: 'BSC Testnet', tokenSymbol: 'BNB' };
+    }
+    return { chainName: 'BSC', tokenSymbol: 'BNB' };
+  }
+  
+  if (rpcLower.includes('avalanche') || rpcLower.includes('avax')) {
+    if (rpcLower.includes('fuji') || rpcLower.includes('testnet')) {
+      return { chainName: 'Avalanche Testnet', tokenSymbol: 'AVAX' };
+    }
+    return { chainName: 'Avalanche', tokenSymbol: 'AVAX' };
+  }
+  
+  if (rpcLower.includes('arbitrum')) {
+    if (rpcLower.includes('goerli') || rpcLower.includes('testnet')) {
+      return { chainName: 'Arbitrum Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Arbitrum', tokenSymbol: 'ETH' };
+  }
+  
+  if (rpcLower.includes('optimism') || rpcLower.includes('optimistic')) {
+    if (rpcLower.includes('goerli') || rpcLower.includes('testnet')) {
+      return { chainName: 'Optimism Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Optimism', tokenSymbol: 'ETH' };
+  }
+  
+  if (rpcLower.includes('base')) {
+    if (rpcLower.includes('goerli') || rpcLower.includes('sepolia') || rpcLower.includes('testnet')) {
+      return { chainName: 'Base Testnet', tokenSymbol: 'ETH' };
+    }
+    return { chainName: 'Base', tokenSymbol: 'ETH' };
+  }
+  
+  if (rpcLower.includes('filecoin') || rpcLower.includes('fil')) {
+    if (rpcLower.includes('calibration') || rpcLower.includes('testnet')) {
+      return { chainName: 'Filecoin Calibration', tokenSymbol: 'tFIL' };
+    }
+    return { chainName: 'Filecoin', tokenSymbol: 'FIL' };
+  }
+  
+  if (rpcLower.includes('localhost') || rpcLower.includes('127.0.0.1')) {
+    return { chainName: 'Local Network', tokenSymbol: 'ETH' };
+  }
+  
+  return { chainName: 'EVM Chain', tokenSymbol: 'gas tokens' };
+}
+
+async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean } | null> {
+  const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
+  if (!fs.existsSync(configPath)) return null;
+  const fileBuffer = fs.readFileSync(configPath);
+  const data = fileBuffer.toString('utf-8');
+  const config = JSON.parse(data);
+
+  if (!config.encryptedPrivateKey) {
+    return null;
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Secure storage is not available; cannot decrypt private key.');
+  }
+
+  const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
+  const privateKey = safeStorage.decryptString(encryptedBuffer);
+  return {
+    privateKey,
+    rpcUrl: config.rpcUrl,
+    dataSetId: config.dataSetId,
+    encryptionEnabled: config.encryptionEnabled ?? false,
+  };
+}
+
+function getIpfsGatewayConfigPath(): string {
+  return path.join(app.getPath('userData'), 'ipfs-gateway-config.json');
+}
+
+function readIpfsGatewayConfig(): IpfsGatewayConfig {
+  const configPath = getIpfsGatewayConfigPath();
   try {
-    const cfg = await loadDecryptedFilecoinConfig();
-    if (!cfg || !cfg.privateKey) {
-      console.log('📋 Backend not auto-started: Filecoin config not yet configured. Use Settings > Filecoin to configure, then Settings > Arkiv to restart backend.');
-      return;
+    if (fs.existsSync(configPath)) {
+      const fileBuffer = fs.readFileSync(configPath);
+      const fileContent = fileBuffer.toString('utf-8');
+      const parsed = JSON.parse(fileContent);
+      const baseUrl = normalizeGatewayBase(parsed.baseUrl || DEFAULT_IPFS_GATEWAY);
+      return { baseUrl };
     }
-
-    // Load Arkiv config
-    let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
-    let arkivSyncEnabled = false;
-    let arkivExpirationWeeks = 4;
-    try {
-      const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
-      if (fs.existsSync(arkivConfigPath)) {
-        const fileBuffer = fs.readFileSync(arkivConfigPath);
-        const data = fileBuffer.toString('utf-8');
-        const arkivConfig = JSON.parse(data);
-        if (arkivConfig.rpcUrl) {
-          arkivRpcUrl = arkivConfig.rpcUrl;
-        }
-        arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
-        arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
-      }
-    } catch (err) {
-      console.error('Failed to load Arkiv config for auto-start:', err);
-    }
-
-    const backendDir = path.join(app.getAppPath(), '..', 'backend');
-    const env = {
-      ...process.env,
-      FILECOIN_PRIVATE_KEY: cfg.privateKey,
-      FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
-      ARKIV_RPC_URL: arkivRpcUrl,
-      ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
-      ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
-      // Ring DTLS debugging - use RSA certs and extended ciphers for compatibility
-      RING_DTLS_STRATEGY: 'no_patch',
-      RING_EXTENDED_CIPHERS: '1',
-      RING_RSA_CERT: '1',
-      RING_DTLS_DEBUG: '1',
-      RING_DTLS_FIX: '1',
-    };
-
-    console.log('🚀 Auto-starting backend with configured environment variables...');
-    const { pythonPath, venvPath } = findPythonExecutable(backendDir);
-    backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
-
-    backendProcess.on('exit', (code) => {
-      console.log(`Backend process exited with code ${code}`);
-      backendProcess = null;
-    });
-
-    console.log(`✅ Backend auto-started with PID: ${backendProcess.pid}`);
-  } catch (err) {
-    console.error('Failed to auto-start backend:', err);
+  } catch (error) {
+    console.error('Failed to read IPFS gateway config:', error);
   }
+
+  return { baseUrl: DEFAULT_IPFS_GATEWAY };
 }
 
-app.whenReady().then(async () => {
-  createWindow();
-  // Auto-start backend after window is created
-  await tryStartBackend();
-});
+function writeIpfsGatewayConfig(config: IpfsGatewayConfig): IpfsGatewayConfig {
+  const configPath = getIpfsGatewayConfigPath();
+  const sanitizedBase = normalizeGatewayBase(config.baseUrl || DEFAULT_IPFS_GATEWAY);
+  const payload: IpfsGatewayConfig = { baseUrl: sanitizedBase };
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('Failed to save IPFS gateway config:', error);
+    throw new Error('Unable to persist IPFS gateway configuration');
   }
-});
 
-app.on('activate', () => {
-  if (mainWindow === null) {
-    createWindow();
-  }
-});
+  return payload;
+}
 
-// Handle file selection
-ipcMain.handle('select-video', async () => {
+// ============================================================================
+// Named IPC Handler Functions
+// ============================================================================
+
+async function handleSelectVideo(): Promise<string | null> {
   if (!mainWindow) return null;
 
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -283,9 +366,9 @@ ipcMain.handle('select-video', async () => {
   }
 
   return result.filePaths[0];
-});
+}
 
-ipcMain.handle('add-magnet-url', async (_event, magnetUrl: string) => {
+async function handleAddMagnetUrl(_event: Electron.IpcMainInvokeEvent, magnetUrl: string): Promise<unknown> {
   try {
     const infohashMatch = magnetUrl.match(/urn:btih:([a-zA-Z0-9]{40})/);
     if (!infohashMatch) {
@@ -324,10 +407,14 @@ ipcMain.handle('add-magnet-url', async (_event, magnetUrl: string) => {
     console.error('Failed to handle magnet URL:', error);
     throw error;
   }
-});
+}
 
-// Handle reading video file as File object data
-ipcMain.handle('read-video-file', async (_event, filePath: string) => {
+async function handleReadVideoFile(_event: Electron.IpcMainInvokeEvent, filePath: string): Promise<{
+  name: string;
+  size: number;
+  type: string;
+  data: ArrayBuffer;
+}> {
   try {
     const stats = fs.statSync(filePath);
     const buffer = fs.readFileSync(filePath);
@@ -343,22 +430,9 @@ ipcMain.handle('read-video-file', async (_event, filePath: string) => {
   } catch (error) {
     throw new Error(`Failed to read file: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
-
-// Get MIME type from file extension
-function getMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    '.mp4': 'video/mp4',
-    '.webm': 'video/webm',
-    '.mkv': 'video/x-matroska',
-    '.ts': 'video/mp2t',
-  };
-  return mimeTypes[ext] || 'application/octet-stream';
 }
 
-// Handle Filecoin configuration storage
-ipcMain.handle('get-filecoin-config', async () => {
+async function handleGetFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean } | null> {
   try {
     const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
     if (fs.existsSync(configPath)) {
@@ -366,13 +440,12 @@ ipcMain.handle('get-filecoin-config', async () => {
       const data = fileBuffer.toString('utf-8');
       const config = JSON.parse(data);
       
-      // Decrypt private key if available (never stored in plaintext)
       if (!config.encryptedPrivateKey || !safeStorage.isEncryptionAvailable()) {
         return null;
       }
 
       try {
-        const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64') as Buffer;
+        const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
         const privateKey = safeStorage.decryptString(encryptedBuffer);
         const loadedConfig = {
           privateKey,
@@ -380,7 +453,7 @@ ipcMain.handle('get-filecoin-config', async () => {
           dataSetId: config.dataSetId,
           encryptionEnabled: config.encryptionEnabled ?? false,
         };
-        console.log(`[FilecoinConfig] Loaded config from ${configPath} - encryptionEnabled: ${loadedConfig.encryptionEnabled} (from file: ${config.encryptionEnabled}, type: ${typeof config.encryptionEnabled})`);
+        console.log(`[FilecoinConfig] Loaded config from ${configPath} - encryptionEnabled: ${loadedConfig.encryptionEnabled}`);
         return loadedConfig;
       } catch (error) {
         console.error('Failed to decrypt private key:', error);
@@ -392,53 +465,49 @@ ipcMain.handle('get-filecoin-config', async () => {
     console.error('Failed to load Filecoin config:', error);
     return null;
   }
-});
+}
 
-ipcMain.handle(
-  'upload-to-filecoin',
-  async (
-    _event,
-    args: {
-      videoPath: string;
-      config: FilecoinConfig;
-    }
-  ) => {
-    if (!mainWindow) {
-      throw new Error('Main window not available');
-    }
-
-    const { videoPath, config } = args;
-
-    const fileStats = fs.statSync(videoPath);
-    if (!fileStats.isFile()) {
-      throw new Error(`Path is not a file: ${videoPath}`);
-    }
-
-    const fileBuffer = fs.readFileSync(videoPath);
-    const fileName = path.basename(videoPath);
-    const mimeType = getMimeType(videoPath);
-
-    // Convert Buffer to Uint8Array before wrapping in Blob/File to satisfy TS/DOM typings.
-    const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
-    const file = new File([blob], fileName, { type: mimeType });
-
-    const result = await uploadVideoToFilecoin({
-      file,
-      config,
-      filePath: videoPath,
-      onProgress: (progress) => {
-        mainWindow?.webContents.send('filecoin-upload-progress', {
-          videoPath,
-          progress,
-        });
-      },
-    });
-
-    return result;
+async function handleUploadToFilecoin(
+  _event: Electron.IpcMainInvokeEvent,
+  args: { videoPath: string; config: FilecoinConfig }
+): Promise<unknown> {
+  if (!mainWindow) {
+    throw new Error('Main window not available');
   }
-);
 
-ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean }) => {
+  const { videoPath, config } = args;
+
+  const fileStats = fs.statSync(videoPath);
+  if (!fileStats.isFile()) {
+    throw new Error(`Path is not a file: ${videoPath}`);
+  }
+
+  const fileBuffer = fs.readFileSync(videoPath);
+  const fileName = path.basename(videoPath);
+  const mimeType = getMimeType(videoPath);
+
+  const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
+  const file = new File([blob], fileName, { type: mimeType });
+
+  const result = await uploadVideoToFilecoin({
+    file,
+    config,
+    filePath: videoPath,
+    onProgress: (progress) => {
+      mainWindow?.webContents.send('filecoin-upload-progress', {
+        videoPath,
+        progress,
+      });
+    },
+  });
+
+  return result;
+}
+
+async function handleSaveFilecoinConfig(
+  _event: Electron.IpcMainInvokeEvent,
+  config: { privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean }
+): Promise<{ success: boolean }> {
   try {
     const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
     
@@ -448,26 +517,23 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
 
     let encryptedPrivateKey: string | undefined;
     try {
-      const encrypted = safeStorage.encryptString(config.privateKey) as Buffer;
+      const encrypted = safeStorage.encryptString(config.privateKey);
       encryptedPrivateKey = encrypted.toString('base64');
     } catch (error) {
       console.error('Failed to encrypt private key:', error);
       throw new Error('Failed to encrypt private key');
     }
     
-    // Explicitly handle encryptionEnabled - if it's explicitly false, use false; otherwise default to false
-    // This ensures that when the user toggles it ON, it's saved as true
-    const encryptionEnabled = config.encryptionEnabled === true ? true : false;
+    const encryptionEnabled = config.encryptionEnabled === true;
     
     const dataToSave = {
       encryptedPrivateKey,
       rpcUrl: config.rpcUrl,
       dataSetId: config.dataSetId,
-      encryptionEnabled: encryptionEnabled,
+      encryptionEnabled,
     };
     
-    // Log what we're saving for debugging
-    console.log(`[FilecoinConfig] Saving config - encryptionEnabled: ${encryptionEnabled} (received: ${config.encryptionEnabled}, type: ${typeof config.encryptionEnabled})`);
+    console.log(`[FilecoinConfig] Saving config - encryptionEnabled: ${encryptionEnabled}`);
     
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
     console.log(`[FilecoinConfig] ✅ Config saved to ${configPath}`);
@@ -476,10 +542,14 @@ ipcMain.handle('save-filecoin-config', async (_event, config: { privateKey: stri
     console.error('Failed to save Filecoin config:', error);
     throw new Error(`Failed to save config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
+}
 
-// Handle Arkiv configuration storage
-ipcMain.handle('get-arkiv-config', async () => {
+async function handleGetArkivConfig(): Promise<{
+  rpcUrl: string;
+  enabled: boolean;
+  syncEnabled: boolean;
+  expirationWeeks: number;
+}> {
   try {
     const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     let syncEnabled = false;
@@ -495,16 +565,10 @@ ipcMain.handle('get-arkiv-config', async () => {
       expirationWeeks = config.expirationWeeks ?? 4;
     }
     
-    // Check if Filecoin private key exists (shared key)
     const filecoinConfig = await loadDecryptedFilecoinConfig();
     const enabled = !!filecoinConfig?.privateKey;
     
-    return {
-      rpcUrl,
-      enabled,
-      syncEnabled,
-      expirationWeeks,
-    };
+    return { rpcUrl, enabled, syncEnabled, expirationWeeks };
   } catch (error) {
     console.error('Failed to load Arkiv config:', error);
     return {
@@ -514,9 +578,12 @@ ipcMain.handle('get-arkiv-config', async () => {
       expirationWeeks: 4,
     };
   }
-});
+}
 
-ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string; syncEnabled?: boolean; expirationWeeks?: number }) => {
+async function handleSaveArkivConfig(
+  _event: Electron.IpcMainInvokeEvent,
+  config: { rpcUrl?: string; syncEnabled?: boolean; expirationWeeks?: number }
+): Promise<{ success: boolean }> {
   try {
     const configPath = path.join(app.getPath('userData'), 'arkiv-config.json');
     
@@ -532,105 +599,33 @@ ipcMain.handle('save-arkiv-config', async (_event, config: { rpcUrl?: string; sy
     console.error('Failed to save Arkiv config:', error);
     throw new Error(`Failed to save Arkiv config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
-
-// Helper function to detect chain and token from RPC URL
-function detectChainFromRpcUrl(rpcUrl: string): { chainName: string; tokenSymbol: string } {
-  const rpcLower = rpcUrl.toLowerCase();
-  
-  // Ethereum networks
-  if (rpcLower.includes('ethereum') || rpcLower.includes('mainnet') || rpcLower.includes('eth')) {
-    if (rpcLower.includes('sepolia') || rpcLower.includes('goerli')) {
-      return { chainName: 'Ethereum Testnet', tokenSymbol: 'ETH' };
-    }
-    return { chainName: 'Ethereum', tokenSymbol: 'ETH' };
-  }
-  
-  // Polygon networks
-  if (rpcLower.includes('polygon') || rpcLower.includes('matic')) {
-    if (rpcLower.includes('mumbai') || rpcLower.includes('testnet')) {
-      return { chainName: 'Polygon Testnet', tokenSymbol: 'MATIC' };
-    }
-    return { chainName: 'Polygon', tokenSymbol: 'MATIC' };
-  }
-  
-  // Binance Smart Chain
-  if (rpcLower.includes('bsc') || rpcLower.includes('binance')) {
-    if (rpcLower.includes('testnet')) {
-      return { chainName: 'BSC Testnet', tokenSymbol: 'BNB' };
-    }
-    return { chainName: 'BSC', tokenSymbol: 'BNB' };
-  }
-  
-  // Avalanche
-  if (rpcLower.includes('avalanche') || rpcLower.includes('avax')) {
-    if (rpcLower.includes('fuji') || rpcLower.includes('testnet')) {
-      return { chainName: 'Avalanche Testnet', tokenSymbol: 'AVAX' };
-    }
-    return { chainName: 'Avalanche', tokenSymbol: 'AVAX' };
-  }
-  
-  // Arbitrum
-  if (rpcLower.includes('arbitrum')) {
-    if (rpcLower.includes('goerli') || rpcLower.includes('testnet')) {
-      return { chainName: 'Arbitrum Testnet', tokenSymbol: 'ETH' };
-    }
-    return { chainName: 'Arbitrum', tokenSymbol: 'ETH' };
-  }
-  
-  // Optimism
-  if (rpcLower.includes('optimism') || rpcLower.includes('optimistic')) {
-    if (rpcLower.includes('goerli') || rpcLower.includes('testnet')) {
-      return { chainName: 'Optimism Testnet', tokenSymbol: 'ETH' };
-    }
-    return { chainName: 'Optimism', tokenSymbol: 'ETH' };
-  }
-  
-  // Base
-  if (rpcLower.includes('base')) {
-    if (rpcLower.includes('goerli') || rpcLower.includes('sepolia') || rpcLower.includes('testnet')) {
-      return { chainName: 'Base Testnet', tokenSymbol: 'ETH' };
-    }
-    return { chainName: 'Base', tokenSymbol: 'ETH' };
-  }
-  
-  // Filecoin
-  if (rpcLower.includes('filecoin') || rpcLower.includes('fil')) {
-    if (rpcLower.includes('calibration') || rpcLower.includes('testnet')) {
-      return { chainName: 'Filecoin Calibration', tokenSymbol: 'tFIL' };
-    }
-    return { chainName: 'Filecoin', tokenSymbol: 'FIL' };
-  }
-  
-  // Local/unknown
-  if (rpcLower.includes('localhost') || rpcLower.includes('127.0.0.1')) {
-    return { chainName: 'Local Network', tokenSymbol: 'ETH' };
-  }
-  
-  // Default fallback
-  return { chainName: 'EVM Chain', tokenSymbol: 'gas tokens' };
 }
 
-// IPC handler to validate EVM config and return wallet address
-ipcMain.handle('validate-evm-config', async (_event, { rpcUrl }: { rpcUrl?: string }) => {
+async function handleValidateEvmConfig(
+  _event: Electron.IpcMainInvokeEvent,
+  { rpcUrl }: { rpcUrl?: string }
+): Promise<{
+  wallet_address: string;
+  chain_name: string;
+  native_token_symbol: string;
+  rpc_url: string;
+}> {
   try {
     const config = await loadDecryptedFilecoinConfig();
     if (!config?.privateKey) {
       throw new Error('Private key not configured. Please configure Filecoin settings first.');
     }
     
-    // Normalize private key
     let normalizedKey = config.privateKey.trim();
     if (!normalizedKey.startsWith('0x')) {
       normalizedKey = `0x${normalizedKey}`;
     }
     
-    // Use ethers to get wallet address
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { ethers } = require('ethers');
     const wallet = new ethers.Wallet(normalizedKey);
     const walletAddress = wallet.address;
     
-    // Detect chain from RPC URL
     const finalRpcUrl = rpcUrl || config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc';
     const { chainName, tokenSymbol } = detectChainFromRpcUrl(finalRpcUrl);
     
@@ -644,28 +639,36 @@ ipcMain.handle('validate-evm-config', async (_event, { rpcUrl }: { rpcUrl?: stri
     console.error('Failed to validate EVM config:', error);
     throw new Error(`Failed to validate EVM config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
+}
 
-// IPC handler to check EVM wallet balance
-ipcMain.handle('check-evm-balance', async (_event, { rpcUrl }: { rpcUrl?: string }) => {
+async function handleCheckEvmBalance(
+  _event: Electron.IpcMainInvokeEvent,
+  { rpcUrl }: { rpcUrl?: string }
+): Promise<{
+  wallet_address: string;
+  chain_name: string;
+  native_token_symbol: string;
+  balance_wei: string;
+  balance_ether: number;
+  has_sufficient_balance: boolean;
+  rpc_url: string;
+}> {
   try {
     const config = await loadDecryptedFilecoinConfig();
     if (!config?.privateKey) {
       throw new Error('Private key not configured. Please configure Filecoin settings first.');
     }
     
-    // Normalize private key
     let normalizedKey = config.privateKey.trim();
     if (!normalizedKey.startsWith('0x')) {
       normalizedKey = `0x${normalizedKey}`;
     }
     
-    // Use ethers to get wallet address
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { ethers } = require('ethers');
     const wallet = new ethers.Wallet(normalizedKey);
     const walletAddress = wallet.address;
     
-    // Determine RPC URL (convert WebSocket to HTTP if needed)
     let finalRpcUrl = rpcUrl || config.rpcUrl || 'https://mendoza.hoodi.arkiv.network/rpc';
     if (finalRpcUrl.startsWith('wss://')) {
       finalRpcUrl = finalRpcUrl.replace('wss://', 'https://');
@@ -673,10 +676,8 @@ ipcMain.handle('check-evm-balance', async (_event, { rpcUrl }: { rpcUrl?: string
       finalRpcUrl = finalRpcUrl.replace('ws://', 'http://');
     }
     
-    // Detect chain from RPC URL
     const { chainName, tokenSymbol } = detectChainFromRpcUrl(finalRpcUrl);
     
-    // Create provider and check balance
     const provider = new ethers.JsonRpcProvider(finalRpcUrl);
     const balanceWei = await provider.getBalance(walletAddress);
     const balanceEther = parseFloat(ethers.formatEther(balanceWei));
@@ -695,34 +696,9 @@ ipcMain.handle('check-evm-balance', async (_event, { rpcUrl }: { rpcUrl?: string
     console.error('Failed to check EVM balance:', error);
     throw new Error(`Failed to check wallet balance: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-}); 
-
-async function loadDecryptedFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?: string; dataSetId?: number; encryptionEnabled?: boolean } | null> {
-  const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
-  if (!fs.existsSync(configPath)) return null;
-  const fileBuffer = fs.readFileSync(configPath);
-  const data = fileBuffer.toString('utf-8');
-  const config = JSON.parse(data);
-
-  if (!config.encryptedPrivateKey) {
-    return null;
-  }
-
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('Secure storage is not available; cannot decrypt private key.');
-  }
-
-  const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64') as Buffer;
-  const privateKey = safeStorage.decryptString(encryptedBuffer);
-  return {
-    privateKey,
-    rpcUrl: config.rpcUrl,
-    dataSetId: config.dataSetId,
-    encryptionEnabled: config.encryptionEnabled ?? false,
-  };
 }
 
-ipcMain.handle('start-backend', async () => {
+async function handleStartBackend(): Promise<{ pid: number | undefined; message: string }> {
   if (backendProcess && !backendProcess.killed) {
     return { pid: backendProcess.pid, message: 'Backend already running' };
   }
@@ -732,7 +708,6 @@ ipcMain.handle('start-backend', async () => {
     throw new Error('Filecoin config with private key is not available. Please configure Filecoin settings first.');
   }
 
-  // Load Arkiv config
   let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
   let arkivSyncEnabled = false;
   let arkivExpirationWeeks = 4;
@@ -750,7 +725,6 @@ ipcMain.handle('start-backend', async () => {
     }
   } catch (err) {
     console.error('Failed to load Arkiv config for backend:', err);
-    // Use default if loading fails
   }
 
   const backendDir = path.join(app.getAppPath(), '..', 'backend');
@@ -761,7 +735,6 @@ ipcMain.handle('start-backend', async () => {
     ARKIV_RPC_URL: arkivRpcUrl,
     ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
     ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
-    // Ring DTLS debugging - use RSA certs and extended ciphers for compatibility
     RING_DTLS_STRATEGY: 'no_patch',
     RING_EXTENDED_CIPHERS: '1',
     RING_RSA_CERT: '1',
@@ -783,13 +756,12 @@ ipcMain.handle('start-backend', async () => {
     console.log('✅ Upload worker started automatically with backend');
   } catch (error) {
     console.error('Failed to start upload worker automatically:', error);
-    // Don't fail backend startup if upload worker fails to start
   }
 
   return { pid: backendProcess.pid, message: 'Backend started' };
-});
+}
 
-ipcMain.handle('stop-backend', async () => {
+async function handleStopBackend(): Promise<{ success: boolean; message: string }> {
   if (!backendProcess || backendProcess.killed) {
     return { success: true, message: 'Backend not running' };
   }
@@ -802,7 +774,6 @@ ipcMain.handle('stop-backend', async () => {
 
     backendProcess!.kill('SIGTERM');
 
-    // Force kill after 5 seconds if graceful shutdown fails
     setTimeout(() => {
       if (backendProcess && !backendProcess.killed) {
         backendProcess.kill('SIGKILL');
@@ -811,10 +782,9 @@ ipcMain.handle('stop-backend', async () => {
       }
     }, 5000);
   });
-});
+}
 
-ipcMain.handle('restart-backend', async () => {
-  // Stop the backend first
+async function handleRestartBackend(): Promise<{ pid: number | undefined; message: string }> {
   if (backendProcess && !backendProcess.killed) {
     await new Promise<void>((resolve) => {
       backendProcess!.on('exit', () => {
@@ -822,7 +792,6 @@ ipcMain.handle('restart-backend', async () => {
         resolve();
       });
       backendProcess!.kill('SIGTERM');
-      // Force kill after 3 seconds
       setTimeout(() => {
         if (backendProcess && !backendProcess.killed) {
           backendProcess.kill('SIGKILL');
@@ -833,16 +802,13 @@ ipcMain.handle('restart-backend', async () => {
     });
   }
 
-  // Wait a moment for port to be released
   await new Promise((resolve) => setTimeout(resolve, 1000));
 
-  // Start the backend with fresh config
   const cfg = await loadDecryptedFilecoinConfig();
   if (!cfg || !cfg.privateKey) {
     throw new Error('Filecoin config with private key is not available. Please configure Filecoin settings first.');
   }
 
-  // Load Arkiv config
   let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
   let arkivSyncEnabled = false;
   let arkivExpirationWeeks = 4;
@@ -870,7 +836,6 @@ ipcMain.handle('restart-backend', async () => {
     ARKIV_RPC_URL: arkivRpcUrl,
     ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
     ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
-    // Ring DTLS debugging - use RSA certs and extended ciphers for compatibility
     RING_DTLS_STRATEGY: 'no_patch',
     RING_EXTENDED_CIPHERS: '1',
     RING_RSA_CERT: '1',
@@ -886,35 +851,29 @@ ipcMain.handle('restart-backend', async () => {
   });
 
   return { pid: backendProcess.pid, message: 'Backend restarted with new configuration' };
-});
+}
 
-app.on('before-quit', () => {
-  if (backendProcess && !backendProcess.killed) {
-    backendProcess.kill();
-  }
-});
-ipcMain.handle('playback:file-exists', async (_event, filePath: string) => {
+async function handlePlaybackFileExists(_event: Electron.IpcMainInvokeEvent, filePath: string): Promise<boolean> {
   try {
     const stats = await fs.promises.stat(filePath);
     return stats.isFile();
   } catch {
     return false;
   }
-});
+}
 
-ipcMain.handle('playback:get-gateway-config', async () => {
+function handlePlaybackGetGatewayConfig(): IpfsGatewayConfig {
   return readIpfsGatewayConfig();
-});
+}
 
-ipcMain.handle('playback:set-gateway-config', async (_event, config: IpfsGatewayConfig) => {
+function handlePlaybackSetGatewayConfig(_event: Electron.IpcMainInvokeEvent, config: IpfsGatewayConfig): IpfsGatewayConfig {
   return writeIpfsGatewayConfig(config);
-});
+}
 
-// IPC handler to decrypt text (e.g., encrypted CID) using Lit Protocol
-ipcMain.handle('decrypt-text-with-lit', async (
-  _event, 
+async function handleDecryptTextWithLit(
+  _event: Electron.IpcMainInvokeEvent,
   { ciphertext, metadataJson }: { ciphertext: string; metadataJson: string }
-): Promise<string> => {
+): Promise<string> {
   try {
     const config = await loadDecryptedFilecoinConfig();
     if (!config?.privateKey) {
@@ -928,54 +887,23 @@ ipcMain.handle('decrypt-text-with-lit', async (
     console.error('Failed to decrypt text with Lit:', error);
     throw new Error(`Failed to decrypt text: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
-
-function getIpfsGatewayConfigPath(): string {
-  return path.join(app.getPath('userData'), 'ipfs-gateway-config.json');
 }
 
-function readIpfsGatewayConfig(): IpfsGatewayConfig {
-  const configPath = getIpfsGatewayConfigPath();
-  try {
-    if (fs.existsSync(configPath)) {
-      const fileBuffer = fs.readFileSync(configPath);
-      const fileContent = fileBuffer.toString('utf-8');
-      const parsed = JSON.parse(fileContent);
-      const baseUrl = normalizeGatewayBase(parsed.baseUrl || DEFAULT_IPFS_GATEWAY);
-      return { baseUrl };
-    }
-  } catch (error) {
-    console.error('Failed to read IPFS gateway config:', error);
-  }
-
-  return { baseUrl: DEFAULT_IPFS_GATEWAY };
-}
-
-function writeIpfsGatewayConfig(config: IpfsGatewayConfig): IpfsGatewayConfig {
-  const configPath = getIpfsGatewayConfigPath();
-  const sanitizedBase = normalizeGatewayBase(config.baseUrl || DEFAULT_IPFS_GATEWAY);
-  const payload: IpfsGatewayConfig = { baseUrl: sanitizedBase };
-
-  try {
-    fs.writeFileSync(configPath, JSON.stringify(payload, null, 2), 'utf-8');
-  } catch (error) {
-    console.error('Failed to save IPFS gateway config:', error);
-    throw new Error('Unable to persist IPFS gateway configuration');
-  }
-
-  return payload;
-}
-
-// IPC handlers for upload worker control
-ipcMain.handle('upload-worker:start', async (_event, config?: Partial<UploadWorkerConfig>) => {
+async function handleUploadWorkerStart(
+  _event: Electron.IpcMainInvokeEvent,
+  config?: Partial<UploadWorkerConfig>
+): Promise<{
+  success: boolean;
+  isRunning: boolean;
+  config: UploadWorkerConfig;
+  filecoinConfigured: boolean;
+  message: string;
+}> {
   try {
     const worker = getUploadWorker();
-
-    // Load Filecoin config to check if it's available
     const filecoinConfig = await loadDecryptedFilecoinConfig();
     const isConfigured = !!filecoinConfig?.privateKey;
 
-    // Auto-enable if Filecoin is configured and no explicit config provided
     const effectiveConfig: Partial<UploadWorkerConfig> = config || {};
     if (isConfigured && effectiveConfig.enabled === undefined) {
       effectiveConfig.enabled = true;
@@ -996,9 +924,13 @@ ipcMain.handle('upload-worker:start', async (_event, config?: Partial<UploadWork
     console.error('Failed to start upload worker:', error);
     throw new Error(`Failed to start upload worker: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
+}
 
-ipcMain.handle('upload-worker:stop', async () => {
+async function handleUploadWorkerStop(): Promise<{
+  success: boolean;
+  isRunning: boolean;
+  message: string;
+}> {
   try {
     const worker = getUploadWorker();
     worker.stop();
@@ -1012,9 +944,12 @@ ipcMain.handle('upload-worker:stop', async () => {
     console.error('Failed to stop upload worker:', error);
     throw new Error(`Failed to stop upload worker: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
+}
 
-ipcMain.handle('upload-worker:get-status', async () => {
+async function handleUploadWorkerGetStatus(): Promise<{
+  isRunning: boolean;
+  config: UploadWorkerConfig;
+}> {
   try {
     const worker = getUploadWorker();
 
@@ -1026,9 +961,16 @@ ipcMain.handle('upload-worker:get-status', async () => {
     console.error('Failed to get upload worker status:', error);
     throw new Error(`Failed to get upload worker status: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-});
+}
 
-ipcMain.handle('upload-worker:update-config', async (_event, newConfig: Partial<UploadWorkerConfig>) => {
+async function handleUploadWorkerUpdateConfig(
+  _event: Electron.IpcMainInvokeEvent,
+  newConfig: Partial<UploadWorkerConfig>
+): Promise<{
+  success: boolean;
+  config: UploadWorkerConfig;
+  message: string;
+}> {
   try {
     const worker = getUploadWorker();
 
@@ -1046,5 +988,242 @@ ipcMain.handle('upload-worker:update-config', async (_event, newConfig: Partial<
   } catch (error) {
     console.error('Failed to update upload worker config:', error);
     throw new Error(`Failed to update upload worker config: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+async function handleGetMemoryStats(): Promise<NodeJS.MemoryUsage> {
+  return process.memoryUsage();
+}
+
+// ============================================================================
+// PHASE 1: IPC Handler Registration & Cleanup
+// ============================================================================
+
+function registerIPCHandlers(): void {
+  const handlers: Record<string, (...args: unknown[]) => unknown> = {
+    'select-video': handleSelectVideo,
+    'add-magnet-url': handleAddMagnetUrl,
+    'read-video-file': handleReadVideoFile,
+    'get-filecoin-config': handleGetFilecoinConfig,
+    'upload-to-filecoin': handleUploadToFilecoin,
+    'save-filecoin-config': handleSaveFilecoinConfig,
+    'get-arkiv-config': handleGetArkivConfig,
+    'save-arkiv-config': handleSaveArkivConfig,
+    'validate-evm-config': handleValidateEvmConfig,
+    'check-evm-balance': handleCheckEvmBalance,
+    'start-backend': handleStartBackend,
+    'stop-backend': handleStopBackend,
+    'restart-backend': handleRestartBackend,
+    'playback:file-exists': handlePlaybackFileExists,
+    'playback:get-gateway-config': handlePlaybackGetGatewayConfig,
+    'playback:set-gateway-config': handlePlaybackSetGatewayConfig,
+    'decrypt-text-with-lit': handleDecryptTextWithLit,
+    'upload-worker:start': handleUploadWorkerStart,
+    'upload-worker:stop': handleUploadWorkerStop,
+    'upload-worker:get-status': handleUploadWorkerGetStatus,
+    'upload-worker:update-config': handleUploadWorkerUpdateConfig,
+    'get-memory-stats': handleGetMemoryStats,
+  };
+
+  for (const [channel, handler] of Object.entries(handlers)) {
+    ipcMain.handle(channel, handler as (...args: unknown[]) => unknown);
+    ipcHandlers.set(channel, handler as (...args: unknown[]) => unknown);
+  }
+  
+  console.log(`✅ Registered ${ipcHandlers.size} IPC handlers`);
+}
+
+function cleanupIPCHandlers(): void {
+  for (const channel of ipcHandlers.keys()) {
+    try {
+      ipcMain.removeHandler(channel);
+    } catch (error) {
+      console.warn(`Failed to remove handler for ${channel}:`, error);
+    }
+  }
+  console.log(`🧹 Cleaned up ${ipcHandlers.size} IPC handlers`);
+  ipcHandlers.clear();
+}
+
+// ============================================================================
+// Window Creation with Tracked Event Listeners
+// ============================================================================
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  });
+
+  registerRenderCrashLogger(mainWindow.webContents);
+
+  const indexPath = path.join(__dirname, 'index.html');
+  
+  if (isDev) {
+    console.log('Loading from development server: http://localhost:3000');
+    mainWindow.loadURL('http://localhost:3000');
+    mainWindow.webContents.openDevTools();
+  } else {
+    console.log('Loading from local file:', indexPath);
+    mainWindow.loadFile(indexPath);
+  }
+  
+  // Track the before-input-event listener for cleanup
+  const devToolsListener = (event: Electron.Event, input: Electron.Input) => {
+    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') {
+      if (mainWindow) {
+        mainWindow.webContents.toggleDevTools();
+      }
+    }
+  };
+  
+  mainWindow.webContents.on('before-input-event', devToolsListener);
+  webContentsListeners.push({ 
+    event: 'before-input-event', 
+    listener: devToolsListener as unknown as (...args: unknown[]) => void 
+  });
+
+  mainWindow.on('closed', () => {
+    // Clean up tracked webContents listeners
+    webContentsListeners = [];
+    mainWindow = null;
+  });
+}
+
+// ============================================================================
+// Backend Auto-Start
+// ============================================================================
+
+async function tryStartBackend(): Promise<void> {
+  try {
+    const cfg = await loadDecryptedFilecoinConfig();
+    if (!cfg || !cfg.privateKey) {
+      console.log('📋 Backend not auto-started: Filecoin config not yet configured.');
+      return;
+    }
+
+    let arkivRpcUrl = 'https://mendoza.hoodi.arkiv.network/rpc';
+    let arkivSyncEnabled = false;
+    let arkivExpirationWeeks = 4;
+    try {
+      const arkivConfigPath = path.join(app.getPath('userData'), 'arkiv-config.json');
+      if (fs.existsSync(arkivConfigPath)) {
+        const fileBuffer = fs.readFileSync(arkivConfigPath);
+        const data = fileBuffer.toString('utf-8');
+        const arkivConfig = JSON.parse(data);
+        if (arkivConfig.rpcUrl) {
+          arkivRpcUrl = arkivConfig.rpcUrl;
+        }
+        arkivSyncEnabled = arkivConfig.syncEnabled ?? false;
+        arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
+      }
+    } catch (err) {
+      console.error('Failed to load Arkiv config for auto-start:', err);
+    }
+
+    const backendDir = path.join(app.getAppPath(), '..', 'backend');
+    const env = {
+      ...process.env,
+      FILECOIN_PRIVATE_KEY: cfg.privateKey,
+      FILECOIN_RPC_URL: cfg.rpcUrl || 'http://127.0.0.1:8545',
+      ARKIV_RPC_URL: arkivRpcUrl,
+      ARKIV_SYNC_ENABLED: arkivSyncEnabled ? 'true' : 'false',
+      ARKIV_EXPIRATION_WEEKS: arkivExpirationWeeks.toString(),
+      RING_DTLS_STRATEGY: 'no_patch',
+      RING_EXTENDED_CIPHERS: '1',
+      RING_RSA_CERT: '1',
+      RING_DTLS_DEBUG: '1',
+      RING_DTLS_FIX: '1',
+    };
+
+    console.log('🚀 Auto-starting backend with configured environment variables...');
+    const { pythonPath, venvPath } = findPythonExecutable(backendDir);
+    backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
+
+    backendProcess.on('exit', (code) => {
+      console.log(`Backend process exited with code ${code}`);
+      backendProcess = null;
+    });
+
+    console.log(`✅ Backend auto-started with PID: ${backendProcess.pid}`);
+  } catch (err) {
+    console.error('Failed to auto-start backend:', err);
+  }
+}
+
+// ============================================================================
+// PHASE 3: Application Lifecycle Events
+// ============================================================================
+
+app.whenReady().then(async () => {
+  registerIPCHandlers();
+  startMemoryMonitoring();
+  createWindow();
+  await tryStartBackend();
+});
+
+app.on('window-all-closed', () => {
+  // Clean up IPC handlers when all windows close
+  cleanupIPCHandlers();
+  
+  // Stop memory monitoring
+  stopMemoryMonitoring();
+  
+  // Stop upload worker
+  try {
+    const worker = getUploadWorker();
+    if (worker.isWorkerRunning()) {
+      worker.stop();
+      console.log('🛑 Upload worker stopped on window close');
+    }
+  } catch (error) {
+    console.warn('Failed to stop upload worker:', error);
+  }
+  
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('activate', () => {
+  if (mainWindow === null) {
+    // Re-register handlers if they were cleaned up
+    if (ipcHandlers.size === 0) {
+      registerIPCHandlers();
+      startMemoryMonitoring();
+    }
+    createWindow();
+  }
+});
+
+app.on('will-quit', () => {
+  // Final cleanup
+  stopMemoryMonitoring();
+  cleanupIPCHandlers();
+  
+  // Stop backend process
+  if (backendProcess && !backendProcess.killed) {
+    backendProcess.kill();
+    console.log('🛑 Backend process killed on quit');
+  }
+  
+  // Stop upload worker
+  try {
+    const worker = getUploadWorker();
+    if (worker.isWorkerRunning()) {
+      worker.stop();
+    }
+  } catch {
+    // Ignore errors during quit
+  }
+});
+
+app.on('before-quit', () => {
+  if (backendProcess && !backendProcess.killed) {
+    backendProcess.kill();
   }
 });

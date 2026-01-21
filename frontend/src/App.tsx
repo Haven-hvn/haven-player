@@ -1,21 +1,44 @@
-import React, { useState, useCallback, useEffect, useMemo } from "react";
-import LogViewer from "./components/LogViewer";
+import React, { useState, useCallback, useEffect, useMemo, Suspense, lazy } from "react";
 import {
   HashRouter as Router,
   Routes,
   Route,
   useNavigate,
 } from "react-router-dom";
-import { ThemeProvider, CssBaseline, Box, Snackbar, Alert } from "@mui/material";
+import { ThemeProvider, CssBaseline, Box, Snackbar, Alert, CircularProgress } from "@mui/material";
 import { liquidGlassTheme, liquidGlassTokens } from "@/styles/liquidGlassTheme";
 import { CircuitSubstrate } from "@/components/LiquidGlass";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import VideoAnalysisList from "@/components/VideoAnalysisList";
-import VideoGrid from "@/components/VideoGrid";
-import VideoPlayer from "@/components/VideoPlayer";
-import ConfigurationModal from "@/components/ConfigurationModal";
 import AddVideoModal from "@/components/AddVideoModal";
+
+// Lazy load heavy components for code splitting
+const LogViewer = lazy(() => import("./components/LogViewer"));
+const VideoGrid = lazy(() => import("@/components/VideoGrid"));
+const VideoPlayer = lazy(() => import("@/components/VideoPlayer"));
+const ConfigurationModal = lazy(() => import("@/components/ConfigurationModal"));
+const DePinDashboard = lazy(() => import("@/components/DePinDashboard"));
+const PluginManagementPage = lazy(() => import("@/components/Plugins/PluginManagementPage"));
+const PluginSourcesView = lazy(() => import("@/components/Plugins/PluginSourcesView"));
+const PumpFunStreamsView = lazy(() => import("@/components/LivestreamRecorder/PumpFunStreamsView"));
+const OpenRingDevicesView = lazy(() => import("@/components/Plugins/OpenRingDevicesView"));
+const SpatialLayout = lazy(() => import("@/components/SpatialArchitecture").then(m => ({ default: m.SpatialLayout })));
+
+// Loading fallback component
+const RouteLoader: React.FC = () => (
+  <Box
+    sx={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      height: "100vh",
+      backgroundColor: liquidGlassTokens.canvas.base,
+    }}
+  >
+    <CircularProgress sx={{ color: liquidGlassTokens.neon.cyan }} />
+  </Box>
+);
 import { useVideos } from "@/hooks/useVideos";
 import { usePlugins } from "@/hooks/usePlugins";
 import { useFilecoinUpload } from "@/hooks/useFilecoinUpload";
@@ -27,10 +50,6 @@ import {
   getVideoJobs,
   JobProgress,
 } from "@/services/api";
-import DePinDashboard from "@/components/DePinDashboard";
-import PluginManagementPage from "@/components/Plugins/PluginManagementPage";
-import PluginSourcesView from "@/components/Plugins/PluginSourcesView";
-import PumpFunStreamsView from "@/components/LivestreamRecorder/PumpFunStreamsView";
 import usePumpFunSources from "@/hooks/usePumpFunSources";
 import {
   SettingsNavigationProvider,
@@ -931,9 +950,7 @@ const PumpFunStreamsWrapper: React.FC = () => {
   );
 };
 
-import OpenRingDevicesView from "@/components/Plugins/OpenRingDevicesView";
 import useOpenRingSources from "@/hooks/useOpenRingSources";
-import { SpatialLayout } from "@/components/SpatialArchitecture";
 
 // Wrapper component for OpenRingPlugin devices view
 const OpenRingDevicesWrapper: React.FC = () => {

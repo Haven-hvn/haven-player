@@ -1,6 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Video, VideoCreate, Timestamp, VideoGroup } from '@/types/video';
 import { videoService } from '@/services/api';
+import { useBackgroundThrottling } from './useBackgroundThrottling';
+
+// Polling interval when app is active (30 seconds)
+const ACTIVE_POLL_INTERVAL = 30000;
+// Polling interval when app is in background (null = pause completely)
+const BACKGROUND_POLL_INTERVAL: number | null = null;
 
 export const useVideos = () => {
   const [videos, setVideos] = useState<Video[]>([]);
@@ -8,6 +14,10 @@ export const useVideos = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [videoTimestamps, setVideoTimestamps] = useState<Record<string, Timestamp[]>>({});
+  
+  // Background throttling
+  const { shouldThrottle } = useBackgroundThrottling();
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchTimestampsForVideo = useCallback(async (video: Video) => {
     if (!video.has_ai_data) {
@@ -209,9 +219,40 @@ export const useVideos = () => {
     }
   }, [fetchVideos]);
 
+  // Initial fetch
   useEffect(() => {
     fetchVideos();
   }, [fetchVideos]);
+
+  // Background-aware polling
+  useEffect(() => {
+    // Clear existing interval
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
+    // Determine polling interval based on throttle state
+    const interval = shouldThrottle ? BACKGROUND_POLL_INTERVAL : ACTIVE_POLL_INTERVAL;
+
+    // If interval is null (background), don't poll
+    if (interval === null) {
+      console.log('🔇 Video polling paused (app in background)');
+      return;
+    }
+
+    console.log(`🔄 Video polling active (interval: ${interval}ms)`);
+    pollIntervalRef.current = setInterval(() => {
+      fetchVideos();
+    }, interval);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, [shouldThrottle, fetchVideos]);
 
   // Debug: Log videoTimestamps changes
   useEffect(() => {
@@ -231,4 +272,4 @@ export const useVideos = () => {
     refreshVideos: fetchVideos,
     fetchTimestampsForVideo,
   };
-}; 
+};

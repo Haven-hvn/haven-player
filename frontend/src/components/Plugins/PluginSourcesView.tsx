@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Box,
   Typography,
   Button,
-  Grid,
   Card,
   CardContent,
   Chip,
@@ -11,12 +11,6 @@ import {
   TextField,
   Alert,
   CircularProgress,
-  Tooltip,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Divider,
 } from '@mui/material';
 import {
   ArrowBack as BackIcon,
@@ -30,12 +24,12 @@ import {
   PlayArrow as ArchiveIcon,
   People as ParticipantsIcon,
   VideoLabel as TypeIcon,
-  ArrowUpward as PriorityIcon,
 } from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePluginSources, usePlugins } from '@/hooks/usePlugins';
 import { MediaSource, PluginMetadata } from '@/types/plugin';
 import { pluginService } from '@/services/api';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 
 const PriorityBadge: React.FC<{ priority: string }> = ({ priority }) => {
   const config = {
@@ -61,13 +55,14 @@ const PriorityBadge: React.FC<{ priority: string }> = ({ priority }) => {
   );
 };
 
-const SourceCard: React.FC<{
+// Memoized source card component
+const SourceCard = React.memo<{
   source: MediaSource;
   pluginName: string;
   onArchive: (source: MediaSource) => void;
   isArchiving: boolean;
   archivingSourceId: string | null;
-}> = ({ source, pluginName, onArchive, isArchiving, archivingSourceId }) => {
+}>(({ source, pluginName, onArchive, isArchiving, archivingSourceId }) => {
   const isCurrentArchive = archivingSourceId === source.source_id;
 
   return (
@@ -78,6 +73,7 @@ const SourceCard: React.FC<{
         flexDirection: 'column',
         border: isCurrentArchive ? '2px solid #4CAF50' : '1px solid #E0E0E0',
         transition: 'all 0.2s ease-in-out',
+        contain: 'layout style paint',
         '&:hover': {
           boxShadow: '0 4px 16px rgba(0, 0, 0, 0.12)',
           transform: 'translateY(-2px)',
@@ -134,7 +130,6 @@ const SourceCard: React.FC<{
           }}
           onClick={() => {
             navigator.clipboard.writeText(source.source_id);
-            // Could add a toast notification here
           }}
         >
           <Typography
@@ -203,7 +198,16 @@ const SourceCard: React.FC<{
       </Box>
     </Card>
   );
-};
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.source.source_id === nextProps.source.source_id &&
+    prevProps.source.priority === nextProps.source.priority &&
+    prevProps.archivingSourceId === nextProps.archivingSourceId &&
+    prevProps.isArchiving === nextProps.isArchiving
+  );
+});
+
+SourceCard.displayName = 'SourceCard';
 
 const PluginSourcesView: React.FC = () => {
   const navigate = useNavigate();
@@ -223,23 +227,62 @@ const PluginSourcesView: React.FC = () => {
     severity: 'info',
   });
 
+  // Virtualization setup
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [columns, setColumns] = useState(4);
+  const rowHeight = 320;
+  const gap = 16;
+
+  // Debounce search for performance
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
+
+  // Calculate columns based on container width
+  useEffect(() => {
+    const updateColumns = () => {
+      if (parentRef.current) {
+        const width = parentRef.current.offsetWidth;
+        if (width < 600) setColumns(1);
+        else if (width < 900) setColumns(2);
+        else if (width < 1200) setColumns(3);
+        else setColumns(4);
+      }
+    };
+
+    updateColumns();
+    const resizeObserver = new ResizeObserver(updateColumns);
+    if (parentRef.current) {
+      resizeObserver.observe(parentRef.current);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
   const plugin = plugins.find((p) => p.name === decodeURIComponent(pluginName || ''));
 
-  const filteredSources = sources.filter((source) => {
-    const matchesSearch =
-      !searchQuery ||
-      source.source_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (source.metadata.name?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+  const filteredSources = useMemo(() => {
+    return sources.filter((source) => {
+      const matchesSearch =
+        !debouncedSearchQuery ||
+        source.source_id.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        (source.metadata.name?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ?? false);
 
-    const matchesPriority = priorityFilter === 'all' || source.priority === priorityFilter;
+      const matchesPriority = priorityFilter === 'all' || source.priority === priorityFilter;
+      const matchesPlugin = !pluginName || source.plugin === decodeURIComponent(pluginName);
 
-    // Only show sources from this plugin if pluginName is specified
-    const matchesPlugin = !pluginName || source.plugin === decodeURIComponent(pluginName);
+      return matchesSearch && matchesPriority && matchesPlugin;
+    });
+  }, [sources, debouncedSearchQuery, priorityFilter, pluginName]);
 
-    return matchesSearch && matchesPriority && matchesPlugin;
+  const rowCount = Math.ceil(filteredSources.length / columns);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => rowHeight + gap,
+    overscan: 2,
   });
 
-  const handleArchive = async (source: MediaSource) => {
+  const handleArchive = useCallback(async (source: MediaSource) => {
     setArchivingSourceId(source.source_id);
     try {
       const result = await pluginService.archiveSource(source.plugin, source.source_id);
@@ -266,7 +309,11 @@ const PluginSourcesView: React.FC = () => {
       });
       setArchivingSourceId(null);
     }
-  };
+  }, []);
+
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(e.target.value);
+  }, []);
 
   if (!plugin) {
     return (
@@ -368,7 +415,7 @@ const PluginSourcesView: React.FC = () => {
             fullWidth
             placeholder="Search sources..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={handleSearchChange}
             inputProps={{
               sx: {
                 pl: 4,
@@ -433,7 +480,7 @@ const PluginSourcesView: React.FC = () => {
         </Alert>
       )}
 
-      {/* Sources Grid */}
+      {/* Virtualized Sources Grid */}
       {loading && sources.length === 0 ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1, minHeight: 400 }}>
           <CircularProgress />
@@ -451,19 +498,55 @@ const PluginSourcesView: React.FC = () => {
           </Typography>
         </Box>
       ) : (
-        <Grid container spacing={2}>
-          {filteredSources.map((source) => (
-            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={`${source.plugin}-${source.source_id}`}>
-              <SourceCard
-                source={source}
-                pluginName={plugin.name}
-                onArchive={handleArchive}
-                isArchiving={archivingSourceId !== null}
-                archivingSourceId={archivingSourceId}
-              />
-            </Grid>
-          ))}
-        </Grid>
+        <Box
+          ref={parentRef}
+          sx={{
+            flexGrow: 1,
+            overflow: 'auto',
+            contain: 'strict',
+          }}
+        >
+          <Box
+            sx={{
+              height: `${rowVirtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const startIndex = virtualRow.index * columns;
+              const rowSources = filteredSources.slice(startIndex, startIndex + columns);
+              
+              return (
+                <Box
+                  key={virtualRow.key}
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                    display: 'grid',
+                    gridTemplateColumns: `repeat(${columns}, 1fr)`,
+                    gap: `${gap}px`,
+                    paddingBottom: `${gap}px`,
+                  }}
+                >
+                  {rowSources.map((source) => (
+                    <SourceCard
+                      key={`${source.plugin}-${source.source_id}`}
+                      source={source}
+                      pluginName={plugin.name}
+                      onArchive={handleArchive}
+                      isArchiving={archivingSourceId !== null}
+                      archivingSourceId={archivingSourceId}
+                    />
+                  ))}
+                </Box>
+              );
+            })}
+          </Box>
+        </Box>
       )}
 
       {/* Notification */}

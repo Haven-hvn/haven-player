@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Box,
   Typography,
-  Grid,
   Button,
   IconButton,
   Chip,
@@ -18,12 +18,12 @@ import {
   Search as SearchIcon,
   FilterList as FilterIcon,
   People as PeopleIcon,
-  TrendingUp as TrendingUpIcon,
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
-import PumpFunStreamCard, { PumpFunStreamCardProps } from "./PumpFunStreamCard";
+import PumpFunStreamCard from "./PumpFunStreamCard";
 import SubscriptionsPanel from "./SubscriptionsPanel";
 import { PumpFunStream, PumpFunSubscription } from "@/types/plugin";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 interface PumpFunStreamsViewProps {
   pluginName: string;
@@ -36,6 +36,20 @@ interface PumpFunStreamsViewProps {
   onUnsubscribe: (stream: PumpFunStream) => Promise<void>;
   onUpdateSubscription: (subscription: PumpFunSubscription, updates: Partial<PumpFunSubscription>) => Promise<void>;
 }
+
+// Memoized stream card component
+const MemoizedPumpFunStreamCard = React.memo(PumpFunStreamCard, (prevProps, nextProps) => {
+  return (
+    prevProps.stream.stream_id === nextProps.stream.stream_id &&
+    prevProps.stream.is_currently_live === nextProps.stream.is_currently_live &&
+    prevProps.stream.num_participants === nextProps.stream.num_participants &&
+    prevProps.subscription?.enabled === nextProps.subscription?.enabled &&
+    prevProps.isSubscribing === nextProps.isSubscribing &&
+    prevProps.isUnsubscribing === nextProps.isUnsubscribing
+  );
+});
+
+MemoizedPumpFunStreamCard.displayName = 'MemoizedPumpFunStreamCard';
 
 const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
   pluginName,
@@ -51,7 +65,6 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"browse" | "subscriptions">("browse");
-  const [subscriptionsTabOpen, setSubscriptionsTabOpen] = useState(false);
   const [minParticipants, setMinParticipants] = useState<string>("");
   const [maxParticipants, setMaxParticipants] = useState<string>("");
   const [showOnlyLive, setShowOnlyLive] = useState(false);
@@ -61,7 +74,37 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
   const [subscribingStreams, setSubscribingStreams] = useState<Set<string>>(new Set());
   const [unsubscribingStreams, setUnsubscribingStreams] = useState<Set<string>>(new Set());
 
-  const handleSubscribe = async (stream: PumpFunStream, priority?: number) => {
+  // Virtualization setup
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [columns, setColumns] = useState(4);
+  const rowHeight = 320;
+  const gap = 16;
+
+  // Debounce search for performance
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
+
+  // Calculate columns based on container width
+  useEffect(() => {
+    const updateColumns = () => {
+      if (parentRef.current) {
+        const width = parentRef.current.offsetWidth;
+        if (width < 600) setColumns(1);
+        else if (width < 900) setColumns(2);
+        else if (width < 1200) setColumns(3);
+        else setColumns(4);
+      }
+    };
+
+    updateColumns();
+    const resizeObserver = new ResizeObserver(updateColumns);
+    if (parentRef.current) {
+      resizeObserver.observe(parentRef.current);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  const handleSubscribe = useCallback(async (stream: PumpFunStream, priority?: number) => {
     setSubscribingStreams((prev) => new Set(prev).add(stream.stream_id));
     try {
       await onSubscribe(stream, priority);
@@ -72,9 +115,9 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
         return next;
       });
     }
-  };
+  }, [onSubscribe]);
 
-  const handleUnsubscribe = async (stream: PumpFunStream) => {
+  const handleUnsubscribe = useCallback(async (stream: PumpFunStream) => {
     setUnsubscribingStreams((prev) => new Set(prev).add(stream.stream_id));
     try {
       await onUnsubscribe(stream);
@@ -85,69 +128,82 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
         return next;
       });
     }
-  };
+  }, [onUnsubscribe]);
 
   // Ensure streams and subscriptions are arrays
   const safeStreams = Array.isArray(streams) ? streams : [];
   const safeSubscriptions = Array.isArray(subscriptions) ? subscriptions : [];
 
-  const getSubscriptionForStream = (stream: PumpFunStream): PumpFunSubscription | undefined => {
+  const getSubscriptionForStream = useCallback((stream: PumpFunStream): PumpFunSubscription | undefined => {
     return safeSubscriptions.find((sub) => sub.stream_id === stream.stream_id);
-  };
+  }, [safeSubscriptions]);
 
-  const filteredStreams = safeStreams.filter((stream) => {
-    // Search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchesName = stream.name?.toLowerCase().includes(query) ?? false;
-      const matchesSymbol = stream.symbol?.toLowerCase().includes(query) ?? false;
-      if (!matchesName && !matchesSymbol) {
+  const filteredStreams = useMemo(() => {
+    return safeStreams.filter((stream) => {
+      // Search filter
+      if (debouncedSearchQuery) {
+        const query = debouncedSearchQuery.toLowerCase();
+        const matchesName = stream.name?.toLowerCase().includes(query) ?? false;
+        const matchesSymbol = stream.symbol?.toLowerCase().includes(query) ?? false;
+        if (!matchesName && !matchesSymbol) {
+          return false;
+        }
+      }
+
+      // Participants filters
+      if (minParticipants) {
+        const min = parseInt(minParticipants, 10);
+        if (!isNaN(min) && (stream.num_participants || 0) < min) {
+          return false;
+        }
+      }
+
+      if (maxParticipants) {
+        const max = parseInt(maxParticipants, 10);
+        if (!isNaN(max) && (stream.num_participants || 0) > max) {
+          return false;
+        }
+      }
+
+      // Live filter
+      if (showOnlyLive && !stream.is_currently_live) {
         return false;
       }
-    }
 
-    // Participants filters
-    if (minParticipants) {
-      const min = parseInt(minParticipants, 10);
-      if (!isNaN(min) && (stream.num_participants || 0) < min) {
+      // Subscribed filter
+      if (showOnlySubscribed && !getSubscriptionForStream(stream)) {
         return false;
       }
-    }
 
-    if (maxParticipants) {
-      const max = parseInt(maxParticipants, 10);
-      if (!isNaN(max) && (stream.num_participants || 0) > max) {
-        return false;
-      }
-    }
-
-    // Live filter
-    if (showOnlyLive && !stream.is_currently_live) {
-      return false;
-    }
-
-    // Subscribed filter
-    if (showOnlySubscribed && !getSubscriptionForStream(stream)) {
-      return false;
-    }
-
-    return true;
-  });
+      return true;
+    });
+  }, [safeStreams, debouncedSearchQuery, minParticipants, maxParticipants, showOnlyLive, showOnlySubscribed, getSubscriptionForStream]);
 
   // Sort streams: live first, then by participant count, then by name
-  const sortedStreams = [...filteredStreams].sort((a, b) => {
-    // Live streams first
-    if (a.is_currently_live && !b.is_currently_live) return -1;
-    if (!a.is_currently_live && b.is_currently_live) return 1;
+  const sortedStreams = useMemo(() => {
+    return [...filteredStreams].sort((a, b) => {
+      // Live streams first
+      if (a.is_currently_live && !b.is_currently_live) return -1;
+      if (!a.is_currently_live && b.is_currently_live) return 1;
 
-    // Then by participant count (descending)
-    const participantsA = a.num_participants || 0;
-    const participantsB = b.num_participants || 0;
-    if (participantsA > participantsB) return -1;
-    if (participantsA < participantsB) return 1;
+      // Then by participant count (descending)
+      const participantsA = a.num_participants || 0;
+      const participantsB = b.num_participants || 0;
+      if (participantsA > participantsB) return -1;
+      if (participantsA < participantsB) return 1;
 
-    // Finally by name
-    return (a.name || "").localeCompare(b.name || "");
+      // Finally by name
+      return (a.name || "").localeCompare(b.name || "");
+    });
+  }, [filteredStreams]);
+
+  const rowCount = Math.ceil(sortedStreams.length / columns);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => rowHeight + gap,
+    overscan: 2,
   });
 
   // Statistics
@@ -157,6 +213,10 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
     const stream = safeStreams.find((s) => s.stream_id === sub.stream_id);
     return stream?.is_currently_live;
   }).length;
+
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(e.target.value);
+  }, []);
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -274,7 +334,7 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
                 fullWidth
                 placeholder="Search streams by name or symbol..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={handleSearchChange}
                 inputProps={{
                   sx: {
                     pl: 4,
@@ -332,7 +392,7 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
             </Box>
           </Box>
 
-          {/* Streams Grid */}
+          {/* Virtualized Streams Grid */}
           {loading && safeStreams.length === 0 ? (
             <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", flexGrow: 1, minHeight: 400 }}>
               <CircularProgress />
@@ -350,21 +410,57 @@ const PumpFunStreamsView: React.FC<PumpFunStreamsViewProps> = ({
               </Typography>
             </Box>
           ) : (
-            <Grid container spacing={2}>
-              {sortedStreams.map((stream) => (
-                <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={stream.stream_id}>
-                  <PumpFunStreamCard
-                    stream={stream}
-                    subscription={getSubscriptionForStream(stream)}
-                    isSubscribing={subscribingStreams.has(stream.stream_id)}
-                    isUnsubscribing={unsubscribingStreams.has(stream.stream_id)}
-                    onSubscribe={handleSubscribe}
-                    onUnsubscribe={handleUnsubscribe}
-                    onUpdateSubscription={onUpdateSubscription}
-                  />
-                </Grid>
-              ))}
-            </Grid>
+            <Box
+              ref={parentRef}
+              sx={{
+                flexGrow: 1,
+                overflow: "auto",
+                contain: "strict",
+              }}
+            >
+              <Box
+                sx={{
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                  width: "100%",
+                  position: "relative",
+                }}
+              >
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const startIndex = virtualRow.index * columns;
+                  const rowStreams = sortedStreams.slice(startIndex, startIndex + columns);
+                  
+                  return (
+                    <Box
+                      key={virtualRow.key}
+                      sx={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${virtualRow.start}px)`,
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${columns}, 1fr)`,
+                        gap: `${gap}px`,
+                        paddingBottom: `${gap}px`,
+                      }}
+                    >
+                      {rowStreams.map((stream) => (
+                        <MemoizedPumpFunStreamCard
+                          key={stream.stream_id}
+                          stream={stream}
+                          subscription={getSubscriptionForStream(stream)}
+                          isSubscribing={subscribingStreams.has(stream.stream_id)}
+                          isUnsubscribing={unsubscribingStreams.has(stream.stream_id)}
+                          onSubscribe={handleSubscribe}
+                          onUnsubscribe={handleUnsubscribe}
+                          onUpdateSubscription={onUpdateSubscription}
+                        />
+                      ))}
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Box>
           )}
         </>
       )}

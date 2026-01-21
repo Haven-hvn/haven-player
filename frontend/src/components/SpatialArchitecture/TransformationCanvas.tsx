@@ -4,9 +4,15 @@
  * The main content area showing content in transformation.
  * Content grouped by source identity, sorted by transformation state.
  * State badges shown BEFORE metadata (transformation-first).
+ * 
+ * Performance optimized with:
+ * - Virtualization for large lists using @tanstack/react-virtual
+ * - React.memo for card components
+ * - CSS containment for layout isolation
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Box,
   Typography,
@@ -56,6 +62,15 @@ interface TransformationCanvasProps {
   onItemUpload: (item: TransformationItem) => void;
 }
 
+interface GroupedItem {
+  key: string;
+  items: TransformationItem[];
+  tokenInfo?: TransformationItem['tokenInfo'];
+  latestActivity: number;
+  hasActiveRecording: boolean;
+  hasErrors: boolean;
+}
+
 const TransformationCanvas: React.FC<TransformationCanvasProps> = ({
   items,
   loading,
@@ -63,8 +78,23 @@ const TransformationCanvas: React.FC<TransformationCanvasProps> = ({
   onItemPlay,
   onItemUpload,
 }) => {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // Memoized callbacks for child components
+  const handleItemClick = useCallback((item: TransformationItem) => {
+    onItemClick(item);
+  }, [onItemClick]);
+
+  const handleItemPlay = useCallback((item: TransformationItem) => {
+    onItemPlay(item);
+  }, [onItemPlay]);
+
+  const handleItemUpload = useCallback((item: TransformationItem) => {
+    onItemUpload(item);
+  }, [onItemUpload]);
+
   // Group items by source identity (token/channel)
-  const groupedItems = React.useMemo(() => {
+  const groupedItems = React.useMemo((): GroupedItem[] => {
     const groups: Map<string, TransformationItem[]> = new Map();
     
     items.forEach(item => {
@@ -116,30 +146,120 @@ const TransformationCanvas: React.FC<TransformationCanvasProps> = ({
     return <EmptyState />;
   }
 
+  // Use virtualization for groups when there are many
+  const useVirtualization = groupedItems.length > 10;
+
+  if (!useVirtualization) {
+    // For small lists, render directly without virtualization overhead
+    return (
+      <Box
+        sx={{
+          flex: 1,
+          overflow: 'auto',
+          p: 3,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+          contain: 'layout style',
+        }}
+      >
+        {groupedItems.map(group => (
+          <ContentGroup
+            key={group.key}
+            groupKey={group.key}
+            items={group.items}
+            tokenInfo={group.tokenInfo}
+            hasActiveRecording={group.hasActiveRecording}
+            hasErrors={group.hasErrors}
+            onItemClick={handleItemClick}
+            onItemPlay={handleItemPlay}
+            onItemUpload={handleItemUpload}
+          />
+        ))}
+      </Box>
+    );
+  }
+
+  // Virtualized rendering for large lists
+  return (
+    <VirtualizedGroupList
+      parentRef={parentRef}
+      groupedItems={groupedItems}
+      onItemClick={handleItemClick}
+      onItemPlay={handleItemPlay}
+      onItemUpload={handleItemUpload}
+    />
+  );
+};
+
+// Virtualized group list component
+interface VirtualizedGroupListProps {
+  parentRef: React.RefObject<HTMLDivElement>;
+  groupedItems: GroupedItem[];
+  onItemClick: (item: TransformationItem) => void;
+  onItemPlay: (item: TransformationItem) => void;
+  onItemUpload: (item: TransformationItem) => void;
+}
+
+const VirtualizedGroupList: React.FC<VirtualizedGroupListProps> = ({
+  parentRef,
+  groupedItems,
+  onItemClick,
+  onItemPlay,
+  onItemUpload,
+}) => {
+  const rowVirtualizer = useVirtualizer({
+    count: groupedItems.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 200, // Estimated height per group
+    overscan: 3,
+  });
+
   return (
     <Box
+      ref={parentRef}
       sx={{
         flex: 1,
         overflow: 'auto',
         p: 3,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2,
+        contain: 'strict',
       }}
     >
-      {groupedItems.map(group => (
-        <ContentGroup
-          key={group.key}
-          groupKey={group.key}
-          items={group.items}
-          tokenInfo={group.tokenInfo}
-          hasActiveRecording={group.hasActiveRecording}
-          hasErrors={group.hasErrors}
-          onItemClick={onItemClick}
-          onItemPlay={onItemPlay}
-          onItemUpload={onItemUpload}
-        />
-      ))}
+      <Box
+        sx={{
+          height: `${rowVirtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const group = groupedItems[virtualRow.index];
+          return (
+            <Box
+              key={virtualRow.key}
+              sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+                paddingBottom: 2,
+              }}
+            >
+              <ContentGroup
+                groupKey={group.key}
+                items={group.items}
+                tokenInfo={group.tokenInfo}
+                hasActiveRecording={group.hasActiveRecording}
+                hasErrors={group.hasErrors}
+                onItemClick={onItemClick}
+                onItemPlay={onItemPlay}
+                onItemUpload={onItemUpload}
+              />
+            </Box>
+          );
+        })}
+      </Box>
     </Box>
   );
 };

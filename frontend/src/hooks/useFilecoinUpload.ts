@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { videoService } from '@/services/api';
 import type { FilecoinUploadStatus, FilecoinConfig, FilecoinUploadResult } from '@/types/filecoin';
 import type { UploadProgress } from '@/services/filecoinService';
@@ -15,6 +15,29 @@ export interface UseFilecoinUploadReturn {
 export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
   const [uploadStatus, setUploadStatus] = useState<Record<string, FilecoinUploadStatus>>({});
   const [uploadControllers, setUploadControllers] = useState<Record<string, AbortController>>({});
+
+  // Track active listeners for cleanup on unmount
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activeListenersRef = useRef<Map<string, (...args: any[]) => void>>(new Map());
+  const isMountedRef = useRef(true);
+
+  // Cleanup all listeners on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+
+      // Clean up all active listeners
+      activeListenersRef.current.forEach((handler, videoPath) => {
+        ipcRenderer.removeListener('filecoin-upload-progress', handler);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[IPC] Cleaned up orphaned listener for upload: ${videoPath}`);
+        }
+      });
+      activeListenersRef.current.clear();
+    };
+  }, []);
 
   const uploadVideo = useCallback(
     async (videoPath: string, config: FilecoinConfig, onProgressLog?: (message: string) => void): Promise<FilecoinUploadResult> => {
@@ -38,6 +61,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
       const handleProgress = (_: unknown, payload: { videoPath: string; progress: UploadProgress }) => {
         if (payload.videoPath !== videoPath) return;
         if (controller.signal.aborted) return;
+        if (!isMountedRef.current) return; // Don't update state if unmounted
 
         setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
           ...prev,
@@ -52,9 +76,9 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           // Only log significant stage changes to avoid spam
           const stage = payload.progress.stage;
           const message = payload.progress.message;
-          
+
           // Log stage transitions and important messages
-          if (stage === 'encrypting' || stage === 'creating-car' || stage === 'checking-payments' || 
+          if (stage === 'encrypting' || stage === 'creating-car' || stage === 'checking-payments' ||
               stage === 'uploading' || stage === 'validating' || stage === 'completed') {
             // Format progress percentage for display
             const progressPercent = Math.round(payload.progress.progress);
@@ -63,7 +87,22 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
         }
       };
 
+      // Track this listener for cleanup
+      activeListenersRef.current.set(videoPath, handleProgress);
       ipcRenderer.on('filecoin-upload-progress', handleProgress);
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[IPC] Added upload progress listener for: ${videoPath}`);
+      }
+
+      const cleanupListener = () => {
+        ipcRenderer.removeListener('filecoin-upload-progress', handleProgress);
+        activeListenersRef.current.delete(videoPath);
+
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[IPC] Removed upload progress listener for: ${videoPath}`);
+        }
+      };
 
       try {
         // Delegate upload to main process to keep heavy work out of renderer
@@ -72,22 +111,25 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           config,
         });
 
-        // Update status with result
-        setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
-          ...prev,
-          [videoPath]: {
-            status: 'completed',
-            progress: 100,
-            rootCid: result.rootCid,
-            pieceCid: result.pieceCid,
-            pieceId: result.pieceId,
-            dataSetId: result.dataSetId,
-            transactionHash: result.transactionHash,
-            isEncrypted: result.isEncrypted,
-          },
-        }));
+        // Only update state if still mounted
+        if (isMountedRef.current) {
+          // Update status with result
+          setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
+            ...prev,
+            [videoPath]: {
+              status: 'completed',
+              progress: 100,
+              rootCid: result.rootCid,
+              pieceCid: result.pieceCid,
+              pieceId: result.pieceId,
+              dataSetId: result.dataSetId,
+              transactionHash: result.transactionHash,
+              isEncrypted: result.isEncrypted,
+            },
+          }));
+        }
 
-        // Save Filecoin metadata to backend (including encryption metadata if present)
+        // Save Filecoin metadata to backend (can happen even if unmounted)
         try {
           await videoService.updateFilecoinMetadata(videoPath, {
             root_cid: result.rootCid,
@@ -112,7 +154,7 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
                 // Extract token symbol (e.g., "ETH", "MATIC", "BNB", "AVAX")
                 const tokenMatch = errorMessage.match(/Insufficient\s+(\w+)\s+for\s+gas/i);
                 const tokenSymbol = tokenMatch ? tokenMatch[1] : 'gas tokens';
-                
+
                 const addressMatch = errorMessage.match(/address:\s*([0-9a-fA-Fx]{42,})/i);
                 if (addressMatch) {
                   const walletAddress = addressMatch[1];
@@ -129,23 +171,25 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           // Don't throw - upload was successful, just metadata save failed
         }
 
-        // Clean up controller
-        setUploadControllers((prev: Record<string, AbortController>) => {
-          const updated = { ...prev };
-          delete updated[videoPath];
-          return updated;
-        });
+        // Clean up
+        cleanupListener();
+        if (isMountedRef.current) {
+          setUploadControllers((prev: Record<string, AbortController>) => {
+            const updated = { ...prev };
+            delete updated[videoPath];
+            return updated;
+          });
+        }
 
-        ipcRenderer.removeListener('filecoin-upload-progress', handleProgress);
         return result;
       } catch (error) {
-        let errorMessage = error instanceof Error ? error.message : 'Upload failed';
-        
+        const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+
         // Clean up error message by removing "Filecoin upload failed: " prefix if present
-        if (errorMessage.startsWith('Filecoin upload failed: ')) {
-          errorMessage = errorMessage.substring('Filecoin upload failed: '.length);
-        }
-        
+        const cleanedErrorMessage = errorMessage.startsWith('Filecoin upload failed: ')
+          ? errorMessage.substring('Filecoin upload failed: '.length)
+          : errorMessage;
+
         // Ensure errors surface in logs for debugging instead of failing silently in the renderer.
         // eslint-disable-next-line no-console
         console.error('[Filecoin Upload] Upload failed', {
@@ -153,23 +197,24 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
           error: error instanceof Error ? { message: error.message, stack: error.stack, name: error.name } : error,
         });
 
-        setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
-          ...prev,
-          [videoPath]: {
-            status: 'error',
-            progress: 0,
-            error: errorMessage,
-          },
-        }));
+        if (isMountedRef.current) {
+          setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
+            ...prev,
+            [videoPath]: {
+              status: 'error',
+              progress: 0,
+              error: cleanedErrorMessage,
+            },
+          }));
 
-        // Clean up controller
-        setUploadControllers((prev: Record<string, AbortController>) => {
-          const updated = { ...prev };
-          delete updated[videoPath];
-          return updated;
-        });
+          setUploadControllers((prev: Record<string, AbortController>) => {
+            const updated = { ...prev };
+            delete updated[videoPath];
+            return updated;
+          });
+        }
 
-        ipcRenderer.removeListener('filecoin-upload-progress', handleProgress);
+        cleanupListener();
         throw error;
       }
     },
@@ -179,6 +224,18 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
   const cancelUpload = useCallback((videoPath: string) => {
     if (uploadControllers[videoPath]) {
       uploadControllers[videoPath].abort();
+
+      // Clean up the listener for this upload
+      const handler = activeListenersRef.current.get(videoPath);
+      if (handler) {
+        ipcRenderer.removeListener('filecoin-upload-progress', handler);
+        activeListenersRef.current.delete(videoPath);
+
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[IPC] Removed listener on cancel for: ${videoPath}`);
+        }
+      }
+
       setUploadStatus((prev: Record<string, FilecoinUploadStatus>) => ({
         ...prev,
         [videoPath]: {
@@ -210,4 +267,3 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
     clearStatus,
   };
 };
-

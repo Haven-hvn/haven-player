@@ -73,7 +73,7 @@ module.exports = [
   // Renderer process configuration
   {
     mode: isProduction ? 'production' : 'development',
-    entry: './src/index.tsx',
+    entry: {renderer: './src/index.tsx'},
     target: 'electron-renderer',
     devtool: isProduction ? 'source-map' : 'eval-source-map',
     module: {
@@ -110,7 +110,7 @@ module.exports = [
       fullySpecified: false,
     },
     output: {
-      filename: 'renderer.js',
+      filename: '[name].js',
       path: path.resolve(__dirname, 'dist'),
       // Enable chunking for code splitting
       chunkFilename: '[name].[contenthash].js',

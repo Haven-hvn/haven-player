@@ -13,6 +13,9 @@ import type { LitEncryptionMetadata } from './services/litService';
 import { getUploadWorker } from './services/uploadWorker';
 import type { UploadWorkerConfig } from './types/plugin';
 
+// Unified IPC handler type definition
+type IPCHandler<T = unknown> = (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => Promise<T>;
+
 // Check if we're in development mode - only true if explicitly set or --dev flag
 const isDev = process.argv.includes('--dev') || (process.env.NODE_ENV === 'development' && process.argv.includes('--serve'));
 
@@ -52,9 +55,9 @@ function startMemoryMonitoring(): void {
       console.warn('⚠️ Main process memory high - heap exceeds 200MB');
       
       // Trigger manual GC in development if available
-      if (!app.isPackaged && (global as NodeJS.Global & { gc?: () => void }).gc) {
+      if (!app.isPackaged && (global as typeof globalThis & { gc?: () => void }).gc) {
         console.log('🗑️ Running manual GC...');
-        (global as NodeJS.Global & { gc?: () => void }).gc!();
+        (global as typeof globalThis & { gc?: () => void }).gc!();
       }
     }
   }, 60000); // Every minute
@@ -368,7 +371,7 @@ async function handleSelectVideo(): Promise<string | null> {
   return result.filePaths[0];
 }
 
-async function handleAddMagnetUrl(_event: Electron.IpcMainInvokeEvent, magnetUrl: string): Promise<unknown> {
+async function handleAddMagnetUrl(_event: Electron.IpcMainInvokeEvent, magnetUrl: string): Promise<unknown>
   try {
     const infohashMatch = magnetUrl.match(/urn:btih:([a-zA-Z0-9]{40})/);
     if (!infohashMatch) {
@@ -425,7 +428,7 @@ async function handleReadVideoFile(_event: Electron.IpcMainInvokeEvent, filePath
       name: fileName,
       size: stats.size,
       type: mimeType,
-      data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+      data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer,
     };
   } catch (error) {
     throw new Error(`Failed to read file: ${error instanceof Error ? error.message : 'Unknown error'}`);

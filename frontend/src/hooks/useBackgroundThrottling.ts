@@ -119,7 +119,7 @@ export const useThrottledInterval = (
   throttledInterval: number | null = null
 ): void => {
   const { shouldThrottle } = useBackgroundThrottling();
-  const savedCallback = useRef(callback);
+  const savedCallback = useRef<() => void>(callback);
 
   // Remember the latest callback
   useEffect(() => {
@@ -163,8 +163,8 @@ export const useThrottledRAF = (
   enabled: boolean = true
 ): void => {
   const { shouldThrottle } = useBackgroundThrottling();
-  const savedCallback = useRef(callback);
-  const frameRef = useRef<number>();
+  const savedCallback = useRef<(deltaTime: number) => void>(callback);
+  const frameRef = useRef<number | undefined>(undefined);
   const lastTimeRef = useRef<number>(0);
 
   // Remember the latest callback

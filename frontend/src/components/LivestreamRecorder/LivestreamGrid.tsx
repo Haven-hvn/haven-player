@@ -25,9 +25,9 @@ const MemoizedLivestreamCard = React.memo<{
 ), (prevProps, nextProps) => {
   return (
     prevProps.item.mint_id === nextProps.item.mint_id &&
-    prevProps.item.is_live === nextProps.item.is_live &&
-    prevProps.item.viewer_count === nextProps.item.viewer_count &&
-    prevProps.bulkRecordingStatus?.status === nextProps.bulkRecordingStatus?.status
+    prevProps.item.is_currently_live === nextProps.item.is_currently_live &&
+    prevProps.item.num_participants === nextProps.item.num_participants &&
+    prevProps.bulkRecordingStatus?.isRecording === nextProps.bulkRecordingStatus?.isRecording
   );
 });
 

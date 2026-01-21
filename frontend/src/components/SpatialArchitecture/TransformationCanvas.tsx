@@ -194,7 +194,7 @@ const TransformationCanvas: React.FC<TransformationCanvasProps> = ({
 
 // Virtualized group list component
 interface VirtualizedGroupListProps {
-  parentRef: React.RefObject<HTMLDivElement>;
+  parentRef: React.RefObject<HTMLDivElement | null>;
   groupedItems: GroupedItem[];
   onItemClick: (item: TransformationItem) => void;
   onItemPlay: (item: TransformationItem) => void;

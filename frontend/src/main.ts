@@ -27,7 +27,7 @@ let backendProcess: ChildProcess | null = null;
 // ============================================================================
 
 // Registry to track all IPC handlers for proper cleanup
-const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
+const ipcHandlers = new Map<string, (_event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
 
 // ============================================================================
 // PHASE 2: Memory Monitoring
@@ -1003,7 +1003,7 @@ async function handleGetMemoryStats(): Promise<NodeJS.MemoryUsage> {
 // ============================================================================
 
 function registerIPCHandlers(): void {
-  const handlers: Record<string, (...args: unknown[]) => unknown> = {
+  const handlers: Record<string, (_event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown> = {
     'select-video': handleSelectVideo,
     'add-magnet-url': handleAddMagnetUrl,
     'read-video-file': handleReadVideoFile,

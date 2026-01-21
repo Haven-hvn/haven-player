@@ -27,7 +27,7 @@ let backendProcess: ChildProcess | null = null;
 // ============================================================================
 
 // Registry to track all IPC handlers for proper cleanup
-const ipcHandlers = new Map<string, (_event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+const ipcHandlers = new Map<string, any>();
 
 // ============================================================================
 // PHASE 2: Memory Monitoring
@@ -1003,7 +1003,7 @@ async function handleGetMemoryStats(): Promise<NodeJS.MemoryUsage> {
 // ============================================================================
 
 function registerIPCHandlers(): void {
-  const handlers: Record<string, (_event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown> = {
+  const handlers = {
     'select-video': handleSelectVideo,
     'add-magnet-url': handleAddMagnetUrl,
     'read-video-file': handleReadVideoFile,
@@ -1029,8 +1029,8 @@ function registerIPCHandlers(): void {
   };
 
   for (const [channel, handler] of Object.entries(handlers)) {
-    ipcMain.handle(channel, handler as (...args: unknown[]) => unknown);
-    ipcHandlers.set(channel, handler as (...args: unknown[]) => unknown);
+    ipcMain.handle(channel, handler);
+    ipcHandlers.set(channel, handler as any);
   }
   
   console.log(`✅ Registered ${ipcHandlers.size} IPC handlers`);

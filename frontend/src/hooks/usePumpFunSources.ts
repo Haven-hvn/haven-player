@@ -1,12 +1,16 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { PumpFunStream, PumpFunSubscription } from "@/types/plugin";
 import { pumpfunService } from "@/services/api";
+import { useBackgroundThrottling } from "./useBackgroundThrottling";
 
 interface UsePumpFunSourcesOptions {
   pluginName?: string;
   autoRefresh?: boolean;
   refreshInterval?: number;
 }
+
+// Background polling interval (5 minutes) or null to pause completely
+const BACKGROUND_REFRESH_INTERVAL: number | null = null;
 
 export default function usePumpFunSources({
   pluginName = "PumpFunPlugin",
@@ -23,6 +27,10 @@ export default function usePumpFunSources({
     streams: null,
     subscriptions: null,
   });
+
+  // Background throttling
+  const { shouldThrottle } = useBackgroundThrottling();
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadStreams = useCallback(async () => {
     setLoading((prev) => ({ ...prev, streams: true }));
@@ -122,17 +130,40 @@ export default function usePumpFunSources({
     [loadSubscriptions]
   );
 
-  // Auto-refresh effect
+  // Background-aware auto-refresh effect
   useEffect(() => {
     if (!autoRefresh) return;
 
+    // Clear existing interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    // Determine interval based on throttle state
+    const actualInterval = shouldThrottle ? BACKGROUND_REFRESH_INTERVAL : refreshInterval;
+
+    // If interval is null (background), don't poll
+    if (actualInterval === null) {
+      console.log('🔇 PumpFun sources polling paused (app in background)');
+      return;
+    }
+
+    // Initial refresh
     refresh();
 
-    const intervalId = setInterval(refresh, refreshInterval);
-    return () => clearInterval(intervalId);
-  }, [autoRefresh, refresh, refreshInterval]);
+    console.log(`🔄 PumpFun sources polling active (interval: ${actualInterval}ms)`);
+    intervalRef.current = setInterval(refresh, actualInterval);
 
-  // Manual refresh on mount
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [autoRefresh, refresh, refreshInterval, shouldThrottle]);
+
+  // Manual refresh on mount if no data
   useEffect(() => {
     if (streams.length === 0 && subscriptions.length === 0) {
       refresh();

@@ -15,6 +15,7 @@ describe('LivestreamCard', () => {
     mint_id: 'test-mint-123',
     name: 'Test Stream',
     symbol: 'TEST',
+    title: 'Test Stream Title',
     num_participants: 42,
     usd_market_cap: 1234567,
     thumbnail: 'https://example.com/thumbnail.jpg',

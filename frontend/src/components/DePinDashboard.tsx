@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   Box,
   Typography,
-  Paper,
   Switch,
   FormControlLabel,
   List,
@@ -10,17 +9,12 @@ import {
   ListItemText,
   CircularProgress,
   Alert,
-  Card,
-  CardContent,
-  useTheme,
-  Chip,
   LinearProgress,
   Button,
-  Divider,
-  Grid,
-  Badge,
   IconButton,
   Link,
+  Grid,
+  Badge,
 } from '@mui/material';
 import {
   CloudUpload as CloudUploadIcon,
@@ -51,6 +45,23 @@ import { loadGatewayConfig } from '@/services/playbackConfig';
 import { useDePinDashboard } from '@/hooks/useDePinDashboard';
 import { PluginConfigurationModal } from '@/components/Plugins/PluginConfigurationModal';
 import UploadWorkerConfig from '@/components/UploadWorkerConfig';
+import {
+  liquidGlassTokens,
+  glowEffects,
+  glassStyles,
+} from '@/styles/liquidGlassTheme';
+import {
+  GlassCard,
+  HeroCard,
+  CompactCard,
+  BentoGrid,
+  BentoCell,
+  CircuitSubstrate,
+  MetricDisplay,
+  StatusIndicator,
+  GlowButton,
+  GlowChip,
+} from '@/components/LiquidGlass';
 
 type PointTier = {
   name: string;
@@ -61,11 +72,11 @@ type PointTier = {
 };
 
 const POINT_TIERS: PointTier[] = [
-  { name: 'Observer', min: 0, max: 999, color: '#9E9E9E', badge: 'Observer' },
-  { name: 'Archivist', min: 1000, max: 2499, color: '#4CAF50', badge: 'Archivist' },
-  { name: 'Signal Keeper', min: 2500, max: 4999, color: '#2196F3', badge: 'Signal Keeper' },
-  { name: 'Chronicle Guardian', min: 5000, max: 9999, color: '#AB47BC', badge: 'Chronicle Guardian' },
-  { name: 'Mythic Librarian', min: 10000, max: Infinity, color: '#FF9800', badge: 'Mythic' },
+  { name: 'Observer', min: 0, max: 999, color: liquidGlassTokens.neon.cyan, badge: 'Observer' },
+  { name: 'Archivist', min: 1000, max: 2499, color: liquidGlassTokens.neon.success, badge: 'Archivist' },
+  { name: 'Signal Keeper', min: 2500, max: 4999, color: liquidGlassTokens.neon.cyan, badge: 'Signal Keeper' },
+  { name: 'Chronicle Guardian', min: 5000, max: 9999, color: liquidGlassTokens.neon.magenta, badge: 'Chronicle Guardian' },
+  { name: 'Mythic Librarian', min: 10000, max: Infinity, color: liquidGlassTokens.neon.amber, badge: 'Mythic' },
 ];
 
 interface DePinDashboardProps {
@@ -77,15 +88,12 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
   filecoinConfig: filecoinConfigProp = null,
   onRequireSettings,
 }) => {
-  const theme = useTheme();
   const [logs, setLogs] = useState<Array<{ message: string; links?: Record<string, string> }>>([]);
   const [ipfsGateway, setIpfsGateway] = useState<string>('https://ipfs.io/ipfs/');
   const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(filecoinConfigProp);
-
   const [configModalOpen, setConfigModalOpen] = useState(false);
-  const [configPlugin, setConfigPlugin] = useState<{ name: string; displayName: string } | null>(
-    null
-  );
+  const [configPlugin, setConfigPlugin] = useState<{ name: string; displayName: string } | null>(null);
+  const [pointsAnimating, setPointsAnimating] = useState(false);
 
   const { videos, refreshVideos } = useVideos();
   const { uploadVideo } = useFilecoinUpload();
@@ -205,6 +213,11 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
 
     toggleActive(active);
     addLog(active ? '🚀 DePIN Node Activated' : '⏹️  DePIN Node Deactivated');
+    
+    if (active) {
+      setPointsAnimating(true);
+      setTimeout(() => setPointsAnimating(false), 800);
+    }
   };
 
   // Ref to track if an upload is currently in progress to prevent overlaps
@@ -219,12 +232,10 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
         if (isUploadingRef.current) return;
 
         try {
-          // Refresh videos to get latest status
           await refreshVideos();
 
-          // Find first video that needs upload
           const pendingVideo = videos
-            .filter((v) => !v.filecoin_root_cid) // Not yet uploaded
+            .filter((v) => !v.filecoin_root_cid)
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
 
           if (pendingVideo) {
@@ -234,7 +245,6 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
             try {
               const uploadResult = await uploadVideo(pendingVideo.path, filecoinConfig, addLog);
 
-              // Generate explorer links for transparency
               const links = generateExplorerLinks({
                 rpcUrl: filecoinConfig.rpcUrl,
                 filecoinTransactionHash: uploadResult.transactionHash,
@@ -244,8 +254,11 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
               });
 
               addLog(`✅ Upload Complete: ${pendingVideo.title}`, links);
+              
+              // Trigger points animation
+              setPointsAnimating(true);
+              setTimeout(() => setPointsAnimating(false), 800);
 
-              // Refresh videos to get updated metadata
               await refreshVideos();
             } catch (error) {
               addLog(`❌ Upload Failed: ${pendingVideo.title} - ${String(error)}`);
@@ -259,7 +272,7 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
         }
       };
 
-      intervalId = setInterval(checkUploads, 10000); // Check every 10 seconds
+      intervalId = setInterval(checkUploads, 10000);
     }
 
     return () => clearInterval(intervalId);
@@ -268,422 +281,483 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
   return (
     <Box
       sx={{
-        p: 3,
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        gap: 3,
-        overflowY: 'auto',
-        minHeight: 0,
+        position: 'relative',
+        overflow: 'hidden',
+        background: liquidGlassTokens.canvas.base,
       }}
     >
-      {/* Rewards Dashboard Header */}
-      <Paper
-        elevation={0}
+      {/* Full-page circuit substrate */}
+      <CircuitSubstrate
+        density={6}
+        opacity={0.12}
+        networkActive={state.is_active}
+        animated={true}
+      />
+
+      {/* Content container */}
+      <Box
         sx={{
-          p: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          background: 'linear-gradient(135deg, #1a237e 0%, #0d47a1 100%)',
-          backgroundColor: 'transparent',
-          color: 'white',
-          borderRadius: 3,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-          flexShrink: 0,
-          height: 'auto',
-          minHeight: 'auto',
+          flex: 1,
+          overflow: 'auto',
+          padding: liquidGlassTokens.spacing.md,
           position: 'relative',
-          '&::before': {
-            display: 'none',
-          },
+          zIndex: 1,
         }}
       >
-        <Box
+        {/* Hero Section - Points Dashboard */}
+        <HeroCard
+          glowColor="amber"
           sx={{
-            p: { xs: 2, sm: 3 },
-            display: 'flex',
-            flexDirection: { xs: 'column', md: 'row' },
-            alignItems: { xs: 'flex-start', md: 'center' },
-            justifyContent: 'space-between',
-            gap: { xs: 2, md: 0 },
-            width: '100%',
-            boxSizing: 'border-box',
+            mb: 3,
+            overflow: 'visible',
+            background: `linear-gradient(135deg, ${liquidGlassTokens.neon.amber}10 0%, ${liquidGlassTokens.neon.magenta}05 100%)`,
+            ...(pointsAnimating && {
+              animation: 'reward-bloom 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards',
+            }),
           }}
         >
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography
-              variant="overline"
-              sx={{ opacity: 0.8, letterSpacing: { xs: 1, sm: 2 }, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}
-            >
-              HAVEN REWARDS DASHBOARD
-            </Typography>
-            <Typography
-              variant="h3"
-              sx={{
-                fontWeight: 700,
-                my: 1,
-                fontSize: { xs: '1.75rem', sm: '2.5rem', md: '3rem' },
-              }}
-            >
-              {Math.floor(state.points).toLocaleString()}{' '}
+          <Box
+            sx={{
+              display: 'flex',
+              flexDirection: { xs: 'column', md: 'row' },
+              alignItems: { xs: 'flex-start', md: 'center' },
+              justifyContent: 'space-between',
+              gap: 3,
+            }}
+          >
+            {/* Left - Points and Rank */}
+            <Box sx={{ flex: 1 }}>
               <Typography
-                component="span"
-                variant="h5"
-                sx={{ opacity: 0.7, fontSize: { xs: '1rem', sm: '1.5rem' } }}
+                sx={{
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                  mb: 1,
+                }}
               >
-                PTS
+                Haven Rewards Dashboard
               </Typography>
-            </Typography>
+              
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 2 }}>
+                <MetricDisplay
+                  value={Math.floor(state.points)}
+                  glowColor="amber"
+                  size="large"
+                  animate={pointsAnimating}
+                />
+                <Typography
+                  sx={{
+                    fontSize: '18px',
+                    fontWeight: 500,
+                    color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                  }}
+                >
+                  PTS
+                </Typography>
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <GlowChip
+                  label={rankTitle}
+                  glowColor="amber"
+                  active
+                  icon={<StarIcon sx={{ fontSize: 14, color: liquidGlassTokens.neon.amber }} />}
+                />
+                <GlowChip
+                  label={`${streak} Day Streak`}
+                  glowColor="magenta"
+                  active={streak > 0}
+                  icon={<StreakIcon sx={{ fontSize: 14 }} />}
+                />
+              </Box>
+            </Box>
+
+            {/* Right - Node Toggle */}
+            <Box sx={{ textAlign: { xs: 'left', md: 'right' } }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={state.is_active}
+                    onChange={(e) => handleToggleActive(e.target.checked)}
+                    disabled={!filecoinConfig}
+                    sx={{
+                      '& .MuiSwitch-switchBase.Mui-checked': {
+                        color: liquidGlassTokens.neon.success,
+                      },
+                      '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                        backgroundColor: `${liquidGlassTokens.neon.success}60`,
+                      },
+                      '& .MuiSwitch-track': {
+                        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                      },
+                    }}
+                  />
+                }
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <StatusIndicator
+                      status={state.is_active ? 'active' : 'inactive'}
+                      pulse={state.is_active}
+                    />
+                    <Typography
+                      sx={{
+                        fontWeight: 600,
+                        fontSize: '14px',
+                        color: state.is_active 
+                          ? liquidGlassTokens.neon.success 
+                          : `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+                      }}
+                    >
+                      {state.is_active ? 'NODE ACTIVE' : 'NODE INACTIVE'}
+                    </Typography>
+                  </Box>
+                }
+                labelPlacement="start"
+                sx={{ m: 0 }}
+              />
+              <Typography
+                sx={{
+                  fontSize: '12px',
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                  mt: 1,
+                }}
+              >
+                {state.is_active ? 'Earning passive rewards...' : 'Start node to earn rewards'}
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Level Progress Bar */}
+          <Box
+            sx={{
+              mt: 3,
+              pt: 2,
+              borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+            }}
+          >
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+              <Typography
+                sx={{
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+                }}
+              >
+                Level {level}
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: '12px',
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                }}
+              >
+                {Math.floor(state.points % 1000)} / 1000 XP to Level {level + 1}
+              </Typography>
+            </Box>
             <Box
               sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                mt: 1,
-                flexWrap: 'wrap',
+                height: 6,
+                borderRadius: 3,
+                background: 'rgba(255, 255, 255, 0.08)',
+                overflow: 'hidden',
               }}
             >
-              <Chip
-                icon={<StarIcon sx={{ color: '#FFD700 !important' }} />}
-                label={rankTitle}
-                size="small"
+              <Box
                 sx={{
-                  bgcolor: 'rgba(255,255,255,0.1)',
-                  color: 'white',
-                  fontWeight: 600,
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  fontSize: { xs: '0.7rem', sm: '0.75rem' },
-                }}
-              />
-              <Chip
-                icon={<StreakIcon sx={{ color: '#FF5722 !important' }} />}
-                label={`${streak} Day Streak`}
-                size="small"
-                sx={{
-                  bgcolor: 'rgba(255,255,255,0.1)',
-                  color: 'white',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  fontSize: { xs: '0.7rem', sm: '0.75rem' },
+                  width: `${(state.points % 1000) / 10}%`,
+                  height: '100%',
+                  background: `linear-gradient(90deg, ${liquidGlassTokens.neon.cyan}, ${liquidGlassTokens.neon.magenta})`,
+                  borderRadius: 3,
+                  transition: 'width 0.5s ease-out',
+                  boxShadow: `0 0 12px ${liquidGlassTokens.neon.cyan}50`,
                 }}
               />
             </Box>
           </Box>
-          <Box
-            sx={{
-              textAlign: { xs: 'left', md: 'right' },
-              width: { xs: '100%', md: 'auto' },
-              mt: { xs: 1, md: 0 },
-            }}
-          >
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={state.is_active}
-                  onChange={(e) => handleToggleActive(e.target.checked)}
-                  color="success"
-                  disabled={!filecoinConfig}
-                  sx={{
-                    '& .MuiSwitch-switchBase.Mui-checked': {
-                      color: '#4CAF50',
-                    },
-                    '& .MuiSwitch-track': {
-                      backgroundColor: 'rgba(255,255,255,0.5) !important',
-                    },
-                  }}
+        </HeroCard>
+
+        {/* Alerts */}
+        {loading && state.is_active && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Loading dashboard data...
+          </Alert>
+        )}
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            Error: {error}
+          </Alert>
+        )}
+        {!filecoinConfig && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Filecoin configuration is missing. Please configure it in settings before starting the node.
+          </Alert>
+        )}
+
+        {/* Bento Grid Layout */}
+        <BentoGrid columns={12} gap="standard">
+          {/* Key Metrics Row */}
+          <BentoCell colSpan={3} animateEntry animationDelay={0}>
+            <MetricCard
+              title="Total Archived"
+              value={state.total_archived}
+              icon={<ScheduleIcon />}
+              color="cyan"
+            />
+          </BentoCell>
+          
+          <BentoCell colSpan={3} animateEntry animationDelay={50}>
+            <MetricCard
+              title="Uploaded to Filecoin"
+              value={state.total_uploaded}
+              icon={<CloudUploadIcon />}
+              color="magenta"
+            />
+          </BentoCell>
+          
+          <BentoCell colSpan={3} animateEntry animationDelay={100}>
+            <MetricCard
+              title="Pending Uploads"
+              value={state.pending_uploads}
+              icon={<BoltIcon />}
+              color="amber"
+            />
+          </BentoCell>
+          
+          <BentoCell colSpan={3} animateEntry animationDelay={150}>
+            <MetricCard
+              title="Active Operations"
+              value={state.active_operations.length}
+              icon={<Extension />}
+              color="success"
+            />
+          </BentoCell>
+
+          {/* Upload Worker Config */}
+          <BentoCell colSpan={12} animateEntry animationDelay={200}>
+            <UploadWorkerConfig filecoinConfigured={!!filecoinConfig} />
+          </BentoCell>
+
+          {/* Active Operations Section */}
+          <BentoCell colSpan={12}>
+            <Box sx={{ mb: 2 }}>
+              <Typography
+                sx={{
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+                }}
+              >
+                Active Operations
+              </Typography>
+            </Box>
+          </BentoCell>
+
+          {state.active_operations.length === 0 && state.is_active ? (
+            <BentoCell colSpan={12}>
+              <GlassCard>
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <CircularProgress 
+                    size={40} 
+                    sx={{ 
+                      mb: 2,
+                      color: liquidGlassTokens.neon.cyan,
+                    }} 
+                  />
+                  <Typography 
+                    sx={{ 
+                      color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+                      mb: 0.5,
+                    }}
+                  >
+                    Discovering and archiving content...
+                  </Typography>
+                  <Typography 
+                    sx={{ 
+                      fontSize: '12px',
+                      color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                    }}
+                  >
+                    Waiting for plugin operations to start
+                  </Typography>
+                </Box>
+              </GlassCard>
+            </BentoCell>
+          ) : (
+            state.active_operations.map((operation, index) => (
+              <BentoCell key={operation.operation_id} colSpan={4} animateEntry animationDelay={index * 50}>
+                <OperationCard
+                  operation={operation}
+                  onStop={() => stopOperation(operation.operation_id)}
+                  onPause={(paused: boolean) => toggleOperationPause(operation.operation_id, paused)}
                 />
-              }
-              label={
+              </BentoCell>
+            ))
+          )}
+
+          {/* Plugin Status Section */}
+          <BentoCell colSpan={12}>
+            <Box sx={{ mb: 2, mt: 2 }}>
+              <Typography
+                sx={{
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+                }}
+              >
+                Plugin Status
+              </Typography>
+            </Box>
+          </BentoCell>
+
+          {state.enabled_plugins.map((plugin, index) => (
+            <BentoCell key={plugin.name} colSpan={4} animateEntry animationDelay={index * 50}>
+              <PluginCard
+                plugin={plugin}
+                onConfigure={() => handleOpenConfig(plugin.name)}
+              />
+            </BentoCell>
+          ))}
+
+          {/* Activity Log */}
+          <BentoCell colSpan={12}>
+            <GlassCard
+              sx={{
+                height: 300,
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <ScheduleIcon 
+                  sx={{ 
+                    fontSize: 16, 
+                    color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})` 
+                  }} 
+                />
                 <Typography
                   sx={{
-                    fontWeight: 600,
-                    color: state.is_active ? '#4CAF50' : 'rgba(255,255,255,0.7)',
-                    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
                   }}
                 >
-                  {state.is_active ? 'NODE ACTIVE' : 'NODE INACTIVE'}
+                  Node Activity Log
                 </Typography>
-              }
-              labelPlacement="start"
-            />
-            <Typography
-              variant="caption"
-              display="block"
-              sx={{ opacity: 0.6, mt: 1, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}
-            >
-              {state.is_active ? 'Earning passive rewards...' : 'Start node to earn rewards'}
-            </Typography>
-          </Box>
-        </Box>
-
-        {/* Level Progress Bar */}
-        <Box sx={{ bgcolor: 'rgba(0,0,0,0.2)', px: { xs: 2, sm: 3 }, py: 1.5 }}>
-          <Box
-            sx={{
-              display: 'flex',
-              flexDirection: { xs: 'column', sm: 'row' },
-              justifyContent: 'space-between',
-              mb: 0.5,
-              gap: { xs: 0.5, sm: 0 },
-            }}
-          >
-            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
-              Level {level}
-            </Typography>
-            <Typography variant="caption" sx={{ opacity: 0.8, fontSize: { xs: '0.65rem', sm: '0.75rem' } }}>
-              {(state.points % 1000).toFixed(0)} / 1000 XP to Level {level + 1}
-            </Typography>
-          </Box>
-          <Box sx={{ height: 6, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden' }}>
-            <Box
-              sx={{
-                width: `${(state.points % 1000) / 10}%`,
-                height: '100%',
-                bgcolor: '#4CAF50',
-                transition: 'width 0.5s ease-out',
-              }}
-            />
-          </Box>
-        </Box>
-      </Paper>
-
-      {loading && state.is_active && <Alert severity="info">Loading dashboard data...</Alert>}
-      {error && <Alert severity="error">Error: {error}</Alert>}
-
-      {!filecoinConfig && (
-        <Alert severity="warning">
-          Filecoin configuration is missing. Please configure it in settings before starting the node.
-        </Alert>
-      )}
-
-      {/* Upload Worker Configuration */}
-      <UploadWorkerConfig filecoinConfigured={!!filecoinConfig} />
-
-      {/* Active Operations Section */}
-      <Typography variant="h6">Active Operations</Typography>
-
-      {state.active_operations.length === 0 && state.is_active ? (
-        <Card>
-          <CardContent sx={{ textAlign: 'center', py: 4 }}>
-            <CircularProgress size={40} sx={{ mb: 2 }} />
-            <Typography variant="body1" color="text.secondary">
-              Discovering and archiving content...
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Waiting for plugin operations to start
-            </Typography>
-          </CardContent>
-        </Card>
-      ) : (
-        <Grid container spacing={2}>
-          {state.active_operations.map((operation) => (
-            <Grid size={{ xs: 12, md: 6, lg: 4 }} key={operation.operation_id}>
-              <OperationCard
-                operation={operation}
-                onStop={() => stopOperation(operation.operation_id)}
-                onPause={(paused: boolean) => toggleOperationPause(operation.operation_id, paused)}
-              />
-            </Grid>
-          ))}
-        </Grid>
-      )}
-
-      {/* Plugin Status Section */}
-      <Typography variant="h6">Plugin Status</Typography>
-
-      <Grid container spacing={2}>
-        {state.enabled_plugins.map((plugin) => (
-          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={plugin.name}>
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                    <Extension fontSize="small" />
-                    <Typography variant="body2">{plugin.display_name}</Typography>
-                  </Box>
-                  <Badge badgeContent={plugin.active_operations_count} color="primary">
-                    <Chip
-                      label={plugin.status}
-                      size="small"
-                      color={plugin.status === 'active' ? 'success' : 'default'}
-                    />
-                  </Badge>
-                </Box>
-
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                  {plugin.active_operations_count} active operation(s)
-                </Typography>
-
-                <Button
-                  size="small"
-                  startIcon={<SettingsIcon />}
-                  onClick={() => handleOpenConfig(plugin.name)}
-                  sx={{ mt: 1 }}
-                >
-                  Configure
-                </Button>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-
-      {/* Key Metrics */}
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <MetricCard
-            title="Total Archived"
-            value={state.total_archived}
-            icon={<ScheduleIcon />}
-            color="primary"
-          />
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <MetricCard
-            title="Uploaded to Filecoin"
-            value={state.total_uploaded}
-            icon={<CloudUploadIcon />}
-            color="secondary"
-          />
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <MetricCard
-            title="Pending Uploads"
-            value={state.pending_uploads}
-            icon={<BoltIcon />}
-            color="warning"
-          />
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <MetricCard
-            title="Active Operations"
-            value={state.active_operations.length}
-            icon={<Extension />}
-            color="info"
-          />
-        </Grid>
-      </Grid>
-
-      {/* Activity Log */}
-      <Paper
-        sx={{
-          flexGrow: 1,
-          p: 2,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          minHeight: 200,
-        }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexShrink: 0 }}>
-          <ScheduleIcon color="action" fontSize="small" />
-          <Typography variant="subtitle2">Node Activity Log</Typography>
-          {state.last_tick && (
-            <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-              Last Tick: {new Date(state.last_tick).toLocaleTimeString()}
-            </Typography>
-          )}
-        </Box>
-        <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <List sx={{ flex: 1, overflow: 'auto', bgcolor: '#f8f9fa', borderRadius: 2, p: 1, minHeight: 0 }}>
-            {logs.length === 0 && (
-              <Box sx={{ p: 4, textAlign: 'center', opacity: 0.6 }}>
-                <Typography variant="body2">No activity recorded this session.</Typography>
-                <Typography variant="caption">Activate the node to start earning rewards.</Typography>
+                {state.last_tick && (
+                  <Typography
+                    sx={{
+                      fontSize: '11px',
+                      color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                      ml: 'auto',
+                    }}
+                  >
+                    Last Tick: {new Date(state.last_tick).toLocaleTimeString()}
+                  </Typography>
+                )}
               </Box>
-            )}
-            {logs.map((log, index) => (
-              <ListItem key={index} dense sx={{ py: 0.5, borderBottom: '1px solid #eee' }}>
-                <ListItemText
-                  primary={
-                    <Box>
-                      <Typography
-                        variant="body2"
-                        fontFamily="monospace"
-                        fontSize="0.75rem"
-                        color={
-                          log.message.includes('❌')
-                            ? 'error.main'
-                            : log.message.includes('🎉')
-                            ? 'secondary.main'
-                            : 'text.primary'
-                        }
-                        fontWeight={log.message.includes('🎉') ? 600 : 400}
+
+              <Box
+                sx={{
+                  flex: 1,
+                  overflow: 'auto',
+                  background: 'rgba(0, 0, 0, 0.2)',
+                  borderRadius: `${liquidGlassTokens.radius.sm}px`,
+                  padding: 1,
+                }}
+              >
+                {logs.length === 0 ? (
+                  <Box sx={{ p: 4, textAlign: 'center' }}>
+                    <Typography
+                      sx={{
+                        fontSize: '14px',
+                        color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                      }}
+                    >
+                      No activity recorded this session.
+                    </Typography>
+                    <Typography
+                      sx={{
+                        fontSize: '12px',
+                        color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                        mt: 0.5,
+                      }}
+                    >
+                      Activate the node to start earning rewards.
+                    </Typography>
+                  </Box>
+                ) : (
+                  <List dense sx={{ p: 0 }}>
+                    {logs.map((log, index) => (
+                      <ListItem
+                        key={index}
+                        sx={{
+                          py: 0.5,
+                          px: 1,
+                          borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                        }}
                       >
-                        {log.message}
-                      </Typography>
-                      {log.links && Object.keys(log.links).length > 0 && (
-                        <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                          {log.links.filecoinTransaction && (
-                            <Link
-                              href={log.links.filecoinTransaction}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                            >
-                              ⛏️ Filecoin Transaction
-                            </Link>
-                          )}
-                          {log.links.transaction && (
-                            <Link
-                              href={log.links.transaction}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                            >
-                              🔗 Arkiv Transaction
-                            </Link>
-                          )}
-                          {log.links.ipfs && (
-                            <Link
-                              href={log.links.ipfs}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                            >
-                              📦 IPFS
-                            </Link>
-                          )}
-                          {log.links.filecoin && (
-                            <Link
-                              href={log.links.filecoin}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                            >
-                              ⛏️ Filecoin CID
-                            </Link>
-                          )}
-                          {log.links.ipni && (
-                            <Link
-                              href={log.links.ipni}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                            >
-                              🔍 IPNI
-                            </Link>
-                          )}
-                          {log.links.entity && (
-                            <Link
-                              href={log.links.entity}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              sx={{ fontSize: '0.7rem', textDecoration: 'none' }}
-                            >
-                              📋 Arkiv Entity
-                            </Link>
-                          )}
-                        </Box>
-                      )}
-                    </Box>
-                  }
-                />
-              </ListItem>
-            ))}
-          </List>
-        </Box>
-      </Paper>
+                        <ListItemText
+                          primary={
+                            <Box>
+                              <Typography
+                                sx={{
+                                  fontFamily: 'monospace',
+                                  fontSize: '12px',
+                                  color: log.message.includes('❌')
+                                    ? liquidGlassTokens.neon.error
+                                    : log.message.includes('✅') || log.message.includes('🎉')
+                                    ? liquidGlassTokens.neon.success
+                                    : log.message.includes('⬆️')
+                                    ? liquidGlassTokens.neon.cyan
+                                    : `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+                                  fontWeight: log.message.includes('🎉') ? 600 : 400,
+                                }}
+                              >
+                                {log.message}
+                              </Typography>
+                              {log.links && Object.keys(log.links).length > 0 && (
+                                <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                  {Object.entries(log.links).map(([key, url]) => (
+                                    <Link
+                                      key={key}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      sx={{
+                                        fontSize: '10px',
+                                        color: liquidGlassTokens.neon.cyan,
+                                        textDecoration: 'none',
+                                        '&:hover': {
+                                          textDecoration: 'underline',
+                                        },
+                                      }}
+                                    >
+                                      🔗 {key}
+                                    </Link>
+                                  ))}
+                                </Box>
+                              )}
+                            </Box>
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                )}
+              </Box>
+            </GlassCard>
+          </BentoCell>
+        </BentoGrid>
+      </Box>
 
       {/* Configuration Modal */}
       {configPlugin && (
@@ -699,94 +773,263 @@ const DePinDashboard: React.FC<DePinDashboardProps> = ({
   );
 };
 
-function OperationCard({ operation, onStop, onPause }: any) {
-  const getOperationIcon = (type: string) => {
-    switch (type) {
-      case 'real-time':
-        return <PlayArrow />;
-      case 'subscription':
-        return <VideoLibrary />;
-      case 'download':
-        return <CloudUpload />;
-      default:
-        return <Extension />;
-    }
+// Metric Card Component
+function MetricCard({ title, value, icon, color }: { 
+  title: string; 
+  value: number; 
+  icon: React.ReactNode; 
+  color: 'cyan' | 'magenta' | 'amber' | 'success';
+}) {
+  const colorMap = {
+    cyan: liquidGlassTokens.neon.cyan,
+    magenta: liquidGlassTokens.neon.magenta,
+    amber: liquidGlassTokens.neon.amber,
+    success: liquidGlassTokens.neon.success,
   };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'running':
-        return 'success';
-      case 'paused':
-        return 'warning';
-      case 'completed':
-        return 'primary';
-      case 'failed':
-        return 'error';
-      default:
-        return 'default';
-    }
-  };
-
+  
+  const neonColor = colorMap[color];
+  
   return (
-    <Card sx={{ height: '100%' }}>
-      <CardContent>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            {getOperationIcon(operation.operation_type)}
-            <Box>
-              <Typography variant="subtitle2">{operation.plugin_display_name}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                {operation.source_name}
-              </Typography>
-            </Box>
-          </Box>
-          <Chip label={operation.status} size="small" color={getStatusColor(operation.status) as any} />
+    <GlassCard sx={{ height: '100%' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: `${liquidGlassTokens.radius.sm}px`,
+            background: `${neonColor}15`,
+            border: `1px solid ${neonColor}30`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: neonColor,
+          }}
+        >
+          {icon}
         </Box>
-
-        <Box sx={{ mb: 2 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-            <Typography variant="caption" color="text.secondary">
-              {Math.floor(operation.duration_seconds / 60)}:
-              {(operation.duration_seconds % 60).toString().padStart(2, '0')}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {operation.progress}%
-            </Typography>
-          </Box>
-          <LinearProgress variant="determinate" value={operation.progress} sx={{ height: 6, borderRadius: 3 }} />
-        </Box>
-
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <IconButton size="small" onClick={() => onPause(operation.status === 'running')}>
-            {operation.status === 'running' ? <Pause /> : <PlayArrow />}
-          </IconButton>
-          <IconButton size="small" color="error" onClick={onStop}>
-            <Stop />
-          </IconButton>
-        </Box>
-      </CardContent>
-    </Card>
+        <Typography
+          sx={{
+            fontSize: '12px',
+            fontWeight: 500,
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+          }}
+        >
+          {title}
+        </Typography>
+      </Box>
+      <MetricDisplay value={value} glowColor={color} size="medium" />
+    </GlassCard>
   );
 }
 
-function MetricCard({ title, value, icon, color }: any) {
+// Operation Card Component
+function OperationCard({ operation, onStop, onPause }: {
+  operation: any;
+  onStop: () => void;
+  onPause: (paused: boolean) => void;
+}) {
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'running': return liquidGlassTokens.neon.success;
+      case 'paused': return liquidGlassTokens.neon.amber;
+      case 'completed': return liquidGlassTokens.neon.cyan;
+      case 'failed': return liquidGlassTokens.neon.error;
+      default: return `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`;
+    }
+  };
+
+  const getOperationIcon = (type: string) => {
+    switch (type) {
+      case 'real-time': return <PlayArrow sx={{ fontSize: 18 }} />;
+      case 'subscription': return <VideoLibrary sx={{ fontSize: 18 }} />;
+      case 'download': return <CloudUpload sx={{ fontSize: 18 }} />;
+      default: return <Extension sx={{ fontSize: 18 }} />;
+    }
+  };
+
+  const statusColor = getStatusColor(operation.status);
+
   return (
-    <Card>
-      <CardContent>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-          <Box sx={{ p: 1, borderRadius: 2, bgcolor: `${color}15` }}>
-            {React.cloneElement(icon, { color: color as any })}
+    <GlassCard sx={{ height: '100%' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+          <Box
+            sx={{
+              width: 36,
+              height: 36,
+              borderRadius: `${liquidGlassTokens.radius.sm}px`,
+              background: `${liquidGlassTokens.neon.cyan}15`,
+              border: `1px solid ${liquidGlassTokens.neon.cyan}30`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: liquidGlassTokens.neon.cyan,
+            }}
+          >
+            {getOperationIcon(operation.operation_type)}
           </Box>
-          <Typography variant="subtitle2" color="text.secondary">
-            {title}
+          <Box>
+            <Typography
+              sx={{
+                fontSize: '14px',
+                fontWeight: 500,
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+              }}
+            >
+              {operation.plugin_display_name}
+            </Typography>
+            <Typography
+              sx={{
+                fontSize: '11px',
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+              }}
+            >
+              {operation.source_name}
+            </Typography>
+          </Box>
+        </Box>
+        <GlowChip
+          label={operation.status}
+          glowColor={operation.status === 'running' ? 'success' : operation.status === 'paused' ? 'amber' : 'cyan'}
+          active
+        />
+      </Box>
+
+      <Box sx={{ mb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+          <Typography
+            sx={{
+              fontSize: '11px',
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+            }}
+          >
+            {Math.floor(operation.duration_seconds / 60)}:{(operation.duration_seconds % 60).toString().padStart(2, '0')}
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: '11px',
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+            }}
+          >
+            {operation.progress}%
           </Typography>
         </Box>
-        <Typography variant="h4">{value}</Typography>
-      </CardContent>
-    </Card>
+        <Box
+          sx={{
+            height: 4,
+            borderRadius: 2,
+            background: 'rgba(255, 255, 255, 0.08)',
+            overflow: 'hidden',
+          }}
+        >
+          <Box
+            sx={{
+              width: `${operation.progress}%`,
+              height: '100%',
+              background: `linear-gradient(90deg, ${liquidGlassTokens.neon.cyan}, ${liquidGlassTokens.neon.magenta})`,
+              borderRadius: 2,
+              transition: 'width 0.3s ease',
+            }}
+          />
+        </Box>
+      </Box>
+
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <IconButton
+          size="small"
+          onClick={() => onPause(operation.status === 'running')}
+          sx={{
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+            '&:hover': {
+              background: 'rgba(255, 255, 255, 0.08)',
+              color: liquidGlassTokens.neon.cyan,
+            },
+          }}
+        >
+          {operation.status === 'running' ? <Pause fontSize="small" /> : <PlayArrow fontSize="small" />}
+        </IconButton>
+        <IconButton
+          size="small"
+          onClick={onStop}
+          sx={{
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+            '&:hover': {
+              background: `${liquidGlassTokens.neon.error}15`,
+              color: liquidGlassTokens.neon.error,
+            },
+          }}
+        >
+          <Stop fontSize="small" />
+        </IconButton>
+      </Box>
+    </GlassCard>
+  );
+}
+
+// Plugin Card Component
+function PluginCard({ plugin, onConfigure }: {
+  plugin: any;
+  onConfigure: () => void;
+}) {
+  return (
+    <GlassCard sx={{ height: '100%' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+          <Box
+            sx={{
+              width: 36,
+              height: 36,
+              borderRadius: `${liquidGlassTokens.radius.sm}px`,
+              background: `${liquidGlassTokens.neon.magenta}15`,
+              border: `1px solid ${liquidGlassTokens.neon.magenta}30`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: liquidGlassTokens.neon.magenta,
+            }}
+          >
+            <Extension sx={{ fontSize: 18 }} />
+          </Box>
+          <Typography
+            sx={{
+              fontSize: '14px',
+              fontWeight: 500,
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+            }}
+          >
+            {plugin.display_name}
+          </Typography>
+        </Box>
+        <Badge badgeContent={plugin.active_operations_count} color="primary">
+          <GlowChip
+            label={plugin.status}
+            glowColor={plugin.status === 'active' ? 'success' : 'cyan'}
+            active={plugin.status === 'active'}
+          />
+        </Badge>
+      </Box>
+
+      <Typography
+        sx={{
+          fontSize: '12px',
+          color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+          mb: 2,
+        }}
+      >
+        {plugin.active_operations_count} active operation(s)
+      </Typography>
+
+      <GlowButton
+        size="small"
+        glowColor="cyan"
+        onClick={onConfigure}
+        sx={{ width: '100%' }}
+      >
+        <SettingsIcon sx={{ fontSize: 16, mr: 1 }} />
+        Configure
+      </GlowButton>
+    </GlassCard>
   );
 }
 
 export default DePinDashboard;
-          

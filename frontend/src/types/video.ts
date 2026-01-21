@@ -62,6 +62,7 @@ export interface StreamInfo {
   mint_id: string;
   name: string;
   symbol: string;
+  title: string;
   description?: string;
   image_uri?: string;
   thumbnail?: string;

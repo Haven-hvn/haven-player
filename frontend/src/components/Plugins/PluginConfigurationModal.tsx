@@ -214,11 +214,9 @@ export function PluginConfigurationModal({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <SettingsIcon />
-          <Typography variant="h6">{pluginDisplayName} Configuration</Typography>
-        </Box>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <SettingsIcon />
+        {pluginDisplayName} Configuration
       </DialogTitle>
 
       <DialogContent dividers>

@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { PluginMetadata, PluginHealth, PluginConfig, DiscoverResponse } from '@/types/plugin';
 import { pluginService } from '@/services/api';
+import { useBackgroundThrottling } from './useBackgroundThrottling';
 
 export function usePlugins() {
   const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
@@ -114,11 +115,18 @@ export function usePlugins() {
   };
 }
 
+// Background polling interval (null = pause completely)
+const BACKGROUND_HEALTH_INTERVAL: number | null = null;
+
 export function usePluginHealth(refreshInterval: number = 30000) {
   const [healthStatus, setHealthStatus] = useState<PluginHealth[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
+  
+  // Background throttling
+  const { shouldThrottle } = useBackgroundThrottling();
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const checkHealth = useCallback(async () => {
     setLoading(true);
@@ -136,10 +144,34 @@ export function usePluginHealth(refreshInterval: number = 30000) {
   }, []);
 
   useEffect(() => {
+    // Clear existing interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    // Determine interval based on throttle state
+    const actualInterval = shouldThrottle ? BACKGROUND_HEALTH_INTERVAL : refreshInterval;
+
+    // Initial check
     checkHealth();
-    const interval = setInterval(checkHealth, refreshInterval);
-    return () => clearInterval(interval);
-  }, [checkHealth, refreshInterval]);
+
+    // If interval is null (background), don't poll
+    if (actualInterval === null) {
+      console.log('🔇 Plugin health polling paused (app in background)');
+      return;
+    }
+
+    console.log(`🔄 Plugin health polling active (interval: ${actualInterval}ms)`);
+    intervalRef.current = setInterval(checkHealth, actualInterval);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [checkHealth, refreshInterval, shouldThrottle]);
 
   return {
     healthStatus,

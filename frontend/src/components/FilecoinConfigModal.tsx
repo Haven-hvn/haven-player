@@ -134,22 +134,16 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
           pt: 3,
           backgroundColor: "#FAFAFA",
           borderBottom: "1px solid #F0F0F0",
+          fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
+          fontWeight: 600,
+          fontSize: "18px",
+          color: "#000000",
+          letterSpacing: "-0.01em",
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           <CloudUploadIcon sx={{ color: "#2196F3", fontSize: 24 }} />
-          <Typography
-            variant="h6"
-            sx={{
-              fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
-              fontWeight: 600,
-              fontSize: "18px",
-              color: "#000000",
-              letterSpacing: "-0.01em",
-            }}
-          >
-            Filecoin Configuration
-          </Typography>
+          Filecoin Configuration
         </Box>
         <IconButton
           onClick={onClose}

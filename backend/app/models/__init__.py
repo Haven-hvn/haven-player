@@ -6,6 +6,7 @@ from app.models.video import Video, Timestamp
 from app.models.live_session import LiveSession
 from app.models.plugin import Plugin
 from app.models.segment_metadata import SegmentMetadata
+from app.models.video_transcript import VideoTranscript
 
 __all__ = [
     'Base',
@@ -16,4 +17,5 @@ __all__ = [
     'LiveSession',
     'Plugin',
     'SegmentMetadata',
+    'VideoTranscript',
 ]

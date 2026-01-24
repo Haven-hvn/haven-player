@@ -89,6 +89,19 @@ class UploadQueue(Base):
     vlm_json_upload_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     vlm_json_upload_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     vlm_json_upload_error: Mapped[str] = mapped_column(Text, nullable=True)
+    vlm_json_cid: Mapped[str] = mapped_column(String, nullable=True)
+
+    # Transcript summary upload state tracking
+    # - pending: Transcript summary ready to upload to IPFS
+    # - processing: Summary upload in progress
+    # - completed: Summary uploaded successfully
+    # - failed: Summary upload failed
+    # - skipped: Summary upload skipped (disabled or failed)
+    transcript_summary_status: Mapped[str] = mapped_column(String, nullable=True)
+    transcript_summary_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    transcript_summary_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    transcript_summary_error: Mapped[str] = mapped_column(Text, nullable=True)
+    transcript_summary_cid: Mapped[str] = mapped_column(String, nullable=True)
 
     def to_dict(self) -> dict:
         """
@@ -121,6 +134,12 @@ class UploadQueue(Base):
             'vlm_json_upload_started_at': self.vlm_json_upload_started_at.isoformat() if self.vlm_json_upload_started_at else None,
             'vlm_json_upload_completed_at': self.vlm_json_upload_completed_at.isoformat() if self.vlm_json_upload_completed_at else None,
             'vlm_json_upload_error': self.vlm_json_upload_error,
+            'vlm_json_cid': self.vlm_json_cid,
+            'transcript_summary_status': self.transcript_summary_status,
+            'transcript_summary_started_at': self.transcript_summary_started_at.isoformat() if self.transcript_summary_started_at else None,
+            'transcript_summary_completed_at': self.transcript_summary_completed_at.isoformat() if self.transcript_summary_completed_at else None,
+            'transcript_summary_error': self.transcript_summary_error,
+            'transcript_summary_cid': self.transcript_summary_cid,
         }
 
     def can_retry(self) -> bool:
@@ -305,3 +324,48 @@ class UploadQueue(Base):
             True if vlm_json_upload_status is 'failed', False otherwise
         """
         return self.vlm_json_upload_status == 'failed'
+
+    def is_transcript_summary_pending(self) -> bool:
+        """
+        Check if transcript summary upload is pending.
+
+        Returns:
+            True if transcript_summary_status is 'pending', False otherwise
+        """
+        return self.transcript_summary_status == 'pending'
+
+    def is_transcript_summary_processing(self) -> bool:
+        """
+        Check if transcript summary upload is in progress.
+
+        Returns:
+            True if transcript_summary_status is 'processing', False otherwise
+        """
+        return self.transcript_summary_status == 'processing'
+
+    def is_transcript_summary_completed(self) -> bool:
+        """
+        Check if transcript summary upload completed successfully.
+
+        Returns:
+            True if transcript_summary_status is 'completed', False otherwise
+        """
+        return self.transcript_summary_status == 'completed'
+
+    def is_transcript_summary_failed(self) -> bool:
+        """
+        Check if transcript summary upload failed.
+
+        Returns:
+            True if transcript_summary_status is 'failed', False otherwise
+        """
+        return self.transcript_summary_status == 'failed'
+
+    def is_transcript_summary_skipped(self) -> bool:
+        """
+        Check if transcript summary upload was skipped.
+
+        Returns:
+            True if transcript_summary_status is 'skipped', False otherwise
+        """
+        return self.transcript_summary_status == 'skipped'

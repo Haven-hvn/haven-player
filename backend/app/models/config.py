@@ -33,6 +33,8 @@ class AppConfig(Base):
     upload_coordinator_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # None = auto-detect
     upload_coordinator_plugin_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     upload_coordinator_priority: Mapped[int] = mapped_column(Integer, default=0)
+    # YouTube Transcript Configuration
+    enable_transcript_summaries: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -55,5 +57,6 @@ class AppConfig(Base):
             'upload_coordinator_enabled': self.upload_coordinator_enabled,
             'upload_coordinator_plugin_overrides': self.upload_coordinator_plugin_overrides,
             'upload_coordinator_priority': self.upload_coordinator_priority,
+            'enable_transcript_summaries': self.enable_transcript_summaries,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

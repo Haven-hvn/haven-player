@@ -80,6 +80,12 @@ class Video(Base):
     )
     timestamps: Mapped[List['Timestamp']] = relationship('Timestamp', back_populates='video', cascade='all, delete-orphan')
     analysis_jobs: Mapped[List['AnalysisJob']] = relationship('AnalysisJob', back_populates='video', cascade='all, delete-orphan')
+    transcript: Mapped[Optional['VideoTranscript']] = relationship(
+        'VideoTranscript',
+        back_populates='video',
+        uselist=False,
+        cascade='all, delete-orphan'
+    )
 
     def to_dict(self) -> dict:
         return {

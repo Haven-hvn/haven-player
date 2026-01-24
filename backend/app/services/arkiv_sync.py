@@ -34,6 +34,7 @@ from app.utils.phash import calculate_phash
 from app.utils.video import get_video_duration
 from app.models.video import Video
 from app.models.segment_metadata import SegmentMetadata
+from app.models.video_transcript import VideoTranscript
 from app.services.evm_utils import (
     InsufficientGasError,
     handle_evm_gas_error,
@@ -403,7 +404,7 @@ def _load_segment_payload(db_session: Session, video: Video) -> SegmentOrderingP
     return _build_segment_payload(segment)
 
 
-def _build_payload(video: Video, segment_payload: SegmentOrderingPayload | None) -> dict:
+def _build_payload(video: Video, segment_payload: SegmentOrderingPayload | None, db_session: Session | None = None) -> dict:
     """
     Build optimized payload for Arkiv entity.
     
@@ -418,6 +419,7 @@ def _build_payload(video: Video, segment_payload: SegmentOrderingPayload | None)
     Fields already in attributes (title, duration, etc.) are excluded to reduce size.
     Database timestamps are excluded - they come from VLM JSON during restore.
     """
+    from app.models.video_transcript import VideoTranscript
 
     # Build minimal payload with only essential encrypted/sensitive data
     payload: dict[str, object] = {}
@@ -466,6 +468,15 @@ def _build_payload(video: Video, segment_payload: SegmentOrderingPayload | None)
     if video.vlm_json_cid:
         payload["vlm_json_cid"] = video.vlm_json_cid
     
+    # Include transcript summary CID if available (requires db_session)
+    if db_session is not None:
+        transcript = db_session.query(VideoTranscript).filter(
+            VideoTranscript.video_id == video.id
+        ).first()
+
+        if transcript and transcript.summary_cid and transcript.summary_cid != "failed":
+            payload["transcript_summary_cid"] = transcript.summary_cid
+    
     # Essential flag for restore
     payload["is_encrypted"] = video.is_encrypted
 
@@ -502,6 +513,43 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _restore_transcript_summary(db_video: Video, transcript_summary_cid: str | None, db_session: Session) -> bool:
+    """
+    Download and restore transcript summary from IPFS during Arkiv restore.
+    
+    Args:
+        db_video: The Video model instance to attach transcript to
+        transcript_summary_cid: The IPFS CID of the transcript summary
+        db_session: Database session for creating records
+    
+    Returns:
+        True if transcript was restored, False otherwise
+    """
+    if not transcript_summary_cid:
+        return False
+    
+    try:
+        # Download transcript summary from IPFS
+        summary_content = _download_from_ipfs(transcript_summary_cid)
+        summary_text = summary_content.decode("utf-8")
+        
+        # Create VideoTranscript record with the summary
+        # Note: We don't have the full transcript content, so we store just the summary
+        db_transcript = VideoTranscript(
+            video_id=db_video.id,
+            content=f"[Restored from Arkiv - summary only. Full transcript not available.]",
+            summary_cid=transcript_summary_cid,
+        )
+        db_session.add(db_transcript)
+        db_session.commit()
+        logger.info("✅ Restored transcript summary for video %s (CID: %s)", db_video.path, transcript_summary_cid)
+        return True
+    except Exception as e:
+        logger.warning("Failed to restore transcript summary for video %s: %s", db_video.path, e)
+        db_session.rollback()
+        return False
 
 
 def _process_vlm_json_from_arkiv(vlm_json_cid: str, video_path: str, db_session: Session) -> bool:
@@ -935,6 +983,9 @@ class ArkivSyncClient:
                 vlm_json_cid = get_field("vlm_json_cid")
                 has_vlm_json = bool(vlm_json_cid)
                 
+                # Extract transcript summary CID from Arkiv entity
+                transcript_summary_cid = get_field("transcript_summary_cid")
+                
                 # Update completeness based on VLM JSON (primary method)
                 if has_filecoin and has_vlm_json:
                     db_video.arkiv_data_completeness = "filecoin_and_vlm"
@@ -1004,6 +1055,9 @@ class ArkivSyncClient:
                             db_session.add(db_segment)
                             db_session.commit()
                 
+                # Restore transcript summary if available
+                _restore_transcript_summary(db_video, transcript_summary_cid, db_session)
+                
                 # Now process VLM JSON from Arkiv to restore timestamps
                 if vlm_json_cid:
                     _process_vlm_json_from_arkiv(vlm_json_cid, db_video.path, db_session)
@@ -1070,12 +1124,20 @@ class ArkivSyncClient:
             )
             return None
 
+        client = self._get_client()
+
+        if segment_payload is None:
+            segment_payload = _load_segment_payload(db_session, video)
+        payload = _build_payload(video, segment_payload, db_session)
+        attributes = _build_attributes(video)
+
         logger.info(
             "🔄 Starting Arkiv sync for video: %s | "
             "Entity Key: %s | "
             "Has Filecoin CID: %s | "
             "Is Encrypted: %s | "
             "Has VLM JSON CID: %s | "
+            "Has Transcript Summary: %s | "
             "Has Lit Metadata: %s | "
             "Has Encrypted CID: %s",
             video.path,
@@ -1083,16 +1145,10 @@ class ArkivSyncClient:
             "Yes" if video.filecoin_root_cid else "No",
             "Yes" if video.is_encrypted else "No",
             "Yes" if video.vlm_json_cid else "No",
+            "Yes" if "transcript_summary_cid" in payload else "No",
             "Yes" if video.lit_encryption_metadata else "No",
             "Yes" if video.encrypted_filecoin_cid else "No"
         )
-
-        client = self._get_client()
-
-        if segment_payload is None:
-            segment_payload = _load_segment_payload(db_session, video)
-        payload = _build_payload(video, segment_payload)
-        attributes = _build_attributes(video)
         
         # Log what's being included in the sync
         logger.info(

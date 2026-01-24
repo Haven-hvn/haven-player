@@ -35,6 +35,7 @@ from app.models.config import AppConfig
 from app.models.database import get_db as get_db_session
 from app.models.plugin import Plugin as PluginModel
 from app.models.video import Video, Timestamp
+from app.models.video_transcript import VideoTranscript
 from app.models.analysis_job import AnalysisJob
 from app.utils.video import get_video_duration
 from app.utils.video.video_file_validator import is_video_content
@@ -490,6 +491,24 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 db.refresh(new_video_entry)
 
                 logger.info(f"Created main Video entry for YouTube video: {new_video_entry.id}")
+
+                # Download transcript asynchronously (fire and forget)
+                # This doesn't block video archival
+                db_for_transcript = next(get_db_session())
+                try:
+                    app_config = db_for_transcript.query(AppConfig).first()
+                    if app_config and app_config.enable_transcript_summaries:
+                        logger.info(f"Triggering async transcript download for video {new_video_entry.id}")
+                        # Fire and forget - transcript download runs in background
+                        asyncio.create_task(self._download_and_store_transcript(
+                            video_id=video_id,
+                            video_title=source.metadata.get("title", "video"),
+                            video_path=file_path
+                        ))
+                    else:
+                        logger.debug("Transcript summarization disabled in config")
+                finally:
+                    db_for_transcript.close()
 
                 return ArchiveResult(
                     success=True,
@@ -1260,6 +1279,97 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             return False
 
     # ========== Cookie Management Methods ==========
+
+    async def _download_and_store_transcript(self, video_id: str, video_title: str, video_path: str) -> Optional[str]:
+        """
+        Download auto-generated English transcript from YouTube and store in database.
+
+        Args:
+            video_id: YouTube video ID
+            video_title: Title of the video
+            video_path: Path to the downloaded video file
+
+        Returns:
+            Transcript content as string, or None if download failed
+        """
+        try:
+            # Use yt-dlp to download transcript
+            cmd = [
+                "yt-dlp",
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-lang", "en",
+                "--skip-download",
+                "--sub-format", "srt",
+                "--print", "subtitles",
+                f"https://www.youtube.com/watch?v={video_id}"
+            ]
+
+            logger.info(f"Downloading transcript for video {video_id}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                logger.warning(f"Failed to download transcript for {video_id}: {result.stderr}")
+                return None
+
+            # Parse transcript from output (yt-dlp returns plain text when using --print subtitles)
+            transcript_content = result.stdout.strip()
+
+            if not transcript_content or len(transcript_content) < 10:
+                logger.warning(f"Transcript for {video_id} is too short or empty")
+                return None
+
+            # Store in database
+            db = next(get_db_session())
+            try:
+                # Get video record to get video.id
+                video = db.query(Video).filter(Video.path == video_path).first()
+                if not video:
+                    logger.error(f"Video not found for transcript storage: {video_path}")
+                    db.close()
+                    return None
+
+                # Check if transcript already exists
+                existing = db.query(VideoTranscript).filter(
+                    VideoTranscript.video_id == video.id
+                ).first()
+
+                if existing:
+                    logger.info(f"Transcript already exists for video {video.id}, skipping")
+                    db.close()
+                    return existing.content
+
+                # Create new transcript entry
+                transcript_entry = VideoTranscript(
+                    video_id=video.id,
+                    content=transcript_content,
+                    summary_cid=None  # Will be set by summarization worker
+                )
+                db.add(transcript_entry)
+                db.commit()
+                db.refresh(transcript_entry)
+
+                logger.info(f"✅ Stored transcript for video {video.id} ({len(transcript_content)} chars)")
+                db.close()
+                return transcript_content
+
+            except Exception as e:
+                logger.error(f"Error storing transcript in database: {e}", exc_info=True)
+                db.rollback()
+                db.close()
+                return None
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout downloading transcript for {video_id}")
+            return None
+        except Exception as e:
+            logger.error(f"Error downloading transcript for {video_id}: {e}")
+            return None
 
     def _get_cookie_file_path(self) -> Optional[str]:
         """

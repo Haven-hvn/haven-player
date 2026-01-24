@@ -55,6 +55,13 @@ class VLMJsonUploadUpdate(BaseModel):
     vlm_json_cid: Optional[str] = None
 
 
+class TranscriptSummaryUploadUpdate(BaseModel):
+    """Request to update transcript summary upload status."""
+    transcript_summary_upload_status: str
+    transcript_summary_upload_error: Optional[str] = None
+    transcript_summary_cid: Optional[str] = None
+
+
 class SegmentMetadataResponse(BaseModel):
     """Segment ordering metadata for Arkiv sync."""
     segment_index: int
@@ -92,7 +99,28 @@ class UploadQueueResponse(BaseModel):
     vlm_analysis_started_at: Optional[datetime] = None
     vlm_analysis_completed_at: Optional[datetime] = None
     vlm_analysis_error: Optional[str] = None
-    
+
+    # NEW: Transcript summary upload status
+    transcript_summary_status: Optional[str] = None
+    transcript_summary_started_at: Optional[datetime] = None
+    transcript_summary_completed_at: Optional[datetime] = None
+    transcript_summary_error: Optional[str] = None
+    transcript_summary_cid: Optional[str] = None
+
+    # NEW: VLM JSON upload status
+    vlm_json_upload_status: Optional[str] = None
+    vlm_json_upload_started_at: Optional[datetime] = None
+    vlm_json_upload_completed_at: Optional[datetime] = None
+    vlm_json_upload_error: Optional[str] = None
+    vlm_json_cid: Optional[str] = None
+
+    segment_metadata: Optional[SegmentMetadataResponse] = None
+
+    @field_serializer('created_at', 'started_at', 'completed_at', 'arkiv_sync_started_at', 'arkiv_sync_completed_at', 'vlm_analysis_started_at', 'vlm_analysis_completed_at', 'vlm_json_upload_started_at', 'vlm_json_upload_completed_at', 'transcript_summary_started_at', 'transcript_summary_completed_at')
+    @classmethod
+    def serialize_datetime(cls, dt: Optional[datetime]) -> Optional[str]:
+        """Convert datetime to ISO format string."""
+        return dt.isoformat() if dt else None
     # NEW: VLM JSON upload status
     vlm_json_upload_status: Optional[str] = None
     vlm_json_upload_started_at: Optional[datetime] = None
@@ -676,6 +704,135 @@ async def update_vlm_json_upload_status(
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating VLM JSON upload status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/upload-queue/{queue_id}/transcript-summary", response_model=UploadQueueResponse)
+async def update_transcript_summary_status(
+    queue_id: int,
+    update_data: TranscriptSummaryUploadUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update transcript summary upload status after upload attempt.
+
+    Called by the upload worker to update the status of a transcript summary upload job.
+    This endpoint also triggers Arkiv sync re-queueing when transcript summary completes.
+
+    Args:
+        queue_id: Upload queue entry ID
+        update_data: Update request with status, optional error and CID
+        db: Database session
+
+    Returns:
+        Updated upload queue entry
+
+    Raises:
+        HTTPException: If queue entry not found or database error occurs
+    """
+    try:
+        queue_entry = db.query(UploadQueue).filter(UploadQueue.id == queue_id).first()
+
+        if not queue_entry:
+            raise HTTPException(status_code=404, detail=f"Upload queue entry {queue_id} not found")
+
+        # Validate status
+        valid_statuses = ['pending', 'processing', 'completed', 'failed', 'skipped']
+        if update_data.transcript_summary_upload_status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid transcript_summary_upload_status: {update_data.transcript_summary_upload_status}. Must be one of: {', '.join(valid_statuses)}"
+            )
+
+        # Update status
+        queue_entry.transcript_summary_status = update_data.transcript_summary_upload_status
+
+        # Update timestamps
+        if update_data.transcript_summary_upload_status == 'processing':
+            from datetime import datetime, timezone
+            queue_entry.transcript_summary_started_at = queue_entry.transcript_summary_started_at or datetime.now(timezone.utc)
+        elif update_data.transcript_summary_upload_status in ['completed', 'failed', 'skipped']:
+            from datetime import datetime, timezone
+            queue_entry.transcript_summary_completed_at = datetime.now(timezone.utc)
+
+        # Update error message if provided
+        if update_data.transcript_summary_upload_error:
+            queue_entry.transcript_summary_error = update_data.transcript_summary_upload_error
+
+        # Update CID if provided
+        if update_data.transcript_summary_cid:
+            queue_entry.transcript_summary_cid = update_data.transcript_summary_cid
+            # Also update the VideoTranscript record
+            from app.models.video_transcript import VideoTranscript
+            transcript = db.query(VideoTranscript).filter(
+                VideoTranscript.video_id == db.query(Video).filter(Video.path == queue_entry.video_path).first().id
+            ).first()
+            if transcript:
+                transcript.summary_cid = update_data.transcript_summary_cid
+                logger.info(f"Updated transcript summary CID for video {queue_entry.video_path}: {update_data.transcript_summary_cid}")
+
+        # CRITICAL: If transcript summary upload completes successfully, trigger Arkiv sync re-queue
+        # This ensures the Arkiv entity gets updated with the transcript summary CID
+        if (update_data.transcript_summary_upload_status == 'completed' and
+            update_data.transcript_summary_cid):
+
+            from app.models.video import Video
+            from app.models.video_transcript import VideoTranscript
+
+            # Get the video
+            video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
+
+            if video and video.share_to_arkiv:
+                # Check if Arkiv entity exists
+                if video.arkiv_entity_key:
+                    # Arkiv entity exists - queue incremental update to add transcript summary CID
+                    previous_status = queue_entry.arkiv_sync_status
+                    if previous_status not in ['pending', 'syncing']:
+                        queue_entry.arkiv_sync_status = 'pending'
+                        # Reset timestamp fields so job can be picked up again
+                        queue_entry.arkiv_sync_started_at = None
+                        queue_entry.arkiv_sync_completed_at = None
+                        queue_entry.arkiv_sync_error = None
+                        logger.info(
+                            f"Transcript summary CID ready ({update_data.transcript_summary_cid}), "
+                            f"queuing Arkiv UPDATE for {video.path} "
+                            f"(entity_key: {video.arkiv_entity_key}, previous status: {previous_status or 'None'})"
+                        )
+                    else:
+                        logger.debug(
+                            f"Arkiv sync already queued ({previous_status}) for {video.path}, "
+                            f"transcript summary will be included in next sync"
+                        )
+                else:
+                    # No Arkiv entity yet - check if we should queue initial sync
+                    has_filecoin = bool(video.filecoin_root_cid)
+                    has_vlm_json = bool(video.vlm_json_cid)
+
+                    if has_filecoin or has_vlm_json:
+                        # Queue initial Arkiv sync with transcript summary CID
+                        previous_status = queue_entry.arkiv_sync_status
+                        if previous_status not in ['pending', 'syncing']:
+                            queue_entry.arkiv_sync_status = 'pending'
+                            queue_entry.arkiv_sync_started_at = None
+                            queue_entry.arkiv_sync_completed_at = None
+                            queue_entry.arkiv_sync_error = None
+                            logger.info(
+                                f"Transcript summary CID ready ({update_data.transcript_summary_cid}), "
+                                f"queuing initial Arkiv sync for {video.path} "
+                                f"(no entity_key yet, previous status: {previous_status or 'None'})"
+                            )
+
+        db.commit()
+        db.refresh(queue_entry)
+
+        logger.info(f"Updated transcript summary upload status for entry {queue_id} to: {update_data.transcript_summary_upload_status}")
+        return UploadQueueResponse.model_validate(queue_entry)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating transcript summary upload status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

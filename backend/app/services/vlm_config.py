@@ -45,11 +45,8 @@ def get_vlm_config() -> Dict[str, Any]:
         # Build model config with new multiplexer architecture
         model_config = {
             "type": "vlm_model",
-            "model_file_name": "vlm_nsfw_model",
-            "model_category": "actiondetection",
+            "model_category": "humanactivityevaluation",
             "model_id": config.llm_model,
-            "model_identifier": 93848,
-            "model_version": "1.0",
             "api_base_url": config.llm_base_url,
             "tag_list": tag_list,
             "max_new_tokens": 128,
@@ -105,7 +102,6 @@ def get_vlm_config() -> Dict[str, Any]:
                         "skipped_categories",
                     ],
                     "output": "results",
-                    "short_name": "dynamic_video",
                     "version": 1.0,
                     "models": [
                         {
@@ -118,29 +114,24 @@ def get_vlm_config() -> Dict[str, Any]:
             },
             "models": {
                 "binary_search_processor_dynamic": {
-                    "type": "video_preprocessor",
-                    "model_file_name": "binary_search_processor_dynamic"
+                    "type": "video_preprocessor"
                 },
                 "vlm_nsfw_model": model_config,
                 "result_coalescer": {
-                    "type": "python",
-                    "model_file_name": "result_coalescer"
+                    "type": "python"
                 },
                 "result_finisher": {
-                    "type": "python",
-                    "model_file_name": "result_finisher"
+                    "type": "python"
                 },
                 "batch_awaiter": {
-                    "type": "python",
-                    "model_file_name": "batch_awaiter"
+                    "type": "python"
                 },
                 "video_result_postprocessor": {
-                    "type": "python",
-                    "model_file_name": "video_result_postprocessor"
+                    "type": "python"
                 },
             },
             "category_config": {
-                "actiondetection": {
+                "humanactivityevaluation": {
                     tag: {
                         "RenamedTag": tag,
                         "MinMarkerDuration": "1s",
@@ -177,7 +168,6 @@ def create_engine_config() -> EngineConfig:
         pipelines[pipeline_name] = PipelineConfig(
             inputs=pipeline_config["inputs"],
             output=pipeline_config["output"],
-            short_name=pipeline_config["short_name"],
             version=pipeline_config["version"],
             models=pipeline_models
         )

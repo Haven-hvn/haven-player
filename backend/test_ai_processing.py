@@ -56,7 +56,7 @@ def test_ai_file_processing():
                     "duration": 180.5,
                     "phash": "abc123def456",
                     "models": {
-                        "actiondetection": {
+                        "humanactivityevaluation": {
                             "version": 1.0,
                             "ai_model_config": {
                                 "frame_interval": 2.0,
@@ -67,21 +67,21 @@ def test_ai_file_processing():
                 },
                 "tags": {
                     "ShakingHands": {
-                        "ai_model_name": "actiondetection",
+                        "ai_model_name": "humanactivityevaluation",
                         "time_frames": [
                             {"start": 10.5, "confidence": 0.91},
                             {"start": 45.2, "end": 48.7, "confidence": 0.85}
                         ]
                     },
                     "Walking": {
-                        "ai_model_name": "actiondetection", 
+                        "ai_model_name": "humanactivityevaluation", 
                         "time_frames": [
                             {"start": 5.0, "end": 25.0, "confidence": 0.92},
                             {"start": 60.0, "confidence": 0.78}
                         ]
                     },
                     "Talking": {
-                        "ai_model_name": "actiondetection",
+                        "ai_model_name": "humanactivityevaluation",
                         "time_frames": [
                             {"start": 15.5, "end": 30.2, "confidence": 0.89}
                         ]

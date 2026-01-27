@@ -10,19 +10,42 @@ os.environ['NVIDIA_VISIBLE_DEVICES'] = ''
 os.environ['DISABLE_HWACCEL'] = '1'
 
 import logging
+from pathlib import Path
+import platform
+from logging.handlers import RotatingFileHandler
+if platform.system() == "Windows":
+    # Use Windows AppData/Local
+    LOG_DIR = Path(os.environ.get("LOCALAPPDATA", os.getcwd())) / "haven_player" / "logs"
+else:
+    # Fallback for Mac/Linux
+    LOG_DIR = Path.home() / ".haven_player" / "logs"
+
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "haven-backend.log"
 
 # Configure logging - set to INFO level to see all recording logs
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        # 1. Log to Console (stdout) - keeps your existing behavior
+        logging.StreamHandler(sys.stdout),
+        
+        # 2. Log to File - Rotates at 10MB, keeps 5 backups
+        RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=10*1024*1024, # 10 MB
+            backupCount=5,
+            encoding='utf-8'
+        )
+    ]
 )
 
 logging.getLogger('aioice.ice').setLevel(logging.WARNING)
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import asyncio
@@ -39,6 +62,26 @@ from app.plugins.plugin_manager import PluginManager
 from app.services.arkiv_sync_worker import run_arkiv_sync_worker
 from app.services.vlm_analysis_worker import run_vlm_analysis_worker
 from app.services.openring_recording_manager import OpenRingRecordingManager
+
+import sys
+import io
+
+class WinSafeStdStream(io.TextIOWrapper):
+    def __init__(self, buffer, encoding='utf-8', errors='replace', line_buffering=True):
+        super().__init__(buffer, encoding=encoding, errors=errors, line_buffering=line_buffering)
+        self._isatty = getattr(buffer, 'isatty', False)
+
+    def isatty(self):
+        # Always pretend to be a TTY to ensure Uvicorn formats logs correctly
+        # and doesn't crash looking for this attribute.
+        return True
+
+if sys.platform == 'win32':
+    if sys.stdout and hasattr(sys.stdout, 'buffer'):
+        sys.stdout = WinSafeStdStream(sys.stdout.buffer)
+    
+    if sys.stderr and hasattr(sys.stderr, 'buffer'):
+        sys.stderr = WinSafeStdStream(sys.stderr.buffer)
 
 # Global instances
 plugin_manager: Optional[PluginManager] = None
@@ -333,3 +376,27 @@ async def health_check():
     }
 
     return health_status
+
+if __name__ == "__main__":
+    import uvicorn
+    import sys
+
+    # Configure logging to show immediately on Windows
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        stream=sys.stdout,
+        force=True
+    )
+
+    # RUN THE APP DIRECTLY
+    # log_config=None is CRITICAL: it prevents Uvicorn from trying to reconfigure
+    # logging based on sys.stdout, which causes the 'isatty' crash.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        lifespan="on",
+        reload=False,
+        log_config=None
+    )

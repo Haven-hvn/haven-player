@@ -2,17 +2,16 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const webpack = require('webpack');
 const TerserPlugin = require('terser-webpack-plugin');
+const CopyPlugin = require('copy-webpack-plugin'); // Required to copy Python files
 
 // Optional plugins - only load if available
 let BundleAnalyzerPlugin;
 let CompressionPlugin;
-
 try {
   BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin;
 } catch (e) {
   // Plugin not installed
 }
-
 try {
   CompressionPlugin = require('compression-webpack-plugin');
 } catch (e) {
@@ -28,7 +27,17 @@ module.exports = [
     mode: isProduction ? 'production' : 'development',
     entry: './src/main.ts',
     target: 'electron-main',
-    devtool: isProduction ? 'source-map' : 'eval-source-map',
+    // Use cheap source maps for dev, standard for prod
+    devtool: isProduction ? 'source-map' : 'eval-cheap-module-source-map',
+    
+    // Enable filesystem caching for massive speed/memory gains in dev
+    cache: isProduction ? false : {
+      type: 'filesystem',
+      buildDependencies: {
+        config: [__filename]
+      }
+    },
+
     module: {
       rules: [
         {
@@ -69,13 +78,54 @@ module.exports = [
         }),
       ],
     },
+    // Copy Python backend files to dist so they can be packaged by electron-builder
+    plugins: [new CopyPlugin({
+    patterns: [
+
+      {
+        from: path.resolve(__dirname, '../backend'),
+        to: 'backend',
+        // Use a filter function for absolute control over what gets copied
+        filter: (resourcePath) => {
+          // Get the relative path of the file being copied
+          const relativePath = path.relative(path.resolve(__dirname, '../backend'), resourcePath);
+          
+          // Explicitly block the venv folder
+          if (relativePath.includes('venv')) {
+            return false;
+          }
+          // Block cache
+          if (relativePath.includes('__pycache__')) {
+            return false;
+          }
+          // Block previous builds
+          if (relativePath.includes('dist') || relativePath.includes('build')) {
+            return false;
+          }
+          // Allow everything else (app folder, py files, etc.)
+          return true;
+        },
+      },
+
+    ],
+  }),].filter(Boolean),
   },
+
   // Renderer process configuration
   {
     mode: isProduction ? 'production' : 'development',
-    entry: {renderer: './src/index.tsx'},
+    entry: { renderer: './src/index.tsx' },
     target: 'electron-renderer',
-    devtool: isProduction ? 'source-map' : 'eval-source-map',
+    devtool: isProduction ? 'source-map' : 'eval-cheap-module-source-map',
+    
+    // Enable filesystem caching
+    cache: isProduction ? false : {
+      type: 'filesystem',
+      buildDependencies: {
+        config: [__filename]
+      }
+    },
+
     module: {
       rules: [
         {
@@ -112,12 +162,11 @@ module.exports = [
     output: {
       filename: '[name].js',
       path: path.resolve(__dirname, 'dist'),
-      // Enable chunking for code splitting
       chunkFilename: '[name].[contenthash].js',
     },
     optimization: {
-      // Enable code splitting
-      splitChunks: {
+      // Only use aggressive splitting in production to save dev memory
+      splitChunks: isProduction ? {
         chunks: 'all',
         maxInitialRequests: 25,
         minSize: 20000,
@@ -161,16 +210,13 @@ module.exports = [
           vendor: {
             test: /[\\/]node_modules[\\/]/,
             name(module) {
-              const match = module.context.match(
-                /[\\/]node_modules[\\/](.*?)([\\/]|$)/
-              );
+              const match = module.context.match(/[\\/]node_modules[\\/](.*?)([\\/]|$)/);
               if (!match) return 'vendor.misc';
               const packageName = match[1];
               return `vendor.${packageName.replace('@', '')}`;
             },
             priority: 10,
             chunks: 'all',
-            // Limit the number of vendor chunks
             maxSize: 200000,
           },
           // Common chunks from app code
@@ -182,8 +228,8 @@ module.exports = [
             reuseExistingChunk: true,
           },
         },
-      },
-      // Minimize in production
+      } : false, // Disabled in dev for memory savings
+
       minimize: isProduction,
       minimizer: [
         new TerserPlugin({
@@ -201,9 +247,7 @@ module.exports = [
           extractComments: false,
         }),
       ],
-      // Keep runtime chunk separate for better caching
       runtimeChunk: 'single',
-      // Module IDs for better caching
       moduleIds: 'deterministic',
     },
     plugins: [
@@ -231,18 +275,17 @@ module.exports = [
         Buffer: ['buffer', 'Buffer'],
         process: 'process/browser.js',
       }),
-      // Fix process/browser resolution for ESM modules
       new webpack.NormalModuleReplacementPlugin(
         /^process\/browser$/,
         require.resolve('process/browser.js')
       ),
-      // Bundle analysis (run with ANALYZE=true)
+      // Bundle analysis
       shouldAnalyze && BundleAnalyzerPlugin && new BundleAnalyzerPlugin({
         analyzerMode: 'static',
         reportFilename: 'bundle-report.html',
         openAnalyzer: true,
       }),
-      // Gzip compression for production
+      // Gzip compression
       isProduction && CompressionPlugin && new CompressionPlugin({
         algorithm: 'gzip',
         test: /\.(js|css|html|svg)$/,
@@ -250,7 +293,6 @@ module.exports = [
         minRatio: 0.8,
       }),
     ].filter(Boolean),
-    // Performance hints
     performance: {
       hints: isProduction ? 'warning' : false,
       maxEntrypointSize: 512000,

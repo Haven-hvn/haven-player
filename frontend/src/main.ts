@@ -155,23 +155,58 @@ function spawnBackendProcess(
   baseEnv: NodeJS.ProcessEnv
 ): ChildProcess {
   const isWindows = platform() === 'win32';
+
+
+  if (app.isPackaged) {
+    console.log('🚀 [Production] Using prepared backend executable');
+    
+    // In production, the backend exe should be located at the root of the app resources
+    // (resources/app/haven-backend.exe) or alongside the exe depending on your forge config.
+    // Based on your hook copying it to buildPath, it ends up in resources/app.
+    const backendExePath = path.join(app.getAppPath(), 'haven-backend.exe');
+
+    if (!fs.existsSync(backendExePath)) {
+      console.error(`❌ Backend executable not found at: ${backendExePath}`);
+      // Fallback to trying relative path just in case structure differs
+      // This handles the case where app.isPackaged is true but structure is weird
+    } else {
+      console.log(`✅ Found backend executable at: ${backendExePath}`);
+    }
+
+    // We use 'spawn' instead of 'exec' for the EXE to better manage the process lifecycle
+    const childProcess = spawn(backendExePath, [], {
+      cwd: path.dirname(backendExePath), // Set CWD to where the EXE is
+      env: baseEnv,
+      stdio: 'inherit', // Pipe output so we can see logs
+      windowsHide: false,
+    });
+
+    childProcess.on('error', (error: Error) => {
+      console.error(`❌ Failed to start backend executable: ${error.message}`);
+    });
+
+    return childProcess;
+  }
+
+  // ========================================================================
+  // DEVELOPMENT MODE: Use Python/Uvicorn
+  // ========================================================================
   const uvicornArgs = ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'];
-  
+
   // Activate venv environment (sets PATH, VIRTUAL_ENV, etc.)
   const env = activateVenvEnvironment(venvPath, backendDir, baseEnv);
-  
+
   console.log(`🐍 Starting backend with Python: ${pythonExecutable}`);
   console.log(`📁 Backend directory: ${backendDir}`);
   console.log(`💻 Platform: ${platform()}`);
   if (venvPath) {
     console.log(`🔧 Virtual environment: ${venvPath}`);
   }
-  
+
   let childProcess: ChildProcess;
-  
+
   if (isWindows) {
     const fullCommand = `start "HavenPlayerBackend" cmd /k ""${pythonExecutable}" ${uvicornArgs.join(' ')}"`;
-    
     console.log(`📝 Windows command: ${fullCommand}`);
     console.log(`📁 Working directory: ${backendDir}`);
     
@@ -182,31 +217,28 @@ function spawnBackendProcess(
     }, (error: Error | null, stdout: string, stderr: string) => {
       if (error) {
         console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
-        console.error(`   stdout: ${stdout}`);
-        console.error(`   stderr: ${stderr}`);
+        console.error(` stdout: ${stdout}`);
+        console.error(` stderr: ${stderr}`);
       }
     });
-    
     childProcess = execProcess as ChildProcess;
   } else {
     console.log(`📝 Command: ${pythonExecutable} ${uvicornArgs.join(' ')}`);
-    
     childProcess = spawn(pythonExecutable, uvicornArgs, {
       cwd: backendDir,
       env,
       stdio: 'inherit',
     });
-    
     childProcess.on('error', (error: Error) => {
       console.error(`❌ Failed to start backend process: ${error.message}`);
-      console.error(`   Python executable: ${pythonExecutable}`);
-      console.error(`   Backend directory: ${backendDir}`);
+      console.error(` Python executable: ${pythonExecutable}`);
+      console.error(` Backend directory: ${backendDir}`);
       if (venvPath) {
-        console.error(`   Virtual environment: ${venvPath}`);
+        console.error(` Virtual environment: ${venvPath}`);
       }
     });
   }
-  
+
   return childProcess;
 }
 

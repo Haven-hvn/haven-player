@@ -10,6 +10,7 @@ os.environ['NVIDIA_VISIBLE_DEVICES'] = ''
 os.environ['DISABLE_HWACCEL'] = '1'
 
 import logging
+import sys
 from pathlib import Path
 import platform
 from logging.handlers import RotatingFileHandler
@@ -379,7 +380,6 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    import sys
 
     # Configure logging to show immediately on Windows
     logging.basicConfig(

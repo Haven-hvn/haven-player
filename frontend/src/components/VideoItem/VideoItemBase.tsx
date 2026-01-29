@@ -29,6 +29,7 @@ import {
 import { Video, Timestamp } from '@/types/video';
 import type { IpfsGatewayConfig } from '@/types/playback';
 import { buildIpfsGatewayUrl } from '@/services/playbackResolver';
+import { liquidGlassTokens } from '@/styles/liquidGlassTheme';
 
 // Types
 export type AnalysisStatus = 'pending' | 'analyzing' | 'completed' | 'error' | 'downloading';
@@ -364,8 +365,8 @@ export const VideoItemContextMenu: React.FC<VideoItemContextMenuProps> = ({
       slotProps={{
         paper: {
           sx: {
-            backgroundColor: '#FFFFFF',
-            border: '1px solid #F0F0F0',
+            backgroundColor: liquidGlassTokens.canvas.elevated,
+            border: '1px solid rgba(255, 255, 255, 0.08)',
             borderRadius: '12px',
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12)',
             minWidth: 160,
@@ -379,12 +380,12 @@ export const VideoItemContextMenu: React.FC<VideoItemContextMenuProps> = ({
           sx={{
             fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
             fontSize: '14px',
-            color: '#000000',
-            '&:hover': { backgroundColor: '#F5F5F5' },
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+            '&:hover': { backgroundColor: liquidGlassTokens.glass.fillHover },
           }}
         >
           <ListItemIcon>
-            <UploadIcon sx={{ color: '#2196F3', fontSize: 18 }} />
+            <UploadIcon sx={{ color: liquidGlassTokens.neon.cyan, fontSize: 18 }} />
           </ListItemIcon>
           <ListItemText
             primary="Upload to Filecoin"
@@ -404,14 +405,14 @@ export const VideoItemContextMenu: React.FC<VideoItemContextMenuProps> = ({
           sx={{
             fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
             fontSize: '14px',
-            color: '#000000',
-            '&:hover': { backgroundColor: '#F5F5F5' },
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+            '&:hover': { backgroundColor: liquidGlassTokens.glass.fillHover },
           }}
         >
           <ListItemIcon>
             <ContentCopyIcon
               sx={{
-                color: video.share_to_arkiv ? '#FF9800' : '#4CAF50',
+                color: video.share_to_arkiv ? liquidGlassTokens.neon.amber : liquidGlassTokens.neon.success,
                 fontSize: 18,
               }}
             />
@@ -434,12 +435,12 @@ export const VideoItemContextMenu: React.FC<VideoItemContextMenuProps> = ({
           sx={{
             fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
             fontSize: '14px',
-            color: '#000000',
-            '&:hover': { backgroundColor: '#F5F5F5' },
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+            '&:hover': { backgroundColor: liquidGlassTokens.glass.fillHover },
           }}
         >
           <ListItemIcon>
-            <OpenInNewIcon sx={{ color: '#4CAF50', fontSize: 18 }} />
+            <OpenInNewIcon sx={{ color: liquidGlassTokens.neon.success, fontSize: 18 }} />
           </ListItemIcon>
           <ListItemText
             primary="Open Remote (IPFS)"
@@ -459,12 +460,12 @@ export const VideoItemContextMenu: React.FC<VideoItemContextMenuProps> = ({
           sx={{
             fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
             fontSize: '14px',
-            color: '#000000',
-            '&:hover': { backgroundColor: '#F5F5F5' },
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+            '&:hover': { backgroundColor: liquidGlassTokens.glass.fillHover },
           }}
         >
           <ListItemIcon>
-            <ContentCopyIcon sx={{ color: '#2196F3', fontSize: 18 }} />
+            <ContentCopyIcon sx={{ color: liquidGlassTokens.neon.cyan, fontSize: 18 }} />
           </ListItemIcon>
           <ListItemText
             primary="Copy IPFS CID"
@@ -483,12 +484,12 @@ export const VideoItemContextMenu: React.FC<VideoItemContextMenuProps> = ({
         sx={{
           fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
           fontSize: '14px',
-          color: '#FF4D4D',
-          '&:hover': { backgroundColor: '#FFEBEE' },
+          color: liquidGlassTokens.neon.error,
+          '&:hover': { backgroundColor: `${liquidGlassTokens.neon.error}15` },
         }}
       >
         <ListItemIcon>
-          <RemoveIcon sx={{ color: '#FF4D4D', fontSize: 18 }} />
+          <RemoveIcon sx={{ color: liquidGlassTokens.neon.error, fontSize: 18 }} />
         </ListItemIcon>
         <ListItemText
           primary="Remove from list"
@@ -568,7 +569,7 @@ export const AnalysisProgressBar: React.FC<AnalysisProgressBarProps> = ({
         <span
           style={{
             fontSize: '10px',
-            color: '#000000',
+            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
             fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
             fontWeight: 500,
           }}
@@ -579,7 +580,7 @@ export const AnalysisProgressBar: React.FC<AnalysisProgressBarProps> = ({
       <div
         style={{
           height: '4px',
-          backgroundColor: '#F0F0F0',
+          backgroundColor: 'rgba(255, 255, 255, 0.08)',
           borderRadius: '4px',
           overflow: 'hidden',
           position: 'relative',

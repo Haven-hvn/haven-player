@@ -38,6 +38,7 @@ import {
   FiberManualRecord as StatusDotIcon,
   Storage as StorageIcon,
   FilterList as FilterIcon,
+  Extension as PluginIcon,
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import { CircuitSubstrateSimple } from '@/components/LiquidGlass';
@@ -75,6 +76,7 @@ interface SourceNavigatorProps {
   onStateFilterChange: (state: string) => void;
   onRefresh: () => void;
   onSettings: () => void;
+  onPluginConfig?: () => void;
 }
 
 const SourceNavigator: React.FC<SourceNavigatorProps> = ({
@@ -86,6 +88,7 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
   onStateFilterChange,
   onRefresh,
   onSettings,
+  onPluginConfig,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -392,6 +395,14 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
           expanded={isExpanded}
           onClick={onSettings} 
         />
+        {onPluginConfig && (
+          <BottomAction 
+            icon={<PluginIcon />} 
+            label="Plugins" 
+            expanded={isExpanded}
+            onClick={onPluginConfig} 
+          />
+        )}
         <BottomAction 
           icon={<HelpIcon />} 
           label="Help" 

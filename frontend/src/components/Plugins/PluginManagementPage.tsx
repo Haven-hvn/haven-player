@@ -4,10 +4,6 @@ import {
   Typography,
   Button,
   Grid,
-  Card,
-  CardContent,
-  Chip,
-  IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -15,26 +11,17 @@ import {
   TextField,
   Alert,
   CircularProgress,
-  Tooltip,
 } from '@mui/material';
 import {
-  Extension as PluginIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
   CloudDownload as DiscoverIcon,
-  Settings as SettingsIcon,
-  Visibility as ViewSourcesIcon,
-  PlayArrow as LoadIcon,
-  Stop as UnloadIcon,
-  RestartAlt as RestartIcon,
-  CheckCircle as HealthyIcon,
-  Error as ErrorIcon,
-  Sync as SyncIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { usePlugins, usePluginHealth } from '@/hooks/usePlugins';
 import { PluginMetadata, PluginHealth } from '@/types/plugin';
 import { PluginConfigurationModal } from './PluginConfigurationModal';
+import PluginCard from './PluginCard';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 
 // Glass panel styles for Liquid Glass design
@@ -45,17 +32,6 @@ const glassPanelStyles = {
   border: `1px solid ${liquidGlassTokens.glass.border}`,
   borderRadius: liquidGlassTokens.radius.lg,
   boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.5), 0 8px 32px rgba(0, 0, 0, 0.4)`,
-};
-
-// Glass card styles
-const glassCardStyles = {
-  ...glassPanelStyles,
-  transition: `all ${liquidGlassTokens.motion.durationNormal} ${liquidGlassTokens.motion.enter}`,
-  '&:hover': {
-    background: liquidGlassTokens.glass.fillHover,
-    transform: 'translateY(-2px)',
-    boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.5), 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 245, 255, 0.1)`,
-  },
 };
 
 // Glass button styles
@@ -105,82 +81,6 @@ const glassInputStyles = {
   },
   '& .MuiInputBase-input': { color: 'rgba(255, 255, 255, 0.9)' },
   '& .MuiInputBase-input::placeholder': { color: 'rgba(255, 255, 255, 0.4)' },
-};
-
-const PluginCard: React.FC<{
-  plugin: PluginMetadata;
-  health: PluginHealth | undefined;
-  onLoad: () => void;
-  onUnload: () => void;
-  onRestart: () => void;
-  onConfigure: () => void;
-  onViewSources: () => void;
-}> = ({ plugin, health, onLoad, onUnload, onRestart, onConfigure, onViewSources }) => {
-  const getStatusColor = (): string => {
-    if (!plugin.loaded) return 'rgba(255, 255, 255, 0.3)';
-    if (health?.healthy) return liquidGlassTokens.neon.success;
-    return liquidGlassTokens.neon.error;
-  };
-
-  const getStatusBgColor = (): string => {
-    if (!plugin.loaded) return 'rgba(255, 255, 255, 0.05)';
-    if (health?.healthy) return `${liquidGlassTokens.neon.success}15`;
-    return `${liquidGlassTokens.neon.error}15`;
-  };
-
-  const getStatusIcon = () => {
-    if (!plugin.loaded) return <SyncIcon fontSize="small" sx={{ color: 'rgba(255, 255, 255, 0.4)' }} />;
-    if (health?.healthy) return <HealthyIcon fontSize="small" sx={{ color: liquidGlassTokens.neon.success }} />;
-    return <ErrorIcon fontSize="small" sx={{ color: liquidGlassTokens.neon.error }} />;
-  };
-
-  return (
-    <Card sx={{ ...glassCardStyles, height: '100%', display: 'flex', flexDirection: 'column', border: plugin.loaded ? `1px solid ${liquidGlassTokens.neon.success}40` : `1px solid ${liquidGlassTokens.glass.border}` }}>
-      <CardContent sx={{ flexGrow: 1, p: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <Box sx={{ width: 40, height: 40, borderRadius: liquidGlassTokens.radius.sm, background: plugin.loaded ? `${liquidGlassTokens.neon.success}20` : 'rgba(255, 255, 255, 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: plugin.loaded ? `0 0 12px ${liquidGlassTokens.neon.success}30` : 'none' }}>
-              <PluginIcon sx={{ fontSize: 22, color: plugin.loaded ? liquidGlassTokens.neon.success : 'rgba(255, 255, 255, 0.4)' }} />
-            </Box>
-            <Box>
-              <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1rem', color: '#fff' }}>{plugin.name}</Typography>
-              <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>v{plugin.version}</Typography>
-            </Box>
-          </Box>
-          <Tooltip title={health?.healthy ? 'Healthy' : health ? 'Error' : 'Not loaded'}>
-            <Chip icon={getStatusIcon()} label={plugin.loaded ? (health?.healthy ? 'Active' : 'Error') : 'Inactive'} size="small" sx={{ backgroundColor: getStatusBgColor(), color: getStatusColor(), border: `1px solid ${getStatusColor()}40`, '& .MuiChip-label': { fontWeight: 500 } }} />
-          </Tooltip>
-        </Box>
-
-        <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.6)', mb: 2, minHeight: 48 }}>{plugin.description}</Typography>
-
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2 }}>
-          {(plugin.media_types || []).map((type) => (
-            <Chip key={type} label={type?.toUpperCase() || 'UNKNOWN'} size="small" sx={{ backgroundColor: 'rgba(255, 255, 255, 0.05)', color: 'rgba(255, 255, 255, 0.7)', border: `1px solid ${liquidGlassTokens.glass.border}`, fontSize: '0.65rem', fontWeight: 500 }} />
-          ))}
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2, pt: 2, borderTop: `1px solid ${liquidGlassTokens.glass.border}` }}>
-          <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.4)' }}>Priority: {plugin.priority ?? 0}</Typography>
-          <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.2)' }}>•</Typography>
-          <Typography variant="caption" sx={{ color: plugin.enabled ?? true ? liquidGlassTokens.neon.success : 'rgba(255, 255, 255, 0.4)' }}>{plugin.enabled ?? true ? 'Enabled' : 'Disabled'}</Typography>
-        </Box>
-      </CardContent>
-
-      <Box sx={{ p: 2, borderTop: `1px solid ${liquidGlassTokens.glass.border}`, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-        {plugin.loaded ? (
-          <>
-            <Button size="small" variant="outlined" startIcon={<ViewSourcesIcon />} onClick={onViewSources} sx={{ ...glassButtonStyles.secondary, flexGrow: 1, fontSize: '0.75rem' }}>Sources</Button>
-            <Button size="small" variant="outlined" startIcon={<SettingsIcon />} onClick={onConfigure} sx={{ ...glassButtonStyles.secondary, flexGrow: 1, fontSize: '0.75rem' }}>Configure</Button>
-            <Tooltip title="Restart Plugin"><IconButton size="small" onClick={onRestart} sx={{ color: liquidGlassTokens.neon.cyan, '&:hover': { backgroundColor: `${liquidGlassTokens.neon.cyan}15` } }}><RestartIcon fontSize="small" /></IconButton></Tooltip>
-            <Tooltip title="Unload Plugin"><IconButton size="small" onClick={onUnload} sx={{ color: liquidGlassTokens.neon.error, '&:hover': { backgroundColor: `${liquidGlassTokens.neon.error}15` } }}><UnloadIcon fontSize="small" /></IconButton></Tooltip>
-          </>
-        ) : (
-          <Button size="small" variant="contained" startIcon={<LoadIcon />} onClick={onLoad} fullWidth sx={{ ...glassButtonStyles.primary, fontSize: '0.75rem' }}>Load Plugin</Button>
-        )}
-      </Box>
-    </Card>
-  );
 };
 
 const PluginManagementPage: React.FC = () => {
@@ -281,7 +181,16 @@ const PluginManagementPage: React.FC = () => {
         <Grid container spacing={2}>
           {filteredPlugins.map((plugin) => (
             <Grid size={{ xs: 12, sm: 6, md: 4 }} key={plugin.name}>
-              <PluginCard plugin={plugin} health={getHealthForPlugin(plugin.name)} onLoad={() => handleLoadPlugin(plugin)} onUnload={() => handleUnloadPlugin(plugin)} onRestart={() => handleRestartPlugin(plugin)} onConfigure={() => handleConfigurePlugin(plugin)} onViewSources={() => handleViewSources(plugin)} />
+              <PluginCard 
+                plugin={plugin} 
+                health={getHealthForPlugin(plugin.name)} 
+                mode="grid"
+                onLoad={() => handleLoadPlugin(plugin)} 
+                onUnload={() => handleUnloadPlugin(plugin)} 
+                onRestart={() => handleRestartPlugin(plugin)} 
+                onConfigure={() => handleConfigurePlugin(plugin)} 
+                onViewSources={() => handleViewSources(plugin)} 
+              />
             </Grid>
           ))}
         </Grid>

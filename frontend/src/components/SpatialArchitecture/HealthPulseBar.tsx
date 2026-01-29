@@ -41,16 +41,21 @@ import {
   LocalFireDepartment as StreakIcon,
   Stars as PointsIcon,
   FiberManualRecord as StatusDotIcon,
+  Extension as PluginIcon,
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import type { SystemHealth, QueueStats } from '@/types/transformation';
 import type { LayoutMode } from './hooks/useLayoutMode';
+import type { PluginHealth } from '@/types/plugin';
 
 interface HealthPulseBarProps {
   // System state
   systemHealth: SystemHealth;
   queueStats: QueueStats;
   activeRecordingCount: number;
+  
+  // Plugin health
+  pluginHealthStatus?: PluginHealth[];
   
   // Search (filtering, not action)
   searchQuery: string;
@@ -59,16 +64,21 @@ interface HealthPulseBarProps {
   // Mode context
   mode: LayoutMode;
   overheadContent?: string;
+  
+  // Optional callback for opening settings (e.g., when clicking encryption indicator)
+  onOpenSettings?: (tab?: string) => void;
 }
 
 const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
   systemHealth,
   queueStats,
   activeRecordingCount,
+  pluginHealthStatus = [],
   searchQuery,
   onSearchChange,
   mode,
   overheadContent,
+  onOpenSettings,
 }) => {
   const [searchFocused, setSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -230,10 +240,31 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
           status={systemHealth.encryptionEnabled ? 'connected' : 'warning'}
           tooltip={
             systemHealth.encryptionEnabled
-              ? 'Content encryption enabled'
-              : 'Encryption not configured'
+              ? 'Content encryption enabled (Lit Protocol)'
+              : 'Encryption not configured - Configure in Settings > Filecoin'
           }
+          onClick={() => {
+            // Click to open settings to Filecoin tab
+            if (!systemHealth.encryptionEnabled && onOpenSettings) {
+              onOpenSettings('filecoin');
+            }
+          }}
+          clickable={!systemHealth.encryptionEnabled && !!onOpenSettings}
         />
+
+        {/* Plugin Health Status */}
+        {pluginHealthStatus.length > 0 && (
+          <HealthIndicator
+            icon={<PluginIcon />}
+            label="Plugins"
+            status={pluginHealthStatus.some(h => !h.healthy) ? 'warning' : 'connected'}
+            tooltip={
+              pluginHealthStatus.some(h => !h.healthy)
+                ? `${pluginHealthStatus.filter(h => !h.healthy).length} of ${pluginHealthStatus.length} plugins unhealthy`
+                : `${pluginHealthStatus.length} plugins healthy`
+            }
+          />
+        )}
       </Box>
 
       {/* Center - Search bar (filtering, not action) */}
@@ -432,6 +463,8 @@ interface HealthIndicatorProps {
   label: string;
   status: 'connected' | 'warning' | 'disconnected';
   tooltip: string;
+  onClick?: () => void;
+  clickable?: boolean;
 }
 
 const HealthIndicator: React.FC<HealthIndicatorProps> = ({
@@ -439,6 +472,8 @@ const HealthIndicator: React.FC<HealthIndicatorProps> = ({
   label,
   status,
   tooltip,
+  onClick,
+  clickable,
 }) => {
   const statusColors = {
     connected: liquidGlassTokens.neon.success,
@@ -455,8 +490,18 @@ const HealthIndicator: React.FC<HealthIndicatorProps> = ({
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          cursor: 'default',
+          cursor: clickable ? 'pointer' : 'default',
+          transition: 'all 0.2s ease',
+          ...(clickable && {
+            '&:hover': {
+              opacity: 0.8,
+              '& .MuiTypography-root': {
+                textDecoration: 'underline',
+              },
+            },
+          }),
         }}
+        onClick={onClick}
       >
         <StatusDotIcon
           sx={{

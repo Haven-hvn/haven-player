@@ -574,19 +574,19 @@ const MainApp: React.FC = () => {
       sx={{
         display: "flex",
         height: "100vh",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: liquidGlassTokens.canvas.base,
         borderRadius: "16px",
         overflow: "hidden",
         boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
         margin: "8px",
-        border: "1px solid #F0F0F0",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
       }}
     >
       {/* Sidebar */}
       <Box
         sx={{
-          background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-          borderRight: "1px solid #E8E8E8",
+          background: liquidGlassTokens.canvas.elevated,
+          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
         }}
       >
         <Sidebar onRefresh={handleRefresh} />
@@ -598,14 +598,14 @@ const MainApp: React.FC = () => {
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
-          backgroundColor: "#FFFFFF",
+          backgroundColor: liquidGlassTokens.canvas.base,
         }}
       >
         {/* Header */}
         <Box
           sx={{
-            borderBottom: "1px solid #F0F0F0",
-            backgroundColor: "#FAFAFA",
+            borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+            backgroundColor: liquidGlassTokens.canvas.elevated,
             backdropFilter: "blur(8px)",
           }}
         >
@@ -624,7 +624,7 @@ const MainApp: React.FC = () => {
         <Box
           sx={{
             flexGrow: 1,
-            backgroundColor: "#FFFFFF",
+            backgroundColor: liquidGlassTokens.canvas.base,
             padding: "16px",
           }}
         >
@@ -779,28 +779,28 @@ const MyVideosPage: React.FC = () => {
       sx={{
         display: "flex",
         height: "100vh",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: liquidGlassTokens.canvas.base,
         borderRadius: "16px",
         overflow: "hidden",
         boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
         margin: "8px",
-        border: "1px solid #F0F0F0",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
       }}
     >
       <Box
         sx={{
-          background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-          borderRight: "1px solid #E8E8E8",
+          background: liquidGlassTokens.canvas.elevated,
+          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
         }}
       >
         <Sidebar />
       </Box>
 
-      <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+      <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
         <Box
           sx={{
             flexGrow: 1,
-            backgroundColor: "#FFFFFF",
+            backgroundColor: liquidGlassTokens.canvas.base,
             padding: "16px",
             height: "100%",
             overflow: "auto",
@@ -906,28 +906,28 @@ const PumpFunStreamsWrapper: React.FC = () => {
       sx={{
         display: "flex",
         height: "100vh",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: liquidGlassTokens.canvas.base,
         borderRadius: "16px",
         overflow: "hidden",
         boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
         margin: "8px",
-        border: "1px solid #F0F0F0",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
       }}
     >
       <Box
         sx={{
-          background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-          borderRight: "1px solid #E8E8E8",
+          background: liquidGlassTokens.canvas.elevated,
+          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
         }}
       >
         <Sidebar />
       </Box>
 
-      <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+      <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
         <Box
           sx={{
             flexGrow: 1,
-            backgroundColor: "#FFFFFF",
+            backgroundColor: liquidGlassTokens.canvas.base,
             padding: "16px",
             height: "100%",
             overflow: "auto",
@@ -969,28 +969,28 @@ const OpenRingDevicesWrapper: React.FC = () => {
       sx={{
         display: "flex",
         height: "100vh",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: liquidGlassTokens.canvas.base,
         borderRadius: "16px",
         overflow: "hidden",
         boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
         margin: "8px",
-        border: "1px solid #F0F0F0",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
       }}
     >
       <Box
         sx={{
-          background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-          borderRight: "1px solid #E8E8E8",
+          background: liquidGlassTokens.canvas.elevated,
+          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
         }}
       >
         <Sidebar />
       </Box>
 
-      <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+      <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
         <Box
           sx={{
             flexGrow: 1,
-            backgroundColor: "#FFFFFF",
+            backgroundColor: liquidGlassTokens.canvas.base,
             padding: "16px",
             height: "100%",
             overflow: "auto",
@@ -1090,28 +1090,28 @@ const App: React.FC = () => {
                     sx={{
                       display: "flex",
                       height: "100vh",
-                      backgroundColor: "#FFFFFF",
+                      backgroundColor: liquidGlassTokens.canvas.base,
                       borderRadius: "16px",
                       overflow: "hidden",
                       boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
                       margin: "8px",
-                      border: "1px solid #F0F0F0",
+                      border: "1px solid rgba(255, 255, 255, 0.08)",
                     }}
                   >
                     <Box
                       sx={{
-                        background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-                        borderRight: "1px solid #E8E8E8",
+                        background: liquidGlassTokens.canvas.elevated,
+                        borderRight: "1px solid rgba(255, 255, 255, 0.08)",
                       }}
                     >
                       <Sidebar />
                     </Box>
 
-                    <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                    <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
                       <Box
                         sx={{
                           flexGrow: 1,
-                          backgroundColor: "#FFFFFF",
+                          backgroundColor: liquidGlassTokens.canvas.base,
                           padding: "16px",
                           height: "100%",
                           overflow: "auto",
@@ -1130,28 +1130,28 @@ const App: React.FC = () => {
                     sx={{
                       display: "flex",
                       height: "100vh",
-                      backgroundColor: "#FFFFFF",
+                      backgroundColor: liquidGlassTokens.canvas.base,
                       borderRadius: "16px",
                       overflow: "hidden",
                       boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
                       margin: "8px",
-                      border: "1px solid #F0F0F0",
+                      border: "1px solid rgba(255, 255, 255, 0.08)",
                     }}
                   >
                     <Box
                       sx={{
-                        background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-                        borderRight: "1px solid #E8E8E8",
+                        background: liquidGlassTokens.canvas.elevated,
+                        borderRight: "1px solid rgba(255, 255, 255, 0.08)",
                       }}
                     >
                       <Sidebar />
                     </Box>
 
-                    <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                    <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
                       <Box
                         sx={{
                           flexGrow: 1,
-                          backgroundColor: "#FFFFFF",
+                          backgroundColor: liquidGlassTokens.canvas.base,
                           padding: "16px",
                           height: "100%",
                           overflow: "auto",
@@ -1170,28 +1170,28 @@ const App: React.FC = () => {
                     sx={{
                       display: "flex",
                       height: "100vh",
-                      backgroundColor: "#FFFFFF",
+                      backgroundColor: liquidGlassTokens.canvas.base,
                       borderRadius: "16px",
                       overflow: "hidden",
                       boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
                       margin: "8px",
-                      border: "1px solid #F0F0F0",
+                      border: "1px solid rgba(255, 255, 255, 0.08)",
                     }}
                   >
                     <Box
                       sx={{
-                        background: "linear-gradient(180deg, #FAFAFA 0%, #F7F7F7 100%)",
-                        borderRight: "1px solid #E8E8E8",
+                        background: liquidGlassTokens.canvas.elevated,
+                        borderRight: "1px solid rgba(255, 255, 255, 0.08)",
                       }}
                     >
                       <Sidebar />
                     </Box>
 
-                    <Box sx={{ flexGrow: 1, backgroundColor: "#FFFFFF" }}>
+                    <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
                       <Box
                         sx={{
                           flexGrow: 1,
-                          backgroundColor: "#FFFFFF",
+                          backgroundColor: liquidGlassTokens.canvas.base,
                           padding: "16px",
                           height: "100%",
                           overflow: "auto",

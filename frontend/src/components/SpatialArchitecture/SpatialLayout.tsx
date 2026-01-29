@@ -28,6 +28,7 @@ import { useNavigate } from 'react-router-dom';
 import { liquidGlassTokens } from '@/styles/liquidGlassTheme';
 import { CircuitSubstrate } from '@/components/LiquidGlass';
 import { useSettingsNavigation } from '@/context/SettingsNavigationContext';
+import { useState } from 'react';
 
 import SourceNavigator from './SourceNavigator';
 import HealthPulseBar from './HealthPulseBar';
@@ -37,7 +38,12 @@ import DetailPanel from './DetailPanel';
 import { useLayoutMode } from './hooks/useLayoutMode';
 
 import { useTransformationPipeline } from '@/hooks/useTransformationPipeline';
+import { usePlugins, usePluginHealth, usePluginSources } from '@/hooks/usePlugins';
 import type { TransformationItem, TransformationState } from '@/types/transformation';
+import type { PluginMetadata, PluginHealth, MediaSource } from '@/types/plugin';
+
+import PluginSelectionPopup from '@/components/Plugins/PluginSelectionPopup';
+import PluginConfigPopup from '@/components/Plugins/PluginConfigPopup';
 
 interface SpatialLayoutProps {
   onUploadVideo?: (item: TransformationItem) => void;
@@ -70,6 +76,32 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     hideMargin,
     setGridDensity,
   } = useLayoutMode();
+
+  // Plugin state
+  const {
+    plugins,
+    loading: pluginsLoading,
+    refresh: refreshPlugins,
+    loadPlugin,
+    unloadPlugin,
+    restartPlugin,
+  } = usePlugins();
+  
+  const { healthStatus } = usePluginHealth();
+  
+  const [pluginSelectionPopupOpen, setPluginSelectionPopupOpen] = useState(false);
+  const [pluginConfigPopupOpen, setPluginConfigPopupOpen] = useState(false);
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginMetadata | null>(null);
+  
+  // Plugin sources state
+  const [detailPanelContentType, setDetailPanelContentType] = useState<'video' | 'plugin-sources'>('video');
+  const [detailPanelPluginName, setDetailPanelPluginName] = useState<string | undefined>(undefined);
+  const {
+    sources: pluginSources,
+    loading: pluginSourcesLoading,
+    error: pluginSourcesError,
+    refreshSources: refreshPluginSources,
+  } = usePluginSources(detailPanelPluginName);
 
   // Transformation pipeline state
   const {
@@ -116,14 +148,57 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     }
   }, [onUploadVideo]);
 
-  const handleCloseDetailPanel = useCallback(() => {
-    hideMargin();
-    clearSelection();
-  }, [hideMargin, clearSelection]);
+
 
   const handleSettingsClick = useCallback(() => {
     openSettings();
   }, [openSettings]);
+
+  // Plugin handlers
+  const handlePluginConfigClick = useCallback(() => {
+    setPluginSelectionPopupOpen(true);
+  }, []);
+
+  const handlePluginSelect = useCallback((plugin: PluginMetadata) => {
+    setSelectedPlugin(plugin);
+    setPluginSelectionPopupOpen(false);
+    setPluginConfigPopupOpen(true);
+  }, []);
+
+  const handleClosePluginPopups = useCallback(() => {
+    setPluginSelectionPopupOpen(false);
+    setPluginConfigPopupOpen(false);
+    setSelectedPlugin(null);
+  }, []);
+
+  const handleLoadPlugin = useCallback(async (plugin: PluginMetadata) => {
+    await loadPlugin(plugin.name);
+  }, [loadPlugin]);
+
+  const handleUnloadPlugin = useCallback(async (plugin: PluginMetadata) => {
+    await unloadPlugin(plugin.name);
+  }, [unloadPlugin]);
+
+  const handleRestartPlugin = useCallback(async (plugin: PluginMetadata) => {
+    await restartPlugin(plugin.name);
+  }, [restartPlugin]);
+
+  const handleConfigSaved = useCallback(() => {
+    refreshPlugins();
+  }, [refreshPlugins]);
+
+  const handleViewPluginSources = useCallback((plugin: PluginMetadata) => {
+    setDetailPanelContentType('plugin-sources');
+    setDetailPanelPluginName(plugin.name);
+    showMargin();
+  }, [showMargin]);
+
+  const handleCloseDetailPanel = useCallback(() => {
+    hideMargin();
+    clearSelection();
+    setDetailPanelContentType('video');
+    setDetailPanelPluginName(undefined);
+  }, [hideMargin, clearSelection]);
 
   // Dock handlers
   const handleAddVideo = useCallback(() => {
@@ -208,6 +283,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
         onStateFilterChange={(state: string) => setStateFilter(state as "all" | TransformationState)}
         onRefresh={refresh}
         onSettings={handleSettingsClick}
+        onPluginConfig={handlePluginConfigClick}
       />
 
       {/* Main Content Area */}
@@ -226,6 +302,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
           systemHealth={systemHealth}
           queueStats={queueStats}
           activeRecordingCount={activeRecordingCount}
+          pluginHealthStatus={healthStatus}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           mode={mode}
@@ -264,6 +341,12 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
           {/* Zone 5: Detail Panel (Right Breathing Margin) */}
           <DetailPanel
             item={selectedItem}
+            contentType={detailPanelContentType}
+            pluginName={detailPanelPluginName}
+            pluginSources={pluginSources}
+            pluginSourcesLoading={pluginSourcesLoading}
+            pluginSourcesError={pluginSourcesError}
+            onRefreshPluginSources={refreshPluginSources}
             visible={config.marginVisible}
             preview={config.marginPreview}
             width={config.marginWidth}
@@ -301,6 +384,32 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
           onDensityChange={setGridDensity}
         />
       </Box>
+
+      {/* Plugin Selection Popup */}
+      <PluginSelectionPopup
+        open={pluginSelectionPopupOpen}
+        plugins={plugins}
+        healthStatus={healthStatus}
+        loading={pluginsLoading}
+        onClose={handleClosePluginPopups}
+        onPluginSelect={handlePluginSelect}
+        onLoadPlugin={handleLoadPlugin}
+        onUnloadPlugin={handleUnloadPlugin}
+        onRestartPlugin={handleRestartPlugin}
+      />
+
+      {/* Plugin Configuration Popup */}
+      <PluginConfigPopup
+        open={pluginConfigPopupOpen}
+        plugin={selectedPlugin}
+        health={selectedPlugin ? healthStatus.find(h => h.plugin_name === selectedPlugin.name) : undefined}
+        onClose={handleClosePluginPopups}
+        onLoadPlugin={handleLoadPlugin}
+        onUnloadPlugin={handleUnloadPlugin}
+        onRestartPlugin={handleRestartPlugin}
+        onViewSources={handleViewPluginSources}
+        onConfigSaved={handleConfigSaved}
+      />
     </Box>
   );
 };

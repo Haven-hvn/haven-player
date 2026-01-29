@@ -114,52 +114,40 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
     streak: 0,
   });
 
-  // Check backend connection
-  useEffect(() => {
-    const checkBackend = async () => {
-      try {
-        const response = await fetch('http://localhost:8000/api/health');
-        setSystemHealth((prev: SystemHealth) => ({
-          ...prev,
-          backendConnected: response.ok
-        }));
-      } catch {
-        setSystemHealth((prev: SystemHealth) => ({
-          ...prev,
-          backendConnected: false
-        }));
+  // Fetch system health from backend API
+  const fetchSystemHealth = useCallback(async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/health');
+      if (!response.ok) {
+        throw new Error('Health check failed');
       }
-    };
+      
+      const data = await response.json();
+      
+      setSystemHealth({
+        backendConnected: data.backend_connected,
+        walletConnected: data.wallet_connected,
+        walletAddress: data.wallet_address,
+        encryptionEnabled: data.encryption_enabled,
+        points: data.points,
+        streak: data.streak,
+      });
+      
+    } catch (error) {
+      console.error('Failed to fetch system health:', error);
+      setSystemHealth((prev: SystemHealth) => ({
+        ...prev,
+        backendConnected: false,
+      }));
+    }
+  }, []);
 
-    checkBackend();
-    const interval = setInterval(checkBackend, 30000);
+  // Poll health status periodically
+  useEffect(() => {
+    fetchSystemHealth();
+    const interval = setInterval(fetchSystemHealth, 30000); // Every 30 seconds
     return () => clearInterval(interval);
-  }, []);
-
-  // Load wallet status from Electron
-  useEffect(() => {
-    const loadWalletStatus = async () => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const electron = require('electron');
-        const { ipcRenderer } = electron;
-        const config = await ipcRenderer.invoke('get-filecoin-config');
-        if (config?.privateKey) {
-          // Get wallet address from private key
-          // This is a simplified check - in reality we'd derive the address
-          setSystemHealth((prev: SystemHealth) => ({
-            ...prev,
-            walletConnected: true,
-            walletAddress: config.walletAddress || 'Connected'
-          }));
-        }
-      } catch (error) {
-        console.error('Failed to load wallet status:', error);
-      }
-    };
-
-    loadWalletStatus();
-  }, []);
+  }, [fetchSystemHealth]);
 
   // Determine transformation state from video data
   const getTransformationState = useCallback((video: Video): TransformationState => {

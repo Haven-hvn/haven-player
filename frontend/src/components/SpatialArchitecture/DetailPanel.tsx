@@ -45,10 +45,13 @@ import {
   Storage as StorageIcon,
   Sync as SyncIcon,
   Analytics as AnalyticsIcon,
+  Extension as PluginIcon,
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import type { TransformationItem, TransformationState } from '@/types/transformation';
 import { STATE_COLORS } from '@/hooks/useTransformationPipeline';
+import PluginSourcesPanel from '@/components/Plugins/PluginSourcesPanel';
+import { MediaSource } from '@/types/plugin';
 
 // State labels for display
 const STATE_LABELS: Record<TransformationState, string> = {
@@ -67,6 +70,14 @@ interface DetailPanelProps {
   // Content
   item: TransformationItem | null;
   
+  // Plugin sources content
+  contentType?: 'video' | 'plugin-sources';
+  pluginName?: string;
+  pluginSources?: MediaSource[];
+  pluginSourcesLoading?: boolean;
+  pluginSourcesError?: string | null;
+  onRefreshPluginSources?: () => void;
+  
   // Visibility state (controlled by useLayoutMode)
   visible: boolean;
   preview: boolean;  // Preview mode (hover) vs full mode (click)
@@ -81,6 +92,12 @@ interface DetailPanelProps {
 
 const DetailPanel: React.FC<DetailPanelProps> = ({
   item,
+  contentType = 'video',
+  pluginName,
+  pluginSources = [],
+  pluginSourcesLoading = false,
+  pluginSourcesError = null,
+  onRefreshPluginSources,
   visible,
   preview,
   width,
@@ -125,9 +142,92 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     navigator.clipboard.writeText(text);
   };
 
-  // Don't render anything if not visible and no item
-  if (!visible || !item) {
+  // Don't render anything if not visible
+  if (!visible) {
     return null;
+  }
+
+  // Don't render if no content
+  if (contentType === 'video' && !item) {
+    return null;
+  }
+
+  if (contentType === 'plugin-sources' && !pluginName) {
+    return null;
+  }
+
+  // Render plugin sources panel
+  if (contentType === 'plugin-sources') {
+    return (
+      <Box
+        ref={panelRef}
+        sx={{
+          width: width,
+          height: '100%',
+          background: liquidGlassTokens.canvas.base,
+          borderLeft: `1px solid rgba(255, 255, 255, 0.06)`,
+          backdropFilter: 'blur(20px)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          transition: `width ${liquidGlassTokens.motion.durationNormal} ${liquidGlassTokens.motion.enter}`,
+          boxShadow: visible ? '-8px 0 32px rgba(0, 0, 0, 0.2)' : 'none',
+        }}
+      >
+        {/* Header */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            p: preview ? 2 : 3,
+            borderBottom: `1px solid rgba(255, 255, 255, 0.06)`,
+            minHeight: preview ? 48 : 56,
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <PluginIcon
+              sx={{
+                color: liquidGlassTokens.neon.cyan,
+                fontSize: preview ? 18 : 20,
+              }}
+            />
+            <Typography
+              sx={{
+                fontSize: preview ? '14px' : '16px',
+                fontWeight: 600,
+                color: 'rgba(255, 255, 255, 0.95)',
+              }}
+            >
+              Plugin Sources
+            </Typography>
+          </Box>
+          <IconButton
+            onClick={onClose}
+            size="small"
+            sx={{
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+              '&:hover': {
+                color: 'rgba(255, 255, 255, 0.9)',
+              },
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+
+        {/* Content */}
+        <Box sx={{ flex: 1, overflow: 'hidden', p: preview ? 2 : 3 }}>
+          <PluginSourcesPanel
+            pluginName={pluginName!}
+            sources={pluginSources}
+            loading={pluginSourcesLoading}
+            error={pluginSourcesError}
+            onRefresh={onRefreshPluginSources || (() => {})}
+          />
+        </Box>
+      </Box>
+    );
   }
 
   const stateColor = STATE_COLORS[item.state];

@@ -43,6 +43,7 @@ import {
   buildIpfsGatewayUrl,
 } from "@/services/playbackResolver";
 import { loadGatewayConfig } from "@/services/playbackConfig";
+import { liquidGlassTokens } from "@/styles/liquidGlassTheme";
 
 interface AnalysisSegment {
   start: number;
@@ -306,15 +307,15 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
         sx={{
           position: "relative",
           borderRadius: "16px",
-          border: "1px solid #F0F0F0",
-          backgroundColor: "#FFFFFF",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          backgroundColor: liquidGlassTokens.canvas.elevated,
           cursor: "pointer",
           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
           willChange: isHovered ? "transform, box-shadow" : "auto",
           "&:hover": {
             boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
             transform: "translateY(-4px)",
-            borderColor: "#E0E0E0",
+            borderColor: "rgba(255, 255, 255, 0.12)",
           },
           overflow: "visible",
           contain: "layout style paint",
@@ -349,7 +350,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
             sx={{
               width: "100%",
               height: "100%",
-              backgroundColor: "#F7F7F7",
+              backgroundColor: liquidGlassTokens.canvas.deep,
               display: video.thumbnail_path ? "none" : "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -395,12 +396,12 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
               <IconButton
                 onClick={handlePlayClick}
                 sx={{
-                  backgroundColor: "#FFFFFF",
-                  color: "#000000",
+                  backgroundColor: liquidGlassTokens.glass.fill,
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
                   width: 56,
                   height: 56,
                   "&:hover": {
-                    backgroundColor: "#F5F5F5",
+                    backgroundColor: liquidGlassTokens.glass.fillHover,
                     transform: "scale(1.1)",
                   },
                   transition: "all 0.2s ease-in-out",
@@ -466,7 +467,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
                   height: "100%",
                   backgroundColor: "transparent",
                   "& .MuiLinearProgress-bar": {
-                    backgroundColor: "#F9A825",
+                    backgroundColor: liquidGlassTokens.neon.amber,
                   },
                 }}
               />
@@ -484,7 +485,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
                 fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
                 fontWeight: 500,
                 fontSize: "14px",
-                color: "#000000",
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
                 lineHeight: 1.4,
                 mb: 0.5,
                 display: "-webkit-box",
@@ -534,7 +535,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
               <Typography
                 sx={{
                   fontSize: "10px",
-                  color: "#000000",
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
                   fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
                   fontWeight: 500,
                 }}
@@ -545,7 +546,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
             <Box
               sx={{
                 height: 4,
-                backgroundColor: "#F0F0F0",
+                backgroundColor: "rgba(255, 255, 255, 0.08)",
                 borderRadius: "4px",
                 overflow: "hidden",
                 position: "relative",
@@ -559,7 +560,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
                     left: `${(segment.start / video.duration) * 100}%`,
                     width: `${((segment.end - segment.start) / video.duration) * 100}%`,
                     height: "100%",
-                    backgroundColor: segment.type === "analyzed" ? "#4CAF50" : "#E0E0E0",
+                    backgroundColor: segment.type === "analyzed" ? liquidGlassTokens.neon.success : "rgba(255, 255, 255, 0.1)",
                     opacity: segment.confidence ? Math.max(0.7, segment.confidence) : 1,
                   }}
                 />
@@ -593,7 +594,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
                 <Typography
                   sx={{
                     fontSize: "10px",
-                    color: uploadStatus.status === 'error' ? "#FF4D4D" : uploadStatus.status === 'completed' ? "#4CAF50" : "#000000",
+                    color: uploadStatus.status === 'error' ? liquidGlassTokens.neon.error : uploadStatus.status === 'completed' ? liquidGlassTokens.neon.success : `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
                     fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
                     fontWeight: 500,
                   }}
@@ -604,7 +605,7 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
               <Box
                 sx={{
                   height: 4,
-                  backgroundColor: "#F0F0F0",
+                  backgroundColor: "rgba(255, 255, 255, 0.08)",
                   borderRadius: "4px",
                   overflow: "hidden",
                   position: "relative",
@@ -618,10 +619,10 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
                     height: "100%",
                     backgroundColor:
                       uploadStatus.status === 'error'
-                        ? "#FF4D4D"
+                        ? liquidGlassTokens.neon.error
                         : uploadStatus.status === 'completed'
-                        ? "#4CAF50"
-                        : "#2196F3",
+                        ? liquidGlassTokens.neon.success
+                        : liquidGlassTokens.neon.cyan,
                     transition: "width 0.3s ease-in-out",
                   }}
                 />
@@ -776,12 +777,12 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
                     handleContextMenu(e);
                   }}
                   sx={{
-                    color: "#6B6B6B",
+                    color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
                     width: 28,
                     height: 28,
                     "&:hover": {
-                      backgroundColor: "#F5F5F5",
-                      color: "#000000",
+                      backgroundColor: liquidGlassTokens.glass.fillHover,
+                      color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
                     },
                     transition: "all 0.2s ease-in-out",
                   }}
@@ -807,8 +808,8 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
         slotProps={{
           paper: {
             sx: {
-              backgroundColor: "#FFFFFF",
-              border: "1px solid #F0F0F0",
+              backgroundColor: liquidGlassTokens.canvas.elevated,
+              border: "1px solid rgba(255, 255, 255, 0.08)",
               borderRadius: "12px",
               boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
               minWidth: 160,
@@ -822,12 +823,12 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
             sx={{
               fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
               fontSize: "14px",
-              color: "#000000",
-              "&:hover": { backgroundColor: "#F5F5F5" },
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+              "&:hover": { backgroundColor: liquidGlassTokens.glass.fillHover },
             }}
           >
             <ListItemIcon>
-              <UploadIcon sx={{ color: "#2196F3", fontSize: 18 }} />
+              <UploadIcon sx={{ color: liquidGlassTokens.neon.cyan, fontSize: 18 }} />
             </ListItemIcon>
             <ListItemText
               primary="Upload to Filecoin"
@@ -847,12 +848,12 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
             sx={{
               fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
               fontSize: "14px",
-              color: "#000000",
-              "&:hover": { backgroundColor: "#F5F5F5" },
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+              "&:hover": { backgroundColor: liquidGlassTokens.glass.fillHover },
             }}
           >
             <ListItemIcon>
-              <OpenInNewIcon sx={{ color: "#4CAF50", fontSize: 18 }} />
+              <OpenInNewIcon sx={{ color: liquidGlassTokens.neon.success, fontSize: 18 }} />
             </ListItemIcon>
             <ListItemText
               primary="Open Remote (IPFS)"
@@ -872,12 +873,12 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
             sx={{
               fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
               fontSize: "14px",
-              color: "#000000",
-              "&:hover": { backgroundColor: "#F5F5F5" },
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+              "&:hover": { backgroundColor: liquidGlassTokens.glass.fillHover },
             }}
           >
             <ListItemIcon>
-              <ContentCopyIcon sx={{ color: "#2196F3", fontSize: 18 }} />
+              <ContentCopyIcon sx={{ color: liquidGlassTokens.neon.cyan, fontSize: 18 }} />
             </ListItemIcon>
             <ListItemText
               primary="Copy IPFS CID"
@@ -896,12 +897,12 @@ const VideoAnalysisItem = React.memo<VideoAnalysisItemProps>(({
           sx={{
             fontFamily: '"Inter", "Segoe UI", "Arial", sans-serif',
             fontSize: "14px",
-            color: "#FF4D4D",
-            "&:hover": { backgroundColor: "#FFEBEE" },
+            color: liquidGlassTokens.neon.error,
+            "&:hover": { backgroundColor: `${liquidGlassTokens.neon.error}15` },
           }}
         >
           <ListItemIcon>
-            <RemoveIcon sx={{ color: "#FF4D4D", fontSize: 18 }} />
+            <RemoveIcon sx={{ color: liquidGlassTokens.neon.error, fontSize: 18 }} />
           </ListItemIcon>
           <ListItemText
             primary="Remove from list"
@@ -1014,15 +1015,15 @@ const VideoListItem = React.memo<{
           display: "flex",
           alignItems: "center",
           p: 2,
-          backgroundColor: "#FFFFFF",
-          border: "1px solid #F0F0F0",
+          backgroundColor: liquidGlassTokens.canvas.elevated,
+          border: "1px solid rgba(255, 255, 255, 0.08)",
           borderRadius: "12px",
           cursor: "pointer",
           transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
           contain: "layout style paint",
           "&:hover": {
-            backgroundColor: "#F7F7F7",
-            borderColor: "#E0E0E0",
+            backgroundColor: liquidGlassTokens.glass.fillHover,
+            borderColor: "rgba(255, 255, 255, 0.12)",
             transform: "translateY(-1px)",
             boxShadow: "0 4px 16px rgba(0, 0, 0, 0.08)",
           },
@@ -1038,8 +1039,8 @@ const VideoListItem = React.memo<{
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
           ) : (
-            <Box sx={{ width: "100%", height: "100%", backgroundColor: "#F7F7F7", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <VideoIcon sx={{ fontSize: 24, color: "#6B6B6B" }} />
+            <Box sx={{ width: "100%", height: "100%", backgroundColor: liquidGlassTokens.canvas.deep, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <VideoIcon sx={{ fontSize: 24, color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})` }} />
             </Box>
           )}
           {isHovered && (
@@ -1062,7 +1063,7 @@ const VideoListItem = React.memo<{
                   e.stopPropagation();
                   analysisStatus === "completed" ? onPlay(video) : onAnalyze(video);
                 }}
-                sx={{ backgroundColor: "#FFFFFF", color: "#000000", width: 32, height: 32, "&:hover": { backgroundColor: "#F5F5F5" } }}
+                sx={{ backgroundColor: liquidGlassTokens.glass.fill, color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`, width: 32, height: 32, "&:hover": { backgroundColor: liquidGlassTokens.glass.fillHover } }}
               >
                 {analysisStatus === "completed" ? <PlayIcon sx={{ fontSize: 18 }} /> : <AnalyzeIcon sx={{ fontSize: 16 }} />}
               </IconButton>
@@ -1072,13 +1073,13 @@ const VideoListItem = React.memo<{
 
         {/* Content */}
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography sx={{ fontFamily: '"Inter", sans-serif', fontWeight: 500, fontSize: "16px", color: "#000000", mb: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <Typography sx={{ fontFamily: '"Inter", sans-serif', fontWeight: 500, fontSize: "16px", color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`, mb: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {video.title}
           </Typography>
-          <Typography sx={{ fontFamily: '"Inter", sans-serif', fontSize: "12px", color: "#6B6B6B" }}>
+          <Typography sx={{ fontFamily: '"Inter", sans-serif', fontSize: "12px", color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})` }}>
             {formatDuration(video.duration)} • {timestamps.length} timestamp{timestamps.length !== 1 ? "s" : ""}
           </Typography>
-          <Box sx={{ mt: 1, height: 3, backgroundColor: "#F0F0F0", borderRadius: "2px", overflow: "hidden", position: "relative", maxWidth: 200 }}>
+          <Box sx={{ mt: 1, height: 3, backgroundColor: "rgba(255, 255, 255, 0.08)", borderRadius: "2px", overflow: "hidden", position: "relative", maxWidth: 200 }}>
             {segments.map((segment, idx) => (
               <Box
                 key={idx}
@@ -1087,7 +1088,7 @@ const VideoListItem = React.memo<{
                   left: `${(segment.start / video.duration) * 100}%`,
                   width: `${((segment.end - segment.start) / video.duration) * 100}%`,
                   height: "100%",
-                  backgroundColor: segment.type === "analyzed" ? "#4CAF50" : "#E0E0E0",
+                  backgroundColor: segment.type === "analyzed" ? liquidGlassTokens.neon.success : "rgba(255, 255, 255, 0.1)",
                 }}
               />
             ))}
@@ -1117,8 +1118,8 @@ const VideoListItem = React.memo<{
         </Box>
 
         {analysisStatus === "analyzing" && (
-          <Box sx={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 2, backgroundColor: "rgba(249, 168, 37, 0.2)" }}>
-            <LinearProgress variant="determinate" value={jobProgress} sx={{ height: "100%", backgroundColor: "transparent", "& .MuiLinearProgress-bar": { backgroundColor: "#F9A825" } }} />
+          <Box sx={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 2, backgroundColor: `${liquidGlassTokens.neon.amber}20` }}>
+            <LinearProgress variant="determinate" value={jobProgress} sx={{ height: "100%", backgroundColor: "transparent", "& .MuiLinearProgress-bar": { backgroundColor: liquidGlassTokens.neon.amber } }} />
           </Box>
         )}
       </Box>
@@ -1128,7 +1129,7 @@ const VideoListItem = React.memo<{
         onClose={handleClose}
         anchorReference="anchorPosition"
         anchorPosition={contextMenu !== null ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined}
-        slotProps={{ paper: { sx: { backgroundColor: "#FFFFFF", border: "1px solid #F0F0F0", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)", minWidth: 160 } } }}
+        slotProps={{ paper: { sx: { backgroundColor: liquidGlassTokens.canvas.elevated, border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)", minWidth: 160 } } }}
       >
         {onUpload && (
           <MenuItem onClick={() => { onUpload(video); handleClose(); }} sx={{ fontFamily: '"Inter", sans-serif', fontSize: "14px" }}>
@@ -1304,13 +1305,13 @@ const VideoAnalysisList: React.FC<VideoAnalysisListProps> = ({
   if (videos.length === 0 && (!useGroupedView || filteredGroups.length === 0)) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh", textAlign: "center" }}>
-        <Avatar sx={{ width: 64, height: 64, backgroundColor: "#F7F7F7", color: "#6B6B6B", mb: 3 }}>
+        <Avatar sx={{ width: 64, height: 64, backgroundColor: liquidGlassTokens.canvas.deep, color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`, mb: 3 }}>
           <VideoIcon sx={{ fontSize: 32 }} />
         </Avatar>
-        <Typography variant="h5" sx={{ fontFamily: '"Inter", sans-serif', fontWeight: 500, color: "#000000", mb: 1 }}>
+        <Typography variant="h5" sx={{ fontFamily: '"Inter", sans-serif', fontWeight: 500, color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`, mb: 1 }}>
           No videos yet
         </Typography>
-        <Typography sx={{ fontFamily: '"Inter", sans-serif', fontSize: "14px", color: "#6B6B6B", maxWidth: 400, lineHeight: 1.5 }}>
+        <Typography sx={{ fontFamily: '"Inter", sans-serif', fontSize: "14px", color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`, maxWidth: 400, lineHeight: 1.5 }}>
           Add your first video to start analyzing and exploring AI-generated insights. Click the + button in the header to get started.
         </Typography>
       </Box>

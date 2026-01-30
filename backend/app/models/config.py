@@ -33,6 +33,11 @@ class AppConfig(Base):
     upload_coordinator_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # None = auto-detect
     upload_coordinator_plugin_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     upload_coordinator_priority: Mapped[int] = mapped_column(Integer, default=0)
+    # DePin Node Stats
+    depin_points: Mapped[int] = mapped_column(Integer, default=0)
+    depin_daily_streak: Mapped[int] = mapped_column(Integer, default=0)
+    depin_is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    depin_last_tick: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -55,5 +60,9 @@ class AppConfig(Base):
             'upload_coordinator_enabled': self.upload_coordinator_enabled,
             'upload_coordinator_plugin_overrides': self.upload_coordinator_plugin_overrides,
             'upload_coordinator_priority': self.upload_coordinator_priority,
+            'depin_points': self.depin_points,
+            'depin_daily_streak': self.depin_daily_streak,
+            'depin_is_active': self.depin_is_active,
+            'depin_last_tick': self.depin_last_tick.isoformat() if self.depin_last_tick else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

@@ -7,7 +7,8 @@ export type SettingsTab =
   | "filecoin"
   | "encryption"
   | "arkiv"
-  | "glitter";
+  | "glitter"
+  | "upload-worker";
 
 interface SettingsNavigationContextValue {
   isOpen: boolean;

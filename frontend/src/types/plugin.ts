@@ -1,5 +1,17 @@
   // Plugin system type definitions
 
+export interface PluginCapability {
+  name: string;
+  description?: string;
+  operations?: string[];  // e.g., ['subscribe', 'unsubscribe', 'list_subscriptions']
+  ui_actions?: Array<{
+    action: string;
+    label: string;
+    icon?: string;
+    requires_selection?: boolean;
+  }>;
+}
+
 export interface PluginMetadata {
   name: string;
   version: string;
@@ -11,7 +23,7 @@ export interface PluginMetadata {
   priority?: number;
   created_at?: string;
   updated_at?: string;
-  capabilities?: string[];
+  capabilities?: PluginCapability[];
 }
 
 export interface PluginHealth {

@@ -636,6 +636,31 @@ async function handleSaveArkivConfig(
   }
 }
 
+async function handleGetWalletAddress(): Promise<{ wallet_address: string } | null> {
+  try {
+    const config = await loadDecryptedFilecoinConfig();
+    if (!config?.privateKey) {
+      return null;
+    }
+    
+    let normalizedKey = config.privateKey.trim();
+    if (!normalizedKey.startsWith('0x')) {
+      normalizedKey = `0x${normalizedKey}`;
+    }
+    
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { ethers } = require('ethers');
+    const wallet = new ethers.Wallet(normalizedKey);
+    
+    return {
+      wallet_address: wallet.address,
+    };
+  } catch (error) {
+    console.error('Failed to get wallet address:', error);
+    return null;
+  }
+}
+
 async function handleValidateEvmConfig(
   _event: Electron.IpcMainInvokeEvent,
   { rpcUrl }: { rpcUrl?: string }
@@ -784,14 +809,26 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
     backendProcess = null;
   });
 
-  // Start upload worker after backend is ready
-  try {
-    const uploadWorker = getUploadWorker();
-    await uploadWorker.start({ enabled: true, pollInterval: 15000 });
-    console.log('✅ Upload worker started automatically with backend');
-  } catch (error) {
-    console.error('Failed to start upload worker automatically:', error);
-  }
+  // Wait for backend to be ready, then notify renderer and start upload worker
+  setTimeout(async () => {
+    if (backendProcess && !backendProcess.killed) {
+      console.log('✅ Backend ready, notifying renderer...');
+      
+      // Notify all renderer windows that backend is ready
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('backend-ready');
+      }
+      
+      // Start upload worker after backend is ready
+      try {
+        const uploadWorker = getUploadWorker();
+        await uploadWorker.start({ enabled: true, pollInterval: 15000 });
+        console.log('✅ Upload worker started automatically with backend');
+      } catch (error) {
+        console.error('Failed to start upload worker automatically:', error);
+      }
+    }
+  }, 3000); // Give backend 3 seconds to initialize
 
   return { pid: backendProcess.pid, message: 'Backend started' };
 }
@@ -884,6 +921,14 @@ async function handleRestartBackend(): Promise<{ pid: number | undefined; messag
     console.log(`Backend process exited with code ${code}`);
     backendProcess = null;
   });
+
+  // Wait for backend to be ready and notify the frontend
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      console.log('📢 Notifying frontend that backend is ready (restart)');
+      mainWindow.webContents.send('backend-ready');
+    }
+  }, 3000); // Wait 3 seconds for backend to initialize
 
   return { pid: backendProcess.pid, message: 'Backend restarted with new configuration' };
 }
@@ -1044,6 +1089,7 @@ function registerIPCHandlers(): void {
     'save-filecoin-config': handleSaveFilecoinConfig,
     'get-arkiv-config': handleGetArkivConfig,
     'save-arkiv-config': handleSaveArkivConfig,
+    'get-wallet-address': handleGetWalletAddress,
     'validate-evm-config': handleValidateEvmConfig,
     'check-evm-balance': handleCheckEvmBalance,
     'start-backend': handleStartBackend,
@@ -1183,6 +1229,14 @@ async function tryStartBackend(): Promise<void> {
       console.log(`Backend process exited with code ${code}`);
       backendProcess = null;
     });
+
+    // Notify frontend after backend has had time to initialize
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        console.log('📢 Notifying frontend that backend is ready (auto-start)');
+        mainWindow.webContents.send('backend-ready');
+      }
+    }, 3000); // Wait 3 seconds for backend to initialize
 
     console.log(`✅ Backend auto-started with PID: ${backendProcess.pid}`);
   } catch (err) {

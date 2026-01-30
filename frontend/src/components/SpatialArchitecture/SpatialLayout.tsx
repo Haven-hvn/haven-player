@@ -28,7 +28,7 @@ import { useNavigate } from 'react-router-dom';
 import { liquidGlassTokens } from '@/styles/liquidGlassTheme';
 import { CircuitSubstrate } from '@/components/LiquidGlass';
 import { useSettingsNavigation } from '@/context/SettingsNavigationContext';
-import { useState } from 'react';
+import AddVideoModal from '@/components/AddVideoModal';
 
 import SourceNavigator from './SourceNavigator';
 import HealthPulseBar from './HealthPulseBar';
@@ -39,6 +39,7 @@ import { useLayoutMode } from './hooks/useLayoutMode';
 
 import { useTransformationPipeline } from '@/hooks/useTransformationPipeline';
 import { usePlugins, usePluginHealth, usePluginSources } from '@/hooks/usePlugins';
+import { usePipelineStatus } from '@/hooks/usePipelineStatus';
 import type { TransformationItem, TransformationState } from '@/types/transformation';
 import type { PluginMetadata, PluginHealth, MediaSource } from '@/types/plugin';
 
@@ -48,9 +49,11 @@ import PluginConfigPopup from '@/components/Plugins/PluginConfigPopup';
 interface SpatialLayoutProps {
   onUploadVideo?: (item: TransformationItem) => void;
   onAddVideo?: () => void;
+  onAddMagnetUrl?: (url: string) => void;
+  isBitTorrentEnabled?: boolean;
 }
 
-const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo }) => {
+const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo, onAddMagnetUrl, isBitTorrentEnabled = false }) => {
   const navigate = useNavigate();
   const { openSettings } = useSettingsNavigation();
   
@@ -77,33 +80,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     setGridDensity,
   } = useLayoutMode();
 
-  // Plugin state
-  const {
-    plugins,
-    loading: pluginsLoading,
-    refresh: refreshPlugins,
-    loadPlugin,
-    unloadPlugin,
-    restartPlugin,
-  } = usePlugins();
-  
-  const { healthStatus } = usePluginHealth();
-  
-  const [pluginSelectionPopupOpen, setPluginSelectionPopupOpen] = useState(false);
-  const [pluginConfigPopupOpen, setPluginConfigPopupOpen] = useState(false);
-  const [selectedPlugin, setSelectedPlugin] = useState<PluginMetadata | null>(null);
-  
-  // Plugin sources state
-  const [detailPanelContentType, setDetailPanelContentType] = useState<'video' | 'plugin-sources'>('video');
-  const [detailPanelPluginName, setDetailPanelPluginName] = useState<string | undefined>(undefined);
-  const {
-    sources: pluginSources,
-    loading: pluginSourcesLoading,
-    error: pluginSourcesError,
-    refreshSources: refreshPluginSources,
-  } = usePluginSources(detailPanelPluginName);
-
-  // Transformation pipeline state
+  // Transformation pipeline state (moved up to get systemHealth for plugins)
   const {
     items,
     filteredItems,
@@ -124,8 +101,41 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     error,
   } = useTransformationPipeline();
 
+  // Plugin state - now with backend connection awareness
+  const {
+    plugins,
+    loading: pluginsLoading,
+    refreshPlugins,
+    loadPlugin,
+    unloadPlugin,
+    restartPlugin,
+  } = usePlugins(systemHealth.backendConnected);
+  
+  const { healthStatus } = usePluginHealth();
+  
+  const [pluginSelectionPopupOpen, setPluginSelectionPopupOpen] = useState(false);
+  const [pluginConfigPopupOpen, setPluginConfigPopupOpen] = useState(false);
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginMetadata | null>(null);
+  const [pluginPopupAnchor, setPluginPopupAnchor] = useState<HTMLElement | null>(null);
+  
+  // Add Video Modal state
+  const [addVideoModalOpen, setAddVideoModalOpen] = useState(false);
+  
+  // Plugin sources state
+  const [detailPanelContentType, setDetailPanelContentType] = useState<'video' | 'plugin-sources' | 'plugin-operations'>('video');
+  const [detailPanelPluginName, setDetailPanelPluginName] = useState<string | undefined>(undefined);
+  const {
+    sources: pluginSources,
+    loading: pluginSourcesLoading,
+    error: pluginSourcesError,
+    refreshSources: refreshPluginSources,
+  } = usePluginSources(detailPanelPluginName);
+
   // Count active recordings from items
   const activeRecordingCount = items.filter(i => i.state === 'recording').length;
+  
+  // Pipeline status for real-time stage indication (encrypting, uploading, analyzing, syncing)
+  const { pipelineStatus, pluginJobs } = usePipelineStatus(queueStats);
 
   // Handlers
   const handleItemClick = useCallback((item: TransformationItem) => {
@@ -155,7 +165,8 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
   }, [openSettings]);
 
   // Plugin handlers
-  const handlePluginConfigClick = useCallback(() => {
+  const handlePluginConfigClick = useCallback((anchorEl: HTMLElement) => {
+    setPluginPopupAnchor(anchorEl);
     setPluginSelectionPopupOpen(true);
   }, []);
 
@@ -169,6 +180,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     setPluginSelectionPopupOpen(false);
     setPluginConfigPopupOpen(false);
     setSelectedPlugin(null);
+    setPluginPopupAnchor(null);
   }, []);
 
   const handleLoadPlugin = useCallback(async (plugin: PluginMetadata) => {
@@ -187,9 +199,17 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     refreshPlugins();
   }, [refreshPlugins]);
 
+  const [selectedPluginForDetail, setSelectedPluginForDetail] = useState<PluginMetadata | null>(null);
+
   const handleViewPluginSources = useCallback((plugin: PluginMetadata) => {
-    setDetailPanelContentType('plugin-sources');
+    // Check if plugin has operation capabilities
+    const hasOperationCapability = plugin.capabilities?.some(
+      (cap) => cap.operations && cap.operations.length > 0
+    );
+    
+    setDetailPanelContentType(hasOperationCapability ? 'plugin-operations' : 'plugin-sources');
     setDetailPanelPluginName(plugin.name);
+    setSelectedPluginForDetail(plugin);
     showMargin();
   }, [showMargin]);
 
@@ -198,14 +218,36 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     clearSelection();
     setDetailPanelContentType('video');
     setDetailPanelPluginName(undefined);
+    setSelectedPluginForDetail(null);
   }, [hideMargin, clearSelection]);
 
-  // Dock handlers
-  const handleAddVideo = useCallback(() => {
+  // Add Video Modal handlers
+  const handleOpenAddVideoModal = useCallback(() => {
+    setAddVideoModalOpen(true);
+  }, []);
+
+  const handleCloseAddVideoModal = useCallback(() => {
+    setAddVideoModalOpen(false);
+  }, []);
+
+  const handleAddLocalFile = useCallback(() => {
     if (onAddVideo) {
       onAddVideo();
     }
+    setAddVideoModalOpen(false);
   }, [onAddVideo]);
+
+  const handleAddMagnetUrlFromModal = useCallback((url: string) => {
+    if (onAddMagnetUrl) {
+      onAddMagnetUrl(url);
+    }
+    setAddVideoModalOpen(false);
+  }, [onAddMagnetUrl]);
+
+  // Dock handlers
+  const handleAddVideo = useCallback(() => {
+    handleOpenAddVideoModal();
+  }, [handleOpenAddVideoModal]);
 
   const handleSearch = useCallback(() => {
     // Focus the search input in the header
@@ -265,13 +307,13 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
         display: 'flex',
         height: '100vh',
         width: '100%',
-        backgroundColor: liquidGlassTokens.canvas.base,
+        backgroundColor: 'transparent',
         position: 'relative',
         overflow: 'hidden',
       }}
     >
       {/* Circuit Substrate Background */}
-      <CircuitSubstrate density={4} opacity={0.04} animated={true} />
+      <CircuitSubstrate density={4} opacity={0.12} animated={true} />
 
       {/* Zone 1: Source Navigator (Left Spine - 64px collapsed) */}
       <SourceNavigator
@@ -303,6 +345,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
           queueStats={queueStats}
           activeRecordingCount={activeRecordingCount}
           pluginHealthStatus={healthStatus}
+          pipelineStatus={pipelineStatus}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           mode={mode}
@@ -315,7 +358,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
             flex: 1,
             display: 'flex',
             overflow: 'hidden',
-            background: liquidGlassTokens.canvas.base,
+            background: 'transparent',
             position: 'relative',
           }}
         >
@@ -335,6 +378,8 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
               onItemClick={handleItemClick}
               onItemPlay={handleItemPlay}
               onItemUpload={handleItemUpload}
+              onAddVideo={handleOpenAddVideoModal}
+              isBitTorrentEnabled={isBitTorrentEnabled}
             />
           </Box>
 
@@ -343,6 +388,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
             item={selectedItem}
             contentType={detailPanelContentType}
             pluginName={detailPanelPluginName}
+            plugin={selectedPluginForDetail}
             pluginSources={pluginSources}
             pluginSourcesLoading={pluginSourcesLoading}
             pluginSourcesError={pluginSourcesError}
@@ -367,10 +413,12 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
           hasItems={items.length > 0}
           queueStats={queueStats}
           recordingSessions={recordingSessions}
+          pluginJobs={pluginJobs}
           onExpand={expandDock}
           onCollapse={collapseDock}
           onToggle={toggleDock}
           onAddVideo={handleAddVideo}
+          onOpenAddVideoModal={handleOpenAddVideoModal}
           onSearch={handleSearch}
           onQuickUpload={handleQuickUpload}
           onUrlImport={handleUrlImport}
@@ -382,6 +430,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
           onStopAll={handleStopAll}
           gridDensity={config.stageGridDensity}
           onDensityChange={setGridDensity}
+          isBitTorrentEnabled={isBitTorrentEnabled}
         />
       </Box>
 
@@ -391,6 +440,7 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
         plugins={plugins}
         healthStatus={healthStatus}
         loading={pluginsLoading}
+        anchorEl={pluginPopupAnchor}
         onClose={handleClosePluginPopups}
         onPluginSelect={handlePluginSelect}
         onLoadPlugin={handleLoadPlugin}
@@ -409,6 +459,15 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
         onRestartPlugin={handleRestartPlugin}
         onViewSources={handleViewPluginSources}
         onConfigSaved={handleConfigSaved}
+      />
+
+      {/* Add Video Modal */}
+      <AddVideoModal
+        open={addVideoModalOpen}
+        onClose={handleCloseAddVideoModal}
+        onAddLocalFile={handleAddLocalFile}
+        onAddMagnetUrl={handleAddMagnetUrlFromModal}
+        isBitTorrentEnabled={isBitTorrentEnabled}
       />
     </Box>
   );

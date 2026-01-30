@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { Box } from '@mui/material';
 import { liquidGlassTokens } from '@/styles/liquidGlassTheme';
 import { useBackgroundThrottling } from '@/hooks/useBackgroundThrottling';
 
-// Target ~15fps for background animations (saves ~75% CPU vs 60fps)
-const ANIMATION_FRAME_INTERVAL = 17; // ms (~15fps)
+// Target ~10fps for background animations (saves ~85% CPU vs 60fps)
+const ANIMATION_FRAME_INTERVAL = 33; // ms (~10fps)
 
 interface CircuitSubstrateProps {
   /** Primary color for the circuit traces */
@@ -54,10 +54,12 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
   sx = {},
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [svgMounted, setSvgMounted] = useState(false);
   const animationRef = useRef<number | undefined>(undefined);
   const lastFrameTimeRef = useRef<number>(0);
   const phaseRef = useRef<number>(0);
-  const [isInViewport, setIsInViewport] = useState(true);
+  // Note: IntersectionObserver removed - it fails when element is behind 
+  // transparent layers. We rely on useBackgroundThrottling for pause/resume.
   
   // Cache element references to avoid querySelectorAll per frame
   const elementsRef = useRef<{
@@ -67,11 +69,12 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
     nodesGroup: SVGGElement | null;
   }>({ paths: [], nodes: [], pathsGroup: null, nodesGroup: null });
   
-  // Generate circuit pattern based on density
+  // Generate circuit pattern based on density - capped for performance
   const circuit = useMemo<Circuit>(() => {
     const nodes: Node[] = [];
     const paths: string[] = [];
-    const gridSize = Math.max(3, Math.min(10, density));
+    // Cap density to prevent too many elements (max 6x6 grid)
+    const gridSize = Math.max(3, Math.min(6, density));
     const spacing = 100 / gridSize;
     
     // Create grid of nodes
@@ -129,20 +132,6 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
   // Use background throttling to pause animation when app is hidden
   const { shouldThrottle, isVisible } = useBackgroundThrottling();
   
-  // Viewport detection with IntersectionObserver
-  useEffect(() => {
-    if (!svgRef.current) return;
-    
-    const observer = new IntersectionObserver(
-      ([entry]) => setIsInViewport(entry.isIntersecting),
-      { threshold: 0 } // Trigger when any part is visible
-    );
-    
-    observer.observe(svgRef.current);
-    
-    return () => observer.disconnect();
-  }, []);
-  
   // Cache DOM elements once on mount - avoids querySelectorAll per frame
   useEffect(() => {
     if (!svgRef.current) return;
@@ -156,47 +145,58 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
     };
   }, [circuit]); // Re-cache when circuit changes
   
-  // Optimized animation using group opacity + CSS variables for GPU compositing
+  // Optimized animation - only updates every 100ms (10fps), batches DOM writes
   const animate = useCallback((timestamp: number) => {
-    // Frame rate limiting - skip frames to maintain ~30fps
+    // Frame rate limiting - 10fps max
     if (timestamp - lastFrameTimeRef.current < ANIMATION_FRAME_INTERVAL) {
       animationRef.current = requestAnimationFrame(animate);
       return;
     }
+    
     lastFrameTimeRef.current = timestamp;
     
-    const basePeriod = networkActive ? 2000 : 8000;
-    const period = basePeriod / speed;
-    
+    // Slower period for less frequent updates
+    const period = networkActive ? 3000 : 10000;
     phaseRef.current = (phaseRef.current + ANIMATION_FRAME_INTERVAL) % period;
     const normalizedPhase = phaseRef.current / period;
     
-    // Single intensity calculation for the whole group
-    const intensity = 0.6 + 0.4 * Math.sin(normalizedPhase * Math.PI * 2);
+    // Single intensity calculation
+    const intensity = 0.5 + 0.3 * Math.sin(normalizedPhase * Math.PI * 2);
     
-    // Use CSS custom property on SVG root - single DOM write, GPU composited
-    if (svgRef.current) {
-      svgRef.current.style.setProperty('--circuit-intensity', String(intensity));
-    }
-    
-    // Batch opacity updates using group transforms instead of individual elements
-    const { pathsGroup, nodesGroup } = elementsRef.current;
-    if (pathsGroup) {
-      pathsGroup.style.opacity = String(0.3 + intensity * 0.7);
-    }
-    if (nodesGroup) {
-      nodesGroup.style.opacity = String(0.4 + intensity * 0.6);
-    }
+    // Batch all DOM writes in single frame
+    requestAnimationFrame(() => {
+      const { pathsGroup, nodesGroup } = elementsRef.current;
+      if (pathsGroup) {
+        pathsGroup.style.opacity = String(0.4 + intensity * 0.4);
+      }
+      if (nodesGroup) {
+        nodesGroup.style.opacity = String(0.5 + intensity * 0.3);
+      }
+    });
     
     animationRef.current = requestAnimationFrame(animate);
-  }, [networkActive, speed]);
+  }, [networkActive]);
   
-  // Pulse animation effect - pauses when app is in background or component not in viewport
+  // Pulse animation effect - pauses when app is in background
   useEffect(() => {
-    // Stop if throttled, not visible, not in viewport, or explicitly disabled
-    const shouldAnimate = animated && !shouldThrottle && isVisible && isInViewport && svgRef.current;
+    // Debug logging (remove in production)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('CircuitSubstrate animation check:', { 
+        animated, 
+        shouldThrottle, 
+        isVisible, 
+        hasSvg: !!svgRef.current 
+      });
+    }
     
-    if (!shouldAnimate) {
+    // Only animate when enabled and visible
+    // Note: shouldThrottle can have false positives on initial mount, so we only
+    // use it to PAUSE an existing animation, not prevent starting one
+    const isRunning = animationRef.current !== undefined;
+    const shouldAnimate = animated && isVisible && svgMounted;
+    const shouldStop = !animated || !isVisible || (isRunning && shouldThrottle);
+    
+    if (shouldStop) {
       // Cancel any existing animation when conditions not met
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
@@ -205,16 +205,20 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
       return;
     }
     
-    // Reset timing refs when animation restarts
-    lastFrameTimeRef.current = 0;
-    animationRef.current = requestAnimationFrame(animate);
+    // Start animation if not already running
+    if (shouldAnimate && !isRunning) {
+      // Reset timing refs when animation restarts
+      lastFrameTimeRef.current = 0;
+      phaseRef.current = 0; // Reset phase to prevent animation jump after throttle
+      animationRef.current = requestAnimationFrame(animate);
+    }
     
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [animated, shouldThrottle, isVisible, isInViewport, animate]);
+  }, [animated, shouldThrottle, isVisible, animate, svgMounted]);
   
   return (
     <Box
@@ -232,7 +236,12 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
       }}
     >
       <svg
-        ref={svgRef}
+        ref={(el) => {
+          svgRef.current = el;
+          if (el && !svgMounted) {
+            setSvgMounted(true);
+          }
+        }}
         viewBox="0 0 100 100"
         preserveAspectRatio="xMidYMid slice"
         style={{
@@ -244,9 +253,9 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
         }}
       >
         <defs>
-          {/* Optimized glow filter - reduced stdDeviation and simpler merge */}
-          <filter id="circuit-glow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="0.8" result="blur" />
+          {/* Optimized glow filter - minimal blur for performance */}
+          <filter id="circuit-glow" x="-10%" y="-10%" width="120%" height="120%">
+            <feGaussianBlur stdDeviation="0.5" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
           
@@ -255,13 +264,32 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
             <stop offset="0%" stopColor={primaryColor} />
             <stop offset="100%" stopColor={secondaryColor} />
           </linearGradient>
+          
+          {/* Animated gradient for flowing effect */}
+          <linearGradient id="circuit-flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="transparent" />
+            <stop offset="50%" stopColor={primaryColor} />
+            <stop offset="100%" stopColor="transparent" />
+          </linearGradient>
+          
+          {/* CSS animation for flowing data */}
+          <style>{`
+            @keyframes circuit-flow {
+              0% { stroke-dashoffset: 60; }
+              100% { stroke-dashoffset: 0; }
+            }
+            .circuit-path-animated {
+              stroke-dasharray: 15 45;
+              animation: circuit-flow 4s linear infinite;
+              will-change: stroke-dashoffset;
+            }
+          `}</style>
         </defs>
         
-        {/* Circuit paths - single group for batch opacity animation */}
+        {/* Circuit paths - no glow filter for static paths to save GPU */}
         <g 
           className="circuit-paths-group"
-          filter="url(#circuit-glow)"
-          style={{ willChange: 'opacity' }}
+          style={{ opacity: 0.7 }}
         >
           {circuit.paths.map((path, index) => (
             <path
@@ -270,39 +298,54 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
               d={path}
               fill="none"
               stroke="url(#circuit-gradient)"
-              strokeWidth="0.4"
+              strokeWidth="0.35"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           ))}
         </g>
         
-        {/* Circuit nodes (junctions) - single group for batch opacity animation */}
+        {/* Animated flowing overlay paths - only 20% of paths to reduce CPU */}
+        {animated && (
+          <g 
+            className="circuit-flow-group"
+            style={{ 
+              opacity: 0.6,
+              mixBlendMode: 'screen',
+            }}
+          >
+            {circuit.paths.filter((_, i) => i % 5 === 0).slice(0, 8).map((path, index) => (
+              <path
+                key={`flow-${index}`}
+                d={path}
+                fill="none"
+                stroke={primaryColor}
+                strokeWidth="0.5"
+                strokeLinecap="round"
+                className="circuit-path-animated"
+                style={{
+                  animationDelay: `${index * 0.8}s`,
+                  animationDuration: '4s', // Slower animation = less CPU
+                }}
+              />
+            ))}
+          </g>
+        )}
+        
+        {/* Circuit nodes (junctions) - simplified, no glow filter */}
         <g 
           className="circuit-nodes-group"
-          filter="url(#circuit-glow)"
-          style={{ willChange: 'opacity' }}
+          style={{ opacity: 0.6 }}
         >
           {circuit.nodes.map((node, index) => (
-            <g key={`node-${index}`}>
-              {/* Outer glow */}
-              <circle
-                cx={node.x}
-                cy={node.y}
-                r="1.8"
-                fill={primaryColor}
-                opacity="0.25"
-                className="circuit-node-glow"
-              />
-              {/* Inner node */}
-              <circle
-                cx={node.x}
-                cy={node.y}
-                r="0.7"
-                fill={primaryColor}
-                className="circuit-node"
-              />
-            </g>
+            <circle
+              key={`node-${index}`}
+              cx={node.x}
+              cy={node.y}
+              r="0.6"
+              fill={primaryColor}
+              className="circuit-node"
+            />
           ))}
         </g>
       </svg>

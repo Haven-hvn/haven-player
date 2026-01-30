@@ -29,13 +29,14 @@ import {
   InputAdornment,
   Tooltip,
   Chip,
+  Popover,
 } from '@mui/material';
 import {
   Search as SearchIcon,
   Clear as ClearIcon,
   Wifi as ConnectedIcon,
   WifiOff as DisconnectedIcon,
-  AccountBalanceWallet as WalletIcon,
+  VpnKey as KeyIcon,
   Lock as EncryptedIcon,
   LockOpen as UnencryptedIcon,
   LocalFireDepartment as StreakIcon,
@@ -43,10 +44,58 @@ import {
   FiberManualRecord as StatusDotIcon,
   Extension as PluginIcon,
 } from '@mui/icons-material';
+// Vault icon component (bank vault style)
+const VaultIcon: React.FC<{ fontSize?: 'small' | 'medium' | 'large' }> = ({ fontSize = 'small' }) => (
+  <svg
+    width={fontSize === 'small' ? 16 : fontSize === 'medium' ? 20 : 24}
+    height={fontSize === 'small' ? 16 : fontSize === 'medium' ? 20 : 24}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    style={{ display: 'block' }}
+  >
+    {/* Vault door circle */}
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    {/* Inner circle */}
+    <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    {/* Spokes */}
+    <line x1="12" y1="3" x2="12" y2="7" stroke="currentColor" strokeWidth="1.5" />
+    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="1.5" />
+    <line x1="3" y1="12" x2="7" y2="12" stroke="currentColor" strokeWidth="1.5" />
+    <line x1="17" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="1.5" />
+    {/* Center bolt */}
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+  </svg>
+);
+// Vault off icon for disconnected state
+const VaultOffIcon: React.FC<{ fontSize?: 'small' | 'medium' | 'large' }> = ({ fontSize = 'small' }) => (
+  <svg
+    width={fontSize === 'small' ? 16 : fontSize === 'medium' ? 20 : 24}
+    height={fontSize === 'small' ? 16 : fontSize === 'medium' ? 20 : 24}
+    viewBox="0 0 24 24"
+    fill="none"
+    style={{ display: 'block' }}
+  >
+    {/* Vault door circle */}
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+    {/* Inner circle */}
+    <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="1.5" />
+    {/* Spokes */}
+    <line x1="12" y1="3" x2="12" y2="7" stroke="currentColor" strokeWidth="1.5" />
+    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="1.5" />
+    <line x1="3" y1="12" x2="7" y2="12" stroke="currentColor" strokeWidth="1.5" />
+    <line x1="17" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="1.5" />
+    {/* Center bolt */}
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+    {/* Diagonal slash for disconnected */}
+    <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="1.5" />
+  </svg>
+);
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
-import type { SystemHealth, QueueStats } from '@/types/transformation';
+import type { SystemHealth, QueueStats, PipelineStatus } from '@/types/transformation';
 import type { LayoutMode } from './hooks/useLayoutMode';
 import type { PluginHealth } from '@/types/plugin';
+import { PipelineStageIndicator } from './PipelineStageIndicator';
+import RewardsTooltip from './RewardsTooltip';
 
 interface HealthPulseBarProps {
   // System state
@@ -56,6 +105,9 @@ interface HealthPulseBarProps {
   
   // Plugin health
   pluginHealthStatus?: PluginHealth[];
+  
+  // Pipeline status (encrypting, uploading, analyzing, syncing)
+  pipelineStatus?: PipelineStatus;
   
   // Search (filtering, not action)
   searchQuery: string;
@@ -74,6 +126,7 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
   queueStats,
   activeRecordingCount,
   pluginHealthStatus = [],
+  pipelineStatus,
   searchQuery,
   onSearchChange,
   mode,
@@ -81,7 +134,18 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
   onOpenSettings,
 }) => {
   const [searchFocused, setSearchFocused] = useState(false);
+  const [rewardsAnchorEl, setRewardsAnchorEl] = useState<HTMLElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const handleRewardsEnter = (event: React.MouseEvent<HTMLElement>) => {
+    setRewardsAnchorEl(event.currentTarget);
+  };
+
+  const handleRewardsLeave = () => {
+    setRewardsAnchorEl(null);
+  };
+
+  const rewardsOpen = Boolean(rewardsAnchorEl);
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     onSearchChange(event.target.value);
@@ -126,7 +190,7 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
     <Box
       sx={{
         height: getHeaderHeight(),
-        background: liquidGlassTokens.canvas.elevated,
+        background: `${liquidGlassTokens.canvas.elevated}99`, // 60% opacity - allows circuit substrate to show through
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -213,43 +277,49 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
           </Box>
         )}
 
-        {/* Backend Status */}
+        {/* Backend Status - Vault icon for bank vault metaphor */}
         <HealthIndicator
-          icon={systemHealth.backendConnected ? <ConnectedIcon /> : <DisconnectedIcon />}
+          icon={systemHealth.backendConnected ? <VaultIcon /> : <VaultOffIcon />}
           label="Backend"
           status={systemHealth.backendConnected ? 'connected' : 'disconnected'}
-          tooltip={systemHealth.backendConnected ? 'Backend connected' : 'Backend disconnected'}
+          tooltip={systemHealth.backendConnected ? 'Backend vault secured' : 'Backend vault disconnected'}
         />
 
-        {/* Wallet Status */}
+        {/* Wallet Status - Key icon for physical key metaphor */}
         <HealthIndicator
-          icon={<WalletIcon />}
-          label={truncateAddress(systemHealth.walletAddress)}
+          icon={<KeyIcon />}
+          label={systemHealth.walletConnected ? truncateAddress(systemHealth.walletAddress) : 'Not Connected'}
           status={systemHealth.walletConnected ? 'connected' : 'warning'}
           tooltip={
             systemHealth.walletConnected
-              ? `Wallet: ${systemHealth.walletAddress || 'Connected'}`
-              : 'Wallet not connected'
+              ? `Key: ${truncateAddress(systemHealth.walletAddress)}`
+              : 'Key not connected'
           }
         />
 
-        {/* Encryption Status */}
+        {/* Encryption Status - green only if encryption enabled AND wallet connected */}
         <HealthIndicator
-          icon={systemHealth.encryptionEnabled ? <EncryptedIcon /> : <UnencryptedIcon />}
+          icon={(systemHealth.encryptionEnabled && systemHealth.walletConnected) ? <EncryptedIcon /> : <UnencryptedIcon />}
           label="Encryption"
-          status={systemHealth.encryptionEnabled ? 'connected' : 'warning'}
+          status={(systemHealth.encryptionEnabled && systemHealth.walletConnected) ? 'connected' : 'warning'}
           tooltip={
-            systemHealth.encryptionEnabled
+            (systemHealth.encryptionEnabled && systemHealth.walletConnected)
               ? 'Content encryption enabled (Lit Protocol)'
-              : 'Encryption not configured - Configure in Settings > Filecoin'
+              : !systemHealth.walletConnected
+              ? 'Key not connected - Configure key in Settings > Filecoin'
+              : 'Encryption not configured - Configure in Settings > Encryption'
           }
           onClick={() => {
-            // Click to open settings to Filecoin tab
-            if (!systemHealth.encryptionEnabled && onOpenSettings) {
-              onOpenSettings('filecoin');
+            // Click to open settings to appropriate tab
+            if (onOpenSettings) {
+              if (!systemHealth.walletConnected) {
+                onOpenSettings('filecoin');
+              } else if (!systemHealth.encryptionEnabled) {
+                onOpenSettings('encryption');
+              }
             }
           }}
-          clickable={!systemHealth.encryptionEnabled && !!onOpenSettings}
+          clickable={(!systemHealth.walletConnected || !systemHealth.encryptionEnabled) && !!onOpenSettings}
         />
 
         {/* Plugin Health Status */}
@@ -264,6 +334,16 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
                 : `${pluginHealthStatus.length} plugins healthy`
             }
           />
+        )}
+
+        {/* Pipeline Stage Indicator - Shows encrypting, uploading, analyzing, syncing */}
+        {pipelineStatus && pipelineStatus.hasActivity && (
+          <Box sx={{ ml: 1 }}>
+            <PipelineStageIndicator 
+              pipelineStatus={pipelineStatus} 
+              compact={true}
+            />
+          </Box>
         )}
       </Box>
 
@@ -385,67 +465,113 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
           </Tooltip>
         )}
 
-        {/* Points (read-only indicator) */}
-        {systemHealth.points !== undefined && (
-          <Tooltip title="DePIN Points">
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 0.75,
-                px: 1.5,
-                py: 0.5,
-                background: `${liquidGlassTokens.neon.amber}10`,
-                border: `1px solid ${liquidGlassTokens.neon.amber}30`,
-                borderRadius: `${liquidGlassTokens.radius.sm}px`,
-              }}
-            >
-              <PointsIcon
+        {/* Rewards Display with Hover Tooltip */}
+        {(systemHealth.points !== undefined || systemHealth.streak !== undefined) && (
+          <Box
+            onMouseEnter={handleRewardsEnter}
+            onMouseLeave={handleRewardsLeave}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              cursor: 'pointer',
+            }}
+          >
+            {/* Points (read-only indicator) */}
+            {systemHealth.points !== undefined && (
+              <Box
                 sx={{
-                  fontSize: 16,
-                  color: liquidGlassTokens.neon.amber,
-                }}
-              />
-              <Typography
-                sx={{
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  color: liquidGlassTokens.neon.amber,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.75,
+                  px: 1.5,
+                  py: 0.5,
+                  background: `${liquidGlassTokens.neon.amber}10`,
+                  border: `1px solid ${liquidGlassTokens.neon.amber}30`,
+                  borderRadius: `${liquidGlassTokens.radius.sm}px`,
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    background: `${liquidGlassTokens.neon.amber}15`,
+                    borderColor: `${liquidGlassTokens.neon.amber}50`,
+                  },
                 }}
               >
-                {systemHealth.points?.toLocaleString() || 0}
-              </Typography>
-            </Box>
-          </Tooltip>
-        )}
+                <PointsIcon
+                  sx={{
+                    fontSize: 16,
+                    color: liquidGlassTokens.neon.amber,
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: liquidGlassTokens.neon.amber,
+                  }}
+                >
+                  {systemHealth.points?.toLocaleString() || 0}
+                </Typography>
+              </Box>
+            )}
 
-        {/* Streak (read-only indicator) */}
-        {systemHealth.streak !== undefined && systemHealth.streak > 0 && (
-          <Tooltip title={`${systemHealth.streak} day streak`}>
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 0.5,
-              }}
-            >
-              <StreakIcon
+            {/* Streak (read-only indicator) */}
+            {systemHealth.streak !== undefined && systemHealth.streak > 0 && (
+              <Box
                 sx={{
-                  fontSize: 18,
-                  color: liquidGlassTokens.neon.amber,
-                }}
-              />
-              <Typography
-                sx={{
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  color: liquidGlassTokens.neon.amber,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
                 }}
               >
-                {systemHealth.streak}
-              </Typography>
-            </Box>
-          </Tooltip>
+                <StreakIcon
+                  sx={{
+                    fontSize: 18,
+                    color: liquidGlassTokens.neon.amber,
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: liquidGlassTokens.neon.amber,
+                  }}
+                >
+                  {systemHealth.streak}
+                </Typography>
+              </Box>
+            )}
+
+            {/* Rewards Tooltip Popover */}
+            <Popover
+              open={rewardsOpen}
+              anchorEl={rewardsAnchorEl}
+              onClose={handleRewardsLeave}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'right',
+              }}
+              transformOrigin={{
+                vertical: 'top',
+                horizontal: 'right',
+              }}
+              PaperProps={{
+                sx: {
+                  background: 'transparent',
+                  boxShadow: 'none',
+                  overflow: 'visible',
+                  mt: 1,
+                },
+              }}
+              disableRestoreFocus
+            >
+              <RewardsTooltip
+                points={systemHealth.points || 0}
+                streak={systemHealth.streak || 0}
+                level={systemHealth.level || Math.floor((systemHealth.points || 0) / 1000) + 1}
+                tier={systemHealth.tier || 'Observer'}
+              />
+            </Popover>
+          </Box>
         )}
 
         {/* NOTE: Settings button REMOVED - now in SourceNavigator

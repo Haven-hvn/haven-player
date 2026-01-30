@@ -74,6 +74,19 @@ describe("ConfigurationModal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetch.mockReset();
+    // Mock IPC calls for filecoin and arkiv config
+    (mockIpcRenderer.invoke as jest.Mock).mockImplementation((channel: string) => {
+      if (channel === "get-filecoin-config") {
+        return Promise.resolve(null); // Default to no config
+      }
+      if (channel === "get-arkiv-config") {
+        return Promise.resolve(null);
+      }
+      if (channel === "playback:get-gateway-config") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
   });
 
   describe("Tabs and loading", () => {
@@ -185,12 +198,25 @@ describe("ConfigurationModal", () => {
           json: () => Promise.resolve(mockModelsResponse),
         } as Response);
 
+      // Mock IPC to return the filecoin config
+      (mockIpcRenderer.invoke as jest.Mock).mockImplementation((channel: string) => {
+        if (channel === "get-filecoin-config") {
+          return Promise.resolve(mockFilecoinConfig);
+        }
+        if (channel === "get-arkiv-config") {
+          return Promise.resolve(null);
+        }
+        if (channel === "playback:get-gateway-config") {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(null);
+      });
+
       const onSaveFilecoin = jest.fn().mockResolvedValue(undefined);
 
       renderModal({
         onSaveFilecoin,
         activeTab: "filecoin",
-        initialFilecoinConfig: mockFilecoinConfig,
       });
 
       await waitFor(() => {
@@ -228,9 +254,22 @@ describe("ConfigurationModal", () => {
           json: () => Promise.resolve(mockModelsResponse),
         } as Response);
 
+      // Mock IPC to return config with empty private key
+      (mockIpcRenderer.invoke as jest.Mock).mockImplementation((channel: string) => {
+        if (channel === "get-filecoin-config") {
+          return Promise.resolve({ ...mockFilecoinConfig, privateKey: "" });
+        }
+        if (channel === "get-arkiv-config") {
+          return Promise.resolve(null);
+        }
+        if (channel === "playback:get-gateway-config") {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(null);
+      });
+
       renderModal({
         activeTab: "filecoin",
-        initialFilecoinConfig: { ...mockFilecoinConfig, privateKey: "" },
       });
 
       const saveButton = screen.getByRole("button", {

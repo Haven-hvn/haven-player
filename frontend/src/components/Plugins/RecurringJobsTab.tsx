@@ -16,6 +16,8 @@ import {
   CircularProgress,
   Alert,
   FormHelperText,
+  Paper,
+  Divider,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -24,9 +26,11 @@ import {
   Delete as DeleteIcon,
   PlayArrow as PlayArrowIcon,
   Info as InfoIcon,
+  Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { useRecurringJobs } from '@/hooks/useRecurringJobs';
 import { RecurringJob, RecurringJobCreate } from '@/types/plugin';
+import { liquidGlassTokens } from '@/styles/liquidGlassTheme';
 
 interface RecurringJobsTabProps {
   pluginName: string;
@@ -129,75 +133,176 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
   };
 
   return (
-    <Box sx={{ mb: 3 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Box>
-          <Typography variant="subtitle1" fontWeight="600">
-            Recurring Jobs
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Scheduler is {schedulerStatus?.running ? 'running' : 'stopped'} • {jobs.length} job(s) configured
-          </Typography>
+    <Box>
+      {/* Header */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          {/* Rounded square icon */}
+          <Box
+            sx={{
+              width: 36,
+              height: 36,
+              borderRadius: liquidGlassTokens.radius.sm,
+              background: `${liquidGlassTokens.neon.cyan}15`,
+              border: `1px solid ${liquidGlassTokens.neon.cyan}30`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <ScheduleIcon sx={{ color: liquidGlassTokens.neon.cyan, fontSize: 20 }} />
+          </Box>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff', fontSize: '1.1rem' }}>
+              Recurring Jobs
+            </Typography>
+            <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+              Scheduler is {schedulerStatus?.running ? 'running' : 'stopped'} • {jobs.length} job(s) configured
+            </Typography>
+          </Box>
         </Box>
         <Button
-          variant="contained"
+          variant="outlined"
           startIcon={<AddIcon />}
           onClick={() => setShowJobForm(true)}
           disabled={showJobForm}
+          sx={{
+            borderColor: liquidGlassTokens.neon.cyan,
+            color: liquidGlassTokens.neon.cyan,
+            textTransform: 'none',
+            '&:hover': {
+              backgroundColor: `${liquidGlassTokens.neon.cyan}10`,
+              borderColor: liquidGlassTokens.neon.cyan,
+            },
+            '&:disabled': {
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+              color: 'rgba(255, 255, 255, 0.3)',
+            },
+          }}
         >
           Add Job
         </Button>
       </Box>
 
       {jobsLoading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-          <CircularProgress />
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8, gap: 2 }}>
+          <CircularProgress size={24} sx={{ color: liquidGlassTokens.neon.cyan }} />
+          <Typography sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>Loading jobs...</Typography>
         </Box>
       ) : jobs.length === 0 && !showJobForm ? (
-        <Alert severity="info" sx={{ mt: 2 }}>
-          No recurring jobs configured for this plugin. Add a job to automatically run plugin operations on a schedule.
-          <br />
-          <strong>For YouTube Plugin:</strong> Use "Discover Sources" with "On Success: Archive All" to automatically poll channels and download new videos.
-        </Alert>
+        <Paper
+          elevation={0}
+          sx={{
+            p: 4,
+            textAlign: 'center',
+            background: 'rgba(255, 255, 255, 0.02)',
+            border: `1px dashed ${liquidGlassTokens.glass.border}`,
+            borderRadius: liquidGlassTokens.radius.md,
+          }}
+        >
+          <ScheduleIcon sx={{ color: 'rgba(255, 255, 255, 0.2)', fontSize: 40, mb: 1 }} />
+          <Typography sx={{ color: 'rgba(255, 255, 255, 0.5)', mb: 0.5 }}>
+            No recurring jobs configured
+          </Typography>
+          <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.3)', display: 'block', mb: 2 }}>
+            Add a job to automatically run plugin operations on a schedule
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<AddIcon />}
+            onClick={() => setShowJobForm(true)}
+            sx={{
+              borderColor: liquidGlassTokens.neon.cyan,
+              color: liquidGlassTokens.neon.cyan,
+              textTransform: 'none',
+              '&:hover': {
+                backgroundColor: `${liquidGlassTokens.neon.cyan}10`,
+              },
+            }}
+          >
+            Add Your First Job
+          </Button>
+        </Paper>
       ) : (
         <Box display="grid" gap={2}>
-          {jobs.map((job) => (
-            <Card key={job.id} variant="outlined">
-              <CardContent>
+          {jobs.map((job, index) => (
+            <Card
+              key={job.id}
+              elevation={0}
+              sx={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: `1px solid ${job.enabled ? `${liquidGlassTokens.neon.success}30` : liquidGlassTokens.glass.border}`,
+                borderRadius: liquidGlassTokens.radius.md,
+                transition: 'all 0.2s ease',
+                '&:hover': {
+                  borderColor: job.enabled ? `${liquidGlassTokens.neon.success}50` : 'rgba(255, 255, 255, 0.2)',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                },
+              }}
+            >
+              <CardContent sx={{ p: 2 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <Box sx={{ flex: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                      <Typography variant="subtitle1" fontWeight="600">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff' }}>
                         {job.job_name}
                       </Typography>
                       <Chip
                         label={job.enabled ? 'Enabled' : 'Paused'}
-                        color={job.enabled ? 'success' : 'default'}
                         size="small"
+                        sx={{
+                          backgroundColor: job.enabled ? `${liquidGlassTokens.neon.success}20` : 'rgba(255, 255, 255, 0.08)',
+                          color: job.enabled ? liquidGlassTokens.neon.success : 'rgba(255, 255, 255, 0.5)',
+                          border: `1px solid ${job.enabled ? `${liquidGlassTokens.neon.success}40` : 'rgba(255, 255, 255, 0.1)'}`,
+                          fontWeight: 500,
+                          height: 22,
+                        }}
                       />
                       {job.is_running && (
                         <Chip
                           label="Running"
-                          color="info"
                           size="small"
+                          sx={{
+                            backgroundColor: `${liquidGlassTokens.neon.cyan}20`,
+                            color: liquidGlassTokens.neon.cyan,
+                            border: `1px solid ${liquidGlassTokens.neon.cyan}40`,
+                            fontWeight: 500,
+                            height: 22,
+                          }}
                         />
                       )}
                     </Box>
-                    <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                    <Box sx={{ display: 'flex', gap: 1, mb: 1.5, flexWrap: 'wrap' }}>
                       <Chip
                         label={getSchedulePresetLabel(job.schedule)}
                         size="small"
-                        variant="outlined"
+                        sx={{
+                          backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${liquidGlassTokens.glass.border}`,
+                          color: 'rgba(255, 255, 255, 0.7)',
+                          height: 24,
+                        }}
                       />
                       <Chip
                         label={`Method: ${job.method}`}
                         size="small"
-                        variant="outlined"
+                        sx={{
+                          backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${liquidGlassTokens.glass.border}`,
+                          color: 'rgba(255, 255, 255, 0.7)',
+                          height: 24,
+                        }}
                       />
                       <Chip
                         label={`On success: ${job.on_success}`}
                         size="small"
-                        variant="outlined"
+                        sx={{
+                          backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${liquidGlassTokens.glass.border}`,
+                          color: 'rgba(255, 255, 255, 0.7)',
+                          height: 24,
+                        }}
                       />
                     </Box>
                     {job.last_run_at && (
@@ -211,7 +316,16 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
                       </Typography>
                     )}
                     {job.last_error && (
-                      <Alert severity="error" sx={{ mt: 1 }}>
+                      <Alert
+                        severity="error"
+                        sx={{
+                          mt: 1,
+                          backgroundColor: `${liquidGlassTokens.neon.error}10`,
+                          border: `1px solid ${liquidGlassTokens.neon.error}30`,
+                          color: liquidGlassTokens.neon.error,
+                          fontSize: '0.8rem',
+                        }}
+                      >
                         {job.last_error}
                       </Alert>
                     )}
@@ -227,30 +341,48 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
                       </Typography>
                     </Box>
                   </Box>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, ml: 2 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, ml: 2 }}>
                     <Tooltip title={job.enabled ? 'Pause job' : 'Resume job'}>
                       <IconButton
                         size="small"
                         onClick={() => handleToggleJob(job)}
+                        sx={{
+                          color: job.enabled ? liquidGlassTokens.neon.amber : liquidGlassTokens.neon.success,
+                          '&:hover': {
+                            backgroundColor: job.enabled ? `${liquidGlassTokens.neon.amber}10` : `${liquidGlassTokens.neon.success}10`,
+                          },
+                        }}
                       >
-                        {job.enabled ? <PauseIcon /> : <PlayIcon />}
+                        {job.enabled ? <PauseIcon fontSize="small" /> : <PlayIcon fontSize="small" />}
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Run now">
                       <IconButton
                         size="small"
                         onClick={() => handleRunJobNow(job.id)}
+                        sx={{
+                          color: liquidGlassTokens.neon.cyan,
+                          '&:hover': {
+                            backgroundColor: `${liquidGlassTokens.neon.cyan}10`,
+                          },
+                        }}
                       >
-                        <PlayArrowIcon />
+                        <PlayArrowIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Delete job">
                       <IconButton
                         size="small"
-                        color="error"
                         onClick={() => handleDeleteJob(job.id)}
+                        sx={{
+                          color: 'rgba(255, 255, 255, 0.4)',
+                          '&:hover': {
+                            color: liquidGlassTokens.neon.error,
+                            backgroundColor: `${liquidGlassTokens.neon.error}10`,
+                          },
+                        }}
                       >
-                        <DeleteIcon />
+                        <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
                   </Box>
@@ -263,9 +395,17 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
 
       {/* Job Creation Form */}
       {showJobForm && (
-        <Card sx={{ mb: 2 }} variant="outlined">
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight="600" gutterBottom>
+        <Card
+          elevation={0}
+          sx={{
+            mb: 2,
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: `1px solid ${liquidGlassTokens.neon.cyan}40`,
+            borderRadius: liquidGlassTokens.radius.md,
+          }}
+        >
+          <CardContent sx={{ p: 2 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff', mb: 2 }}>
               Create New Recurring Job
             </Typography>
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
@@ -333,11 +473,22 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
             </Box>
 
             {/* Info box explaining the pattern */}
-            <Alert severity="info" icon={<InfoIcon />} sx={{ mt: 2 }}>
+            <Alert
+              severity="info"
+              icon={<InfoIcon />}
+              sx={{
+                mt: 2,
+                backgroundColor: `${liquidGlassTokens.neon.cyan}08`,
+                border: `1px solid ${liquidGlassTokens.neon.cyan}30`,
+                color: 'rgba(255, 255, 255, 0.8)',
+                '& .MuiAlert-icon': {
+                  color: liquidGlassTokens.neon.cyan,
+                },
+              }}
+            >
               <Typography variant="body2">
-                <strong>How it works:</strong> The job will call <code>discover_sources()</code> to find new content,
+                <strong style={{ color: liquidGlassTokens.neon.cyan }}>How it works:</strong> The job will call <code>discover_sources()</code> to find new content,
                 then the <strong>On Success</strong> action determines what happens next.
-                For YouTube, use <strong>Archive All</strong> or <strong>Archive New</strong> to automatically download discovered videos.
                 The plugin tracks seen videos, so repeated runs won't re-download the same content.
               </Typography>
             </Alert>

@@ -1,13 +1,36 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PluginMetadata, PluginHealth, PluginConfig, DiscoverResponse } from '@/types/plugin';
+import { PluginMetadata, PluginHealth, PluginConfig, DiscoverResponse, PluginCapability } from '@/types/plugin';
 import { pluginService } from '@/services/api';
 import { useBackgroundThrottling } from './useBackgroundThrottling';
 
-export function usePlugins() {
+// Re-export usePluginOperations from its own file
+export { usePluginOperations } from './usePluginOperations';
+
+const { ipcRenderer } = require('electron');
+
+// Exponential backoff configuration for backend availability retries
+const RETRY_CONFIG = {
+  initialDelay: 2000,      // Start with 2 seconds
+  maxDelay: 30000,         // Cap at 30 seconds
+  multiplier: 2,           // Double the delay each time
+  maxRetries: 10,          // Give up after 10 attempts (prevents infinite loops)
+};
+
+export function usePlugins(backendConnected?: boolean) {
   const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [discoveredPlugins, setDiscoveredPlugins] = useState<string[]>([]);
+  
+  // Track if we've attempted a load while backend was offline
+  const attemptedLoadRef = useRef(false);
+  // Track previous backend connection state
+  const prevBackendConnectedRef = useRef(backendConnected);
+  
+  // Exponential backoff refs
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const retryCountRef = useRef(0);
+  const currentDelayRef = useRef(RETRY_CONFIG.initialDelay);
 
   const refreshPlugins = useCallback(async () => {
     setLoading(true);
@@ -15,6 +38,9 @@ export function usePlugins() {
     try {
       const data = await pluginService.getAll();
       setPlugins(data);
+      attemptedLoadRef.current = false;
+      retryCountRef.current = 0; // Reset retry count on success
+      currentDelayRef.current = RETRY_CONFIG.initialDelay; // Reset delay on success
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch plugins');
       console.error('Failed to fetch plugins:', err);
@@ -22,6 +48,46 @@ export function usePlugins() {
       setLoading(false);
     }
   }, []);
+
+  // Smart retry with exponential backoff
+  const scheduleRetry = useCallback(() => {
+    // Clear any existing retry timeout
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+
+    // Don't retry if we've exceeded max retries or plugins are loaded
+    if (retryCountRef.current >= RETRY_CONFIG.maxRetries || plugins.length > 0) {
+      return;
+    }
+
+    const delay = Math.min(currentDelayRef.current, RETRY_CONFIG.maxDelay);
+    
+    console.log(`[usePlugins] Backend not available, retrying in ${delay}ms (attempt ${retryCountRef.current + 1}/${RETRY_CONFIG.maxRetries})`);
+    
+    retryTimeoutRef.current = setTimeout(() => {
+      retryCountRef.current++;
+      currentDelayRef.current *= RETRY_CONFIG.multiplier;
+      refreshPlugins();
+    }, delay);
+  }, [plugins.length, refreshPlugins]);
+
+  // Listen for backend-ready IPC event from main process
+  useEffect(() => {
+    const handleBackendReady = () => {
+      console.log('[usePlugins] Backend ready event received, refreshing plugins...');
+      retryCountRef.current = 0;
+      currentDelayRef.current = RETRY_CONFIG.initialDelay;
+      refreshPlugins();
+    };
+
+    ipcRenderer.on('backend-ready', handleBackendReady);
+
+    return () => {
+      ipcRenderer.removeListener('backend-ready', handleBackendReady);
+    };
+  }, [refreshPlugins]);
 
   const discoverPlugins = useCallback(async () => {
     setLoading(true);
@@ -101,6 +167,35 @@ export function usePlugins() {
   useEffect(() => {
     refreshPlugins();
   }, [refreshPlugins]);
+
+  // Refresh plugins when backend comes online
+  useEffect(() => {
+    // If backend just came online (was offline, now connected)
+    const wasOffline = prevBackendConnectedRef.current === false;
+    const isNowOnline = backendConnected === true;
+    
+    if (wasOffline && isNowOnline) {
+      console.log('🔄 Backend came online, refreshing plugins...');
+      refreshPlugins();
+    }
+    
+    // Update the ref for next comparison
+    prevBackendConnectedRef.current = backendConnected;
+  }, [backendConnected, refreshPlugins]);
+
+  // Schedule retry when backend is unavailable and we have no plugins
+  useEffect(() => {
+    if (error && !loading && plugins.length === 0) {
+      scheduleRetry();
+    }
+
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+    };
+  }, [error, loading, plugins.length, scheduleRetry]);
 
   return {
     plugins,
@@ -283,3 +378,5 @@ export function usePluginConfig(pluginName: string) {
     deleteConfig,
   };
 }
+
+

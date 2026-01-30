@@ -292,7 +292,10 @@ export const liquidGlassTheme = createTheme({
     },
   },
   shape: {
-    borderRadius: liquidGlassTokens.radius.md,
+    // Use 1 instead of 12 to avoid MUI internal multiplication issue
+    // MUI Dialog/Popover components multiply this by 16, so 1 * 16 = 16px (reasonable)
+    // Previously 12 * 16 = 192px caused circular-looking modals
+    borderRadius: 1,
   },
   spacing: 8, // 8px base
   components: {
@@ -693,6 +696,39 @@ export const liquidGlassTheme = createTheme({
           background: liquidGlassTokens.neon.cyan,
           color: '#000',
           boxShadow: glowEffects.cyan(0.4),
+        },
+      },
+    },
+    MuiPopover: {
+      styleOverrides: {
+        root: {
+          // Ensure popover uses explicit pixel value, not theme multiplier
+          '--mui-shape-borderRadius': `${liquidGlassTokens.radius.lg}px`,
+        },
+        paper: {
+          borderRadius: `${liquidGlassTokens.radius.lg}px !important`,
+        },
+      },
+    },
+    MuiMenu: {
+      styleOverrides: {
+        root: {
+          // Ensure menu uses explicit pixel value, not theme multiplier
+          '--mui-shape-borderRadius': `${liquidGlassTokens.radius.lg}px`,
+        },
+        paper: {
+          borderRadius: `${liquidGlassTokens.radius.lg}px !important`,
+        },
+      },
+    },
+    MuiDialog: {
+      styleOverrides: {
+        root: {
+          // Ensure dialog uses explicit pixel value, not theme multiplier
+          '--mui-shape-borderRadius': `${liquidGlassTokens.radius.lg}px`,
+        },
+        paper: {
+          borderRadius: `${liquidGlassTokens.radius.lg}px !important`,
         },
       },
     },

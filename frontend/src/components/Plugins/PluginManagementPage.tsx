@@ -11,11 +11,13 @@ import {
   TextField,
   Alert,
   CircularProgress,
+  Card,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
   Search as SearchIcon,
   CloudDownload as DiscoverIcon,
+  Extension as PluginIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { usePlugins, usePluginHealth } from '@/hooks/usePlugins';

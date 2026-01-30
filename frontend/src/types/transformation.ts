@@ -87,6 +87,10 @@ export interface SystemHealth {
   encryptionEnabled: boolean;
   points?: number;
   streak?: number;
+  level?: number;
+  tier?: string;
+  nodeActive?: boolean;
+  filecoinConfigured?: boolean;
   lastSync?: string;
 }
 
@@ -129,3 +133,38 @@ export interface SourceFilter {
 
 // Time filter options
 export type TimeFilter = 'today' | 'week' | 'month' | 'all';
+
+// Pipeline stage types for real-time status indication
+export type PipelineStage = 
+  | 'encrypting'     // Lit Protocol encryption in progress
+  | 'uploading'      // Filecoin upload in progress  
+  | 'analyzing'      // VLM/AI analysis in progress
+  | 'syncing'        // Arkiv sync in progress
+  | 'downloading'    // Plugin download/recording in progress
+  | 'idle';          // No active operations
+
+// Pipeline stage status for header indicator
+export interface PipelineStageStatus {
+  stage: PipelineStage;
+  count: number;
+  color: string;
+  label: string;
+  icon?: string;
+}
+
+// Active pipeline operations aggregate
+export interface PipelineStatus {
+  stages: PipelineStageStatus[];
+  totalActive: number;
+  hasActivity: boolean;
+}
+
+// Plugin job status for OperationQueueTray
+export interface PluginJobStatus {
+  pluginName: string;
+  pluginDisplayName: string;
+  downloading: number;
+  recording: number;
+  totalActive: number;
+  color: string;
+}

@@ -1,10 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
   Box,
   Typography,
   IconButton,
-  ClickAwayListener,
-  Fade,
+  Popover,
   CircularProgress,
 } from '@mui/material';
 import {
@@ -13,13 +12,14 @@ import {
 } from '@mui/icons-material';
 import { PluginMetadata, PluginHealth } from '@/types/plugin';
 import PluginCard from './PluginCard';
-import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
+import { liquidGlassTokens } from '@/styles/liquidGlassTheme';
 
 interface PluginSelectionPopupProps {
   open: boolean;
   plugins: PluginMetadata[];
   healthStatus: PluginHealth[];
   loading: boolean;
+  anchorEl: HTMLElement | null;
   onClose: () => void;
   onPluginSelect: (plugin: PluginMetadata) => void;
   onLoadPlugin: (plugin: PluginMetadata) => void;
@@ -32,14 +32,13 @@ const PluginSelectionPopup: React.FC<PluginSelectionPopupProps> = ({
   plugins,
   healthStatus,
   loading,
+  anchorEl,
   onClose,
   onPluginSelect,
   onLoadPlugin,
   onUnloadPlugin,
   onRestartPlugin,
 }) => {
-  const popupRef = useRef<HTMLDivElement>(null);
-
   // Get health for a specific plugin
   const getHealthForPlugin = (pluginName: string) => {
     return healthStatus.find((h) => h.plugin_name === pluginName);
@@ -62,44 +61,54 @@ const PluginSelectionPopup: React.FC<PluginSelectionPopupProps> = ({
     };
   }, [open, onClose]);
 
-  if (!open) {
-    return null;
-  }
-
   return (
-    <ClickAwayListener onClickAway={onClose}>
-      <Fade in={open} timeout={200}>
+    <Popover
+      open={open}
+      anchorEl={anchorEl}
+      onClose={onClose}
+      anchorOrigin={{
+        vertical: 'top',
+        horizontal: 'right',
+      }}
+      transformOrigin={{
+        vertical: 'bottom',
+        horizontal: 'left',
+      }}
+      PaperProps={{
+        sx: {
+          width: 400,
+          maxHeight: 500,
+          background: liquidGlassTokens.glass.fill,
+          backdropFilter: `blur(${liquidGlassTokens.glass.blur}) saturate(180%)`,
+          WebkitBackdropFilter: `blur(${liquidGlassTokens.glass.blur}) saturate(180%)`,
+          border: `1px solid ${liquidGlassTokens.glass.border}`,
+          borderRadius: liquidGlassTokens.radius.lg,
+          boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.5), 0 12px 48px rgba(0, 0, 0, 0.5), 0 0 24px rgba(0, 245, 255, 0.1)`,
+          overflow: 'hidden',
+          mt: -1,
+          ml: 1,
+        },
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          maxHeight: 500,
+        }}
+      >
+        {/* Header */}
         <Box
-          ref={popupRef}
           sx={{
-            position: 'absolute',
-            left: 80,
-            top: 80,
-            width: 400,
-            maxHeight: 500,
-            background: liquidGlassTokens.glass.fill,
-            backdropFilter: `blur(${liquidGlassTokens.glass.blur}) saturate(180%)`,
-            WebkitBackdropFilter: `blur(${liquidGlassTokens.glass.blur}) saturate(180%)`,
-            border: `1px solid ${liquidGlassTokens.glass.border}`,
-            borderRadius: liquidGlassTokens.radius.lg,
-            boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.5), 0 12px 48px rgba(0, 0, 0, 0.5), 0 0 24px rgba(0, 245, 255, 0.1)`,
             display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            zIndex: 1000,
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            p: 2,
+            borderBottom: `1px solid ${liquidGlassTokens.glass.border}`,
+            background: 'rgba(255, 255, 255, 0.02)',
           }}
         >
-          {/* Header */}
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              p: 2,
-              borderBottom: `1px solid ${liquidGlassTokens.glass.border}`,
-              background: 'rgba(255, 255, 255, 0.02)',
-            }}
-          >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
               <PluginIcon
                 sx={{
@@ -126,29 +135,30 @@ const PluginSelectionPopup: React.FC<PluginSelectionPopupProps> = ({
                 ({plugins.length})
               </Typography>
             </Box>
-            <IconButton
-              size="small"
-              onClick={onClose}
-              sx={{
-                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
-                '&:hover': {
-                  color: 'rgba(255, 255, 255, 0.9)',
-                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                },
-              }}
-            >
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          </Box>
-
-          {/* Content */}
-          <Box
+          <IconButton
+            size="small"
+            onClick={onClose}
             sx={{
-              flex: 1,
-              overflow: 'auto',
-              p: 1,
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+              '&:hover': {
+                color: 'rgba(255, 255, 255, 0.9)',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+              },
             }}
           >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+
+        {/* Content */}
+        <Box
+          sx={{
+            flex: 1,
+            overflow: 'auto',
+            p: 1,
+            minHeight: 0,
+          }}
+        >
             {loading ? (
               <Box
                 sx={{
@@ -183,47 +193,46 @@ const PluginSelectionPopup: React.FC<PluginSelectionPopupProps> = ({
                 </Typography>
               </Box>
             ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {plugins.map((plugin) => (
-                  <PluginCard
-                    key={plugin.name}
-                    plugin={plugin}
-                    health={getHealthForPlugin(plugin.name)}
-                    mode="list"
-                    onLoad={() => onLoadPlugin(plugin)}
-                    onUnload={() => onUnloadPlugin(plugin)}
-                    onRestart={() => onRestartPlugin(plugin)}
-                    onConfigure={() => onPluginSelect(plugin)}
-                    onViewSources={() => onPluginSelect(plugin)}
-                  />
-                ))}
-              </Box>
-            )}
-          </Box>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {plugins.map((plugin) => (
+                <PluginCard
+                  key={plugin.name}
+                  plugin={plugin}
+                  health={getHealthForPlugin(plugin.name)}
+                  mode="list"
+                  onLoad={() => onLoadPlugin(plugin)}
+                  onUnload={() => onUnloadPlugin(plugin)}
+                  onRestart={() => onRestartPlugin(plugin)}
+                  onConfigure={() => onPluginSelect(plugin)}
+                  onViewSources={() => onPluginSelect(plugin)}
+                />
+              ))}
+            </Box>
+          )}
+        </Box>
 
-          {/* Footer hint */}
-          <Box
+        {/* Footer hint */}
+        <Box
+          sx={{
+            p: 1.5,
+            borderTop: `1px solid ${liquidGlassTokens.glass.border}`,
+            background: 'rgba(255, 255, 255, 0.02)',
+          }}
+        >
+          <Typography
+            variant="caption"
             sx={{
-              p: 1.5,
-              borderTop: `1px solid ${liquidGlassTokens.glass.border}`,
-              background: 'rgba(255, 255, 255, 0.02)',
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+              fontSize: '11px',
+              textAlign: 'center',
+              display: 'block',
             }}
           >
-            <Typography
-              variant="caption"
-              sx={{
-                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
-                fontSize: '11px',
-                textAlign: 'center',
-                display: 'block',
-              }}
-            >
-              Click to configure • ESC to close
-            </Typography>
-          </Box>
+            Click to configure • ESC to close
+          </Typography>
         </Box>
-      </Fade>
-    </ClickAwayListener>
+      </Box>
+    </Popover>
   );
 };
 

@@ -8,7 +8,7 @@
         body {
             margin: 0;
             padding: 0;
-            background-color: #2a2a2a;
+            background-color: #0a0a0f;
             font-family: 'Segoe UI', Arial, sans-serif;
         }
         #root {
@@ -16,6 +16,71 @@
             overflow: hidden;
         }
     </style>
+    <script>
+        // Polyfills for browser compatibility (needed for Electron apps running in browser context)
+        if (typeof global === 'undefined') {
+            window.global = window;
+        }
+        if (typeof globalThis === 'undefined') {
+            window.globalThis = window;
+        }
+        if (typeof process === 'undefined') {
+            window.process = { env: {} };
+        }
+        // Stub require for modules that try to use it
+        if (typeof window.require === 'undefined') {
+            window.require = function(module) {
+                console.warn('require() called for module:', module);
+                // Return common mocks
+                const mocks = {
+                    'electron': {
+                        ipcRenderer: {
+                            invoke: async () => null,
+                            on: () => {},
+                            once: () => {},
+                            removeListener: () => {},
+                            send: () => {},
+                        },
+                    },
+                    'fs': {},
+                    'path': {},
+                    'os': {},
+                    'child_process': {},
+                    'crypto': window.crypto,
+                };
+                return mocks[module] || {};
+            };
+        }
+        // Electron IPC mock for browser testing
+        if (typeof window.electronAPI === 'undefined') {
+            window.electronAPI = {
+                selectVideo: async () => null,
+                readVideoFile: async () => null,
+                uploadToFilecoin: async () => null,
+                getFilecoinConfig: async () => null,
+                saveFilecoinConfig: async () => null,
+                getArkivConfig: async () => null,
+                saveArkivConfig: async () => null,
+                validateEvmConfig: async () => null,
+                checkEvmBalance: async () => null,
+                addMagnetUrl: async () => null,
+                startBackend: async () => null,
+                stopBackend: async () => null,
+                restartBackend: async () => null,
+                getUploadWorkerStatus: async () => null,
+                startUploadWorker: async () => null,
+                stopUploadWorker: async () => null,
+                decryptTextWithLit: async () => null,
+                playback: {
+                    fileExists: async () => false,
+                    getGatewayConfig: async () => ({ baseUrl: 'https://ipfs.io/ipfs/' }),
+                    setGatewayConfig: async () => ({ baseUrl: 'https://ipfs.io/ipfs/' }),
+                },
+                onUploadProgress: () => {},
+                onFilecoinUploadProgress: () => {},
+            };
+        }
+    </script>
 </head>
 <body>
     <div id="root"></div>

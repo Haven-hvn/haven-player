@@ -268,12 +268,19 @@ module.exports = [
         } : false,
       }),
       new webpack.DefinePlugin({
-        global: 'window',
         'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+        'global': JSON.stringify('window'),
+        'globalThis': JSON.stringify('window'),
       }),
       new webpack.ProvidePlugin({
         Buffer: ['buffer', 'Buffer'],
         process: 'process/browser.js',
+        global: 'window',
+      }),
+      new webpack.BannerPlugin({
+        banner: 'if (typeof global === "undefined") { window.global = window; }',
+        raw: true,
+        entryOnly: true,
       }),
       new webpack.NormalModuleReplacementPlugin(
         /^process\/browser$/,

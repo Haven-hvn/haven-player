@@ -22,6 +22,7 @@ import {
   LinearProgress,
   Collapse,
   Tooltip,
+  Button,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -36,6 +37,9 @@ import {
   Error as ErrorIcon,
   CheckCircle as SuccessIcon,
   Schedule as PendingIcon,
+  VideoLibrary as VideoLibraryIcon,
+  FolderOpen as FolderOpenIcon,
+  Link as LinkIcon,
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import type { TransformationItem, TransformationState, SourceType } from '@/types/transformation';
@@ -60,6 +64,8 @@ interface TransformationCanvasProps {
   onItemClick: (item: TransformationItem) => void;
   onItemPlay: (item: TransformationItem) => void;
   onItemUpload: (item: TransformationItem) => void;
+  onAddVideo?: () => void;
+  isBitTorrentEnabled?: boolean;
 }
 
 interface GroupedItem {
@@ -77,6 +83,8 @@ const TransformationCanvas: React.FC<TransformationCanvasProps> = ({
   onItemClick,
   onItemPlay,
   onItemUpload,
+  onAddVideo,
+  isBitTorrentEnabled = false,
 }) => {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -143,7 +151,7 @@ const TransformationCanvas: React.FC<TransformationCanvasProps> = ({
   }
 
   if (items.length === 0) {
-    return <EmptyState />;
+    return <EmptyState onAddVideo={onAddVideo} isBitTorrentEnabled={isBitTorrentEnabled} />;
   }
 
   // Use virtualization for groups when there are many
@@ -160,7 +168,7 @@ const TransformationCanvas: React.FC<TransformationCanvasProps> = ({
           display: 'flex',
           flexDirection: 'column',
           gap: 2,
-          contain: 'layout style',
+          // Containment removed to allow circuit animation to be visible
         }}
       >
         {groupedItems.map(group => (
@@ -222,7 +230,7 @@ const VirtualizedGroupList: React.FC<VirtualizedGroupListProps> = ({
         flex: 1,
         overflow: 'auto',
         p: 3,
-        contain: 'strict',
+        // Containment removed to allow circuit animation to be visible
       }}
     >
       <Box
@@ -265,7 +273,12 @@ const VirtualizedGroupList: React.FC<VirtualizedGroupListProps> = ({
 };
 
 // Empty State Component
-const EmptyState: React.FC = () => (
+interface EmptyStateProps {
+  onAddVideo?: () => void;
+  isBitTorrentEnabled?: boolean;
+}
+
+const EmptyState: React.FC<EmptyStateProps> = ({ onAddVideo, isBitTorrentEnabled }) => (
   <Box
     sx={{
       display: 'flex',
@@ -288,7 +301,7 @@ const EmptyState: React.FC = () => (
         justifyContent: 'center',
       }}
     >
-      <TokenIcon
+      <VideoLibraryIcon
         sx={{
           fontSize: 40,
           color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
@@ -304,17 +317,69 @@ const EmptyState: React.FC = () => (
           mb: 1,
         }}
       >
-        No content yet
+        Add your first video
       </Typography>
       <Typography
         sx={{
           fontSize: '14px',
           color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
-          maxWidth: 300,
+          maxWidth: 400,
+          mb: 3,
         }}
       >
-        Start by enabling a plugin or subscribing to a stream to begin archiving content.
+        Choose how you'd like to add content to your archive
       </Typography>
+      
+      {/* Add Video Actions */}
+      {onAddVideo && (
+        <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Button
+            variant="outlined"
+            startIcon={<FolderOpenIcon />}
+            onClick={onAddVideo}
+            sx={{
+              borderColor: 'rgba(255, 255, 255, 0.2)',
+              color: 'rgba(255, 255, 255, 0.9)',
+              textTransform: 'none',
+              fontWeight: 500,
+              px: 3,
+              py: 1,
+              borderRadius: '10px',
+              '&:hover': {
+                borderColor: liquidGlassTokens.neon.cyan,
+                background: `${liquidGlassTokens.neon.cyan}10`,
+                color: liquidGlassTokens.neon.cyan,
+              },
+            }}
+          >
+            Add from Local File
+          </Button>
+          
+          {isBitTorrentEnabled && (
+            <Button
+              variant="outlined"
+              startIcon={<LinkIcon />}
+              onClick={onAddVideo}
+              sx={{
+                borderColor: 'rgba(255, 255, 255, 0.2)',
+                color: 'rgba(255, 255, 255, 0.9)',
+                textTransform: 'none',
+                fontWeight: 500,
+                px: 3,
+                py: 1,
+                borderRadius: '10px',
+                '&:hover': {
+                  borderColor: liquidGlassTokens.neon.magenta,
+                  background: `${liquidGlassTokens.neon.magenta}10`,
+                  color: liquidGlassTokens.neon.magenta,
+                },
+              }}
+            >
+              Add from Magnet URL
+            </Button>
+          )}
+        </Box>
+      )}
     </Box>
   </Box>
 );

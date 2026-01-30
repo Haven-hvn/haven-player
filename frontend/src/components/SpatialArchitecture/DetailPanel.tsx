@@ -51,7 +51,9 @@ import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import type { TransformationItem, TransformationState } from '@/types/transformation';
 import { STATE_COLORS } from '@/hooks/useTransformationPipeline';
 import PluginSourcesPanel from '@/components/Plugins/PluginSourcesPanel';
-import { MediaSource } from '@/types/plugin';
+import PluginOperationsPanel from '@/components/Plugins/PluginOperationsPanel';
+import OperationsPanel from './OperationsPanel';
+import type { MediaSource, DePinActiveOperation, PluginMetadata } from '@/types/plugin';
 
 // State labels for display
 const STATE_LABELS: Record<TransformationState, string> = {
@@ -71,12 +73,19 @@ interface DetailPanelProps {
   item: TransformationItem | null;
   
   // Plugin sources content
-  contentType?: 'video' | 'plugin-sources';
+  contentType?: 'video' | 'plugin-sources' | 'plugin-operations' | 'operations';
   pluginName?: string;
+  plugin?: PluginMetadata | null | undefined;
   pluginSources?: MediaSource[];
   pluginSourcesLoading?: boolean;
   pluginSourcesError?: string | null;
   onRefreshPluginSources?: () => void;
+  
+  // Operations content
+  operations?: DePinActiveOperation[];
+  operationsLoading?: boolean;
+  onStopOperation?: (operationId: string) => void;
+  onPauseOperation?: (operationId: string, paused: boolean) => void;
   
   // Visibility state (controlled by useLayoutMode)
   visible: boolean;
@@ -94,10 +103,15 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   item,
   contentType = 'video',
   pluginName,
+  plugin,
   pluginSources = [],
   pluginSourcesLoading = false,
   pluginSourcesError = null,
   onRefreshPluginSources,
+  operations = [],
+  operationsLoading = false,
+  onStopOperation,
+  onPauseOperation,
   visible,
   preview,
   width,
@@ -156,7 +170,83 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     return null;
   }
 
-  // Render plugin sources panel
+  // Check if plugin has operation capabilities
+  const hasOperationCapability = plugin?.capabilities?.some(
+    (cap) => cap.operations && cap.operations.length > 0
+  );
+
+  // Render plugin operations panel (for plugins with operation capabilities like subscription)
+  if (contentType === 'plugin-operations' || (contentType === 'plugin-sources' && hasOperationCapability)) {
+    return (
+      <Box
+        ref={panelRef}
+        sx={{
+          width: width,
+          height: '100%',
+          background: 'rgba(10, 10, 15, 0.7)',
+          borderLeft: `1px solid rgba(255, 255, 255, 0.06)`,
+          backdropFilter: 'blur(20px) saturate(180%)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          transition: `width ${liquidGlassTokens.motion.durationNormal} ${liquidGlassTokens.motion.enter}`,
+          boxShadow: visible ? '-8px 0 32px rgba(0, 0, 0, 0.2)' : 'none',
+        }}
+      >
+        {/* Header */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            p: preview ? 2 : 3,
+            borderBottom: `1px solid rgba(255, 255, 255, 0.06)`,
+            minHeight: preview ? 48 : 56,
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <PluginIcon
+              sx={{
+                color: liquidGlassTokens.neon.cyan,
+                fontSize: preview ? 18 : 20,
+              }}
+            />
+            <Typography
+              sx={{
+                fontSize: preview ? '14px' : '16px',
+                fontWeight: 600,
+                color: 'rgba(255, 255, 255, 0.95)',
+              }}
+            >
+              {pluginName}
+            </Typography>
+          </Box>
+          <IconButton
+            onClick={onClose}
+            size="small"
+            sx={{
+              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+              '&:hover': {
+                color: 'rgba(255, 255, 255, 0.9)',
+              },
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+
+        {/* Content */}
+        <Box sx={{ flex: 1, overflow: 'hidden', p: preview ? 2 : 3 }}>
+          <PluginOperationsPanel
+            plugin={plugin}
+            pluginName={pluginName!}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
+  // Render plugin sources panel (legacy - for plugins without operation capabilities)
   if (contentType === 'plugin-sources') {
     return (
       <Box
@@ -164,9 +254,9 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         sx={{
           width: width,
           height: '100%',
-          background: liquidGlassTokens.canvas.base,
+          background: 'rgba(10, 10, 15, 0.7)',
           borderLeft: `1px solid rgba(255, 255, 255, 0.06)`,
-          backdropFilter: 'blur(20px)',
+          backdropFilter: 'blur(20px) saturate(180%)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -228,6 +318,38 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         </Box>
       </Box>
     );
+  }
+
+  // Render operations panel
+  if (contentType === 'operations') {
+    return (
+      <Box
+        ref={panelRef}
+        sx={{
+          width: width,
+          height: '100%',
+          background: 'rgba(10, 10, 15, 0.7)',
+          borderLeft: `1px solid rgba(255, 255, 255, 0.06)`,
+          backdropFilter: 'blur(20px) saturate(180%)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          transition: `width ${liquidGlassTokens.motion.durationNormal} ${liquidGlassTokens.motion.enter}`,
+          boxShadow: visible ? '-8px 0 32px rgba(0, 0, 0, 0.2)' : 'none',
+        }}
+      >
+        <OperationsPanel
+          operations={operations}
+          onStop={onStopOperation || (() => {})}
+          onPause={onPauseOperation || (() => {})}
+          loading={operationsLoading}
+        />
+      </Box>
+    );
+  }
+
+  if (!item) {
+    return null;
   }
 
   const stateColor = STATE_COLORS[item.state];
@@ -321,7 +443,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
               letterSpacing: '0.02em',
             }}
           >
-            {STATE_LABELS[item.state]}
+            {item.state in STATE_LABELS ? STATE_LABELS[item.state] : item.state}
           </Typography>
           {item.isEncrypted && (
             <Tooltip title="Content encrypted">
@@ -385,9 +507,9 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                   whiteSpace: 'nowrap',
                 }}
               >
-                {item.tokenInfo.name || item.tokenInfo.symbol || 'Unknown Token'}
+                {item.tokenInfo?.name || item.tokenInfo?.symbol || 'Unknown Token'}
               </Typography>
-              {item.tokenInfo.mintId && !preview && (
+              {item.tokenInfo?.mintId && !preview && (
                 <Typography
                   sx={{
                     fontSize: '11px',
@@ -395,7 +517,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                     color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
                   }}
                 >
-                  {item.tokenInfo.mintId.slice(0, 12)}...
+                  {item.tokenInfo?.mintId?.slice(0, 12)}...
                 </Typography>
               )}
             </Box>
@@ -527,7 +649,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                       </Typography>
                       <IconButton
                         size="small"
-                        onClick={() => copyToClipboard(item.filecoinCid!)}
+                        onClick={() => item.filecoinCid && copyToClipboard(item.filecoinCid)}
                         sx={{
                           color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
                           width: 20,
@@ -555,7 +677,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                           size="small"
                           startIcon={<ExternalLinkIcon sx={{ fontSize: 14 }} />}
                           component={Link}
-                          href={`https://gateway.pinata.cloud/ipfs/${item.filecoinCid}`}
+                          href={`https://gateway.pinata.cloud/ipfs/${item.filecoinCid || ''}`}
                           target="_blank"
                           sx={{
                             fontSize: '11px',
@@ -571,7 +693,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                           size="small"
                           startIcon={<ExternalLinkIcon sx={{ fontSize: 14 }} />}
                           component={Link}
-                          href={`https://filfox.info/en/deal?cid=${item.filecoinCid}`}
+                          href={`https://filfox.info/en/deal?cid=${item.filecoinCid || ''}`}
                           target="_blank"
                           sx={{
                             fontSize: '11px',
@@ -631,14 +753,14 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                         wordBreak: 'break-all',
                       }}
                     >
-                      {item.arkivEntityKey}
+                      {item.arkivEntityKey || ''}
                     </Typography>
                   </Box>
                 </>
               )}
 
               {/* Error Info */}
-              {item.state === 'failed' && item.errorMessage && (
+              {item?.state === 'failed' && item?.errorMessage && (
                 <>
                   <Typography
                     sx={{
@@ -666,7 +788,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                         color: liquidGlassTokens.neon.error,
                       }}
                     >
-                      {item.errorMessage}
+                      {item.errorMessage || ''}
                     </Typography>
                   </Box>
                 </>
@@ -678,7 +800,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                   fullWidth
                   variant="outlined"
                   startIcon={<AnalyticsIcon />}
-                  onClick={() => onAnalyze(item)}
+                  onClick={() => item && onAnalyze(item)}
                   sx={{
                     color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
                     borderColor: 'rgba(255, 255, 255, 0.15)',

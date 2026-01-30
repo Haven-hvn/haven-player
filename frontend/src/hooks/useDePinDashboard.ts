@@ -36,7 +36,9 @@ export function useDePinDashboard() {
       
       // Filter to plugins with 'archival' capability
       const archivalPlugins = plugins.filter((p: PluginMetadata) => 
-        p.capabilities?.includes('archival')
+        p.capabilities?.some((cap) => 
+          typeof cap === 'string' ? cap === 'archival' : cap.name === 'archival'
+        )
       );
       
       // Get active status for each plugin
@@ -85,7 +87,9 @@ export function useDePinDashboard() {
     try {
       const plugins = await pluginService.getAll();
       const archivalPlugins = plugins.filter((p: PluginMetadata) => 
-        p.capabilities?.includes('archival')
+        p.capabilities?.some((cap) => 
+          typeof cap === 'string' ? cap === 'archival' : cap.name === 'archival'
+        )
       );
       
       const allOperations: DePinActiveOperation[] = [];

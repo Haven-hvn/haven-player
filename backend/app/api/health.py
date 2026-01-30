@@ -50,7 +50,7 @@ async def get_health() -> Dict[str, Any]:
         # This is determined by whether Lit Protocol keys are configured
         encryption_enabled = is_encryption_enabled()
     
-    # Get DePin stats (placeholder - would come from database)
+    # Get DePin stats from database
     depin_stats = get_depin_stats()
     points = depin_stats.get("points", 0)
     streak = depin_stats.get("daily_streak", 0)
@@ -74,6 +74,47 @@ async def get_health() -> Dict[str, Any]:
         "filecoin_configured": filecoin_configured,
         "plugins": plugins
     }
+
+
+@router.post("/api/health/depin-stats")
+async def update_depin_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Update DePin statistics in the database.
+    
+    This endpoint allows the frontend to persist DePin stats.
+    """
+    db = SessionLocal()
+    try:
+        config = db.query(AppConfig).first()
+        if not config:
+            config = AppConfig()
+            db.add(config)
+        
+        # Update stats if provided
+        if "points" in stats:
+            config.depin_points = stats["points"]
+        if "daily_streak" in stats:
+            config.depin_daily_streak = stats["daily_streak"]
+        if "is_active" in stats:
+            config.depin_is_active = stats["is_active"]
+        
+        from datetime import datetime, timezone
+        config.depin_last_tick = datetime.now(timezone.utc)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "points": config.depin_points,
+            "daily_streak": config.depin_daily_streak,
+            "is_active": config.depin_is_active
+        }
+    except Exception as e:
+        logger.error(f"Error updating DePin stats: {e}")
+        db.rollback()
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
 
 
 def check_wallet_connection() -> bool:
@@ -130,17 +171,36 @@ def is_encryption_enabled() -> bool:
 
 def get_depin_stats() -> Dict[str, Any]:
     """
-    Get DePin statistics.
+    Get DePin statistics from the database.
     
     Returns points, streak, and activity status.
-    In a real implementation, this would query the database.
     """
-    # Placeholder - would query database for actual stats
-    return {
-        "points": 0,
-        "daily_streak": 0,
-        "is_active": False
-    }
+    db = SessionLocal()
+    try:
+        config = db.query(AppConfig).first()
+        if config:
+            return {
+                "points": config.depin_points,
+                "daily_streak": config.depin_daily_streak,
+                "is_active": config.depin_is_active,
+                "last_tick": config.depin_last_tick.isoformat() if config.depin_last_tick else None
+            }
+        return {
+            "points": 0,
+            "daily_streak": 0,
+            "is_active": False,
+            "last_tick": None
+        }
+    except Exception as e:
+        logger.error(f"Error getting DePin stats: {e}")
+        return {
+            "points": 0,
+            "daily_streak": 0,
+            "is_active": False,
+            "last_tick": None
+        }
+    finally:
+        db.close()
 
 
 def calculate_tier(points: int) -> str:

@@ -23,6 +23,7 @@ import {
   IconButton,
   Tooltip,
   Fade,
+  Switch,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -39,10 +40,13 @@ import {
   Storage as StorageIcon,
   FilterList as FilterIcon,
   Extension as PluginIcon,
+  CloudUpload as UploadIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import { CircuitSubstrateSimple } from '@/components/LiquidGlass';
 import type { Source, SourceType, StateFilter } from '@/types/transformation';
+import type { PluginHealth } from '@/types/plugin';
 
 // Constants for spine dimensions
 const SPINE_COLLAPSED_WIDTH = 64;
@@ -76,7 +80,12 @@ interface SourceNavigatorProps {
   onStateFilterChange: (state: string) => void;
   onRefresh: () => void;
   onSettings: () => void;
-  onPluginConfig?: () => void;
+  onPluginConfig?: (anchorEl: HTMLElement) => void;
+  // Node/Upload Worker props
+  pluginHealthStatus?: PluginHealth[];
+  nodeActive?: boolean;
+  filecoinConfigured?: boolean;
+  onNodeToggle?: (active: boolean) => void;
 }
 
 const SourceNavigator: React.FC<SourceNavigatorProps> = ({
@@ -89,10 +98,15 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
   onRefresh,
   onSettings,
   onPluginConfig,
+  pluginHealthStatus = [],
+  nodeActive = false,
+  filecoinConfigured = false,
+  onNodeToggle,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pluginsButtonRef = useRef<HTMLDivElement>(null);
 
   // Handle mouse enter with delay
   const handleMouseEnter = useCallback(() => {
@@ -126,7 +140,7 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
       sx={{
         width: width,
         height: '100vh',
-        background: liquidGlassTokens.canvas.base,
+        background: 'transparent',
         display: 'flex',
         flexDirection: 'column',
         borderRight: `1px solid rgba(255, 255, 255, 0.06)`,
@@ -361,6 +375,148 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
       {/* Spacer */}
       <Box sx={{ flexGrow: 1 }} />
 
+      {/* Node Section - Only show if upload plugins are enabled */}
+      {hasUploadPlugins(pluginHealthStatus) && (
+        <Fade in={isExpanded} timeout={200}>
+          <Box
+            sx={{
+              px: isExpanded ? 2 : 1,
+              mb: 2,
+              display: isExpanded ? 'block' : 'none',
+            }}
+          >
+            <Typography
+              sx={{
+                color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                fontWeight: 500,
+                fontSize: '11px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                mb: 1,
+                px: 1,
+              }}
+            >
+              DePIN Node
+            </Typography>
+            
+            <Box
+              sx={{
+                p: 2,
+                background: nodeActive 
+                  ? `${liquidGlassTokens.neon.success}10` 
+                  : filecoinConfigured 
+                    ? 'rgba(255, 255, 255, 0.03)' 
+                    : `${liquidGlassTokens.neon.amber}10`,
+                borderRadius: `${liquidGlassTokens.radius.md}px`,
+                border: nodeActive 
+                  ? `1px solid ${liquidGlassTokens.neon.success}30` 
+                  : filecoinConfigured 
+                    ? '1px solid rgba(255, 255, 255, 0.08)' 
+                    : `1px solid ${liquidGlassTokens.neon.amber}30`,
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
+                <UploadIcon
+                  sx={{
+                    fontSize: 18,
+                    color: nodeActive 
+                      ? liquidGlassTokens.neon.success 
+                      : filecoinConfigured 
+                        ? `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})` 
+                        : liquidGlassTokens.neon.amber,
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: nodeActive 
+                      ? liquidGlassTokens.neon.success 
+                      : 'rgba(255, 255, 255, 0.95)',
+                  }}
+                >
+                  Upload Worker
+                </Typography>
+                <Box sx={{ flexGrow: 1 }} />
+                <Switch
+                  checked={nodeActive}
+                  onChange={(e) => onNodeToggle?.(e.target.checked)}
+                  disabled={!filecoinConfigured}
+                  size="small"
+                  sx={{
+                    '& .MuiSwitch-switchBase.Mui-checked': {
+                      color: liquidGlassTokens.neon.success,
+                    },
+                    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                      backgroundColor: `${liquidGlassTokens.neon.success}60`,
+                    },
+                  }}
+                />
+              </Box>
+
+              {/* Status indicator */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <StatusDotIcon
+                  sx={{
+                    fontSize: 8,
+                    color: nodeActive 
+                      ? liquidGlassTokens.neon.success 
+                      : filecoinConfigured 
+                        ? `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})` 
+                        : liquidGlassTokens.neon.amber,
+                    animation: nodeActive ? 'pulse 1.5s infinite' : 'none',
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: '12px',
+                    color: nodeActive 
+                      ? liquidGlassTokens.neon.success 
+                      : `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                  }}
+                >
+                  {nodeActive 
+                    ? 'Active - Earning rewards' 
+                    : filecoinConfigured 
+                      ? 'Inactive - Start to earn' 
+                      : 'Configure Filecoin first'}
+                </Typography>
+              </Box>
+
+              {/* Warning if Filecoin not configured */}
+              {!filecoinConfigured && (
+                <Box
+                  sx={{
+                    mt: 1.5,
+                    p: 1,
+                    background: `${liquidGlassTokens.neon.amber}15`,
+                    borderRadius: `${liquidGlassTokens.radius.sm}px`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                  }}
+                >
+                  <WarningIcon
+                    sx={{
+                      fontSize: 14,
+                      color: liquidGlassTokens.neon.amber,
+                    }}
+                  />
+                  <Typography
+                    sx={{
+                      fontSize: '11px',
+                      color: liquidGlassTokens.neon.amber,
+                    }}
+                  >
+                    Filecoin not configured
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        </Fade>
+      )}
+
       {/* Divider */}
       <Box
         sx={{
@@ -396,12 +552,14 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
           onClick={onSettings} 
         />
         {onPluginConfig && (
-          <BottomAction 
-            icon={<PluginIcon />} 
-            label="Plugins" 
-            expanded={isExpanded}
-            onClick={onPluginConfig} 
-          />
+          <Box ref={pluginsButtonRef}>
+            <BottomAction 
+              icon={<PluginIcon />} 
+              label="Plugins" 
+              expanded={isExpanded}
+              onClick={() => pluginsButtonRef.current && onPluginConfig(pluginsButtonRef.current)} 
+            />
+          </Box>
         )}
         <BottomAction 
           icon={<HelpIcon />} 
@@ -644,6 +802,13 @@ const StateFilterItem: React.FC<{
     </Typography>
   </Box>
 );
+
+// Helper function to check if any upload-capable plugins are enabled
+function hasUploadPlugins(pluginHealthStatus: PluginHealth[]): boolean {
+  // For now, consider any healthy plugin as potentially having upload capability
+  // This could be refined based on plugin capabilities
+  return pluginHealthStatus.length > 0;
+}
 
 // Bottom Action Component
 const BottomAction: React.FC<{

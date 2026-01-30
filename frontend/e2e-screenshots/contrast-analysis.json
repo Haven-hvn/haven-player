@@ -1,0 +1,16 @@
+[
+  {
+    "element": "body",
+    "text": "Something went wrong.Cannot read properties of und",
+    "color": "rgb(0, 0, 0)",
+    "backgroundColor": "rgb(10, 10, 15)",
+    "contrastRatio": 1.06
+  },
+  {
+    "element": "div",
+    "text": "Something went wrong.Cannot read properties of und",
+    "color": "rgb(0, 0, 0)",
+    "backgroundColor": "rgb(10, 10, 15)",
+    "contrastRatio": 1.06
+  }
+]

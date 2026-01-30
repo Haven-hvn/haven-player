@@ -1,19 +1,13 @@
 import React, { useMemo, useState } from "react";
 import { Box, Typography, Divider, Collapse } from "@mui/material";
 import {
-  Explore as ExploreIcon,
   VideoLibrary as AssetsIcon,
-  Movie as MyVideosIcon,
-  Favorite as LikesIcon,
-  Folder as FoldersIcon,
   Refresh as RefreshIcon,
   Settings as SettingsIcon,
   Help as HelpIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   AcUnit as BrainIcon,
-  CloudUpload as CloudUploadIcon,
-  Extension as PluginsIcon,
 } from "@mui/icons-material";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsNavigation } from "@/context/SettingsNavigationContext";
@@ -58,41 +52,17 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
   const navigationItems: NavItem[] = useMemo(
     () => [
       {
-        icon: ExploreIcon,
-        label: "Dashboard",
-        path: "/",
-        active: location.pathname === "/",
-      },
-      {
         icon: AssetsIcon,
         label: "Archive",
         path: "/archive",
-        active: location.pathname === "/archive",
-      },
-      {
-        icon: PluginsIcon,
-        label: "Plugins",
-        path: "/plugins",
-        active: location.pathname === "/plugins" || location.pathname.startsWith("/plugins/"),
-      },
-      {
-        icon: CloudUploadIcon,
-        label: "DePin Node",
-        path: "/depin",
-        active: location.pathname === "/depin",
+        active: location.pathname === "/archive" || location.pathname === "/",
       },
     ],
     [location.pathname]
   );
 
-  const personalItems: NavItem[] = useMemo(
-    () => [
-      { icon: MyVideosIcon, label: "My Videos", path: "/my-videos", active: location.pathname === "/my-videos" },
-      { icon: LikesIcon, label: "Likes", path: "/", active: false }, // TODO: Implement likes feature
-      { icon: FoldersIcon, label: "Folders", path: "/", active: false }, // TODO: Implement folders feature
-    ],
-    [location.pathname]
-  );
+  // Personal section removed - functionality consolidated into Archive screen
+  const personalItems: NavItem[] = useMemo(() => [], [location.pathname]);
 
   return (
     <Box
@@ -228,57 +198,7 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
         </Collapse>
       </Box>
 
-      {/* Personal Section */}
-      <Box sx={{ mb: 3, position: "relative", zIndex: 1 }}>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            mb: 2,
-            cursor: "pointer",
-            transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
-            "&:hover": {
-              "& .section-label": {
-                color: "rgba(255, 255, 255, 0.7)",
-              },
-            },
-          }}
-          onClick={() => toggleSection("personal")}
-        >
-          <Typography
-            className="section-label"
-            variant="caption"
-            sx={{
-              color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
-              fontWeight: 500,
-              fontSize: "11px",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              transition: `color ${liquidGlassTokens.motion.durationFast} ease`,
-            }}
-          >
-            Personal
-          </Typography>
-          {sectionsExpanded.personal ? (
-            <ExpandLessIcon sx={{ fontSize: 16, color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})` }} />
-          ) : (
-            <ExpandMoreIcon sx={{ fontSize: 16, color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})` }} />
-          )}
-        </Box>
-
-        <Collapse in={sectionsExpanded.personal}>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-            {personalItems.map((item: NavItem, index: number) => (
-              <NavItemComponent
-                key={index}
-                item={item}
-                onClick={() => navigate(item.path)}
-              />
-            ))}
-          </Box>
-        </Collapse>
-      </Box>
+      {/* Personal section removed - all functionality consolidated into Archive screen */}
 
       {/* Spacer */}
       <Box sx={{ flexGrow: 1 }} />

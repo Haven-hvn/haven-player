@@ -1,28 +1,18 @@
-import React, { useState, useCallback, useEffect, useMemo, Suspense, lazy } from "react";
+import React, { useState, useCallback, useEffect, useMemo, lazy } from "react";
 import {
   HashRouter as Router,
   Routes,
   Route,
-  useNavigate,
+  Navigate,
 } from "react-router-dom";
-import { ThemeProvider, CssBaseline, Box, Snackbar, Alert, CircularProgress } from "@mui/material";
+import { ThemeProvider, CssBaseline, Box, CircularProgress } from "@mui/material";
 import { liquidGlassTheme, liquidGlassTokens } from "@/styles/liquidGlassTheme";
 import { CircuitSubstrate } from "@/components/LiquidGlass";
-import Sidebar from "@/components/Sidebar";
-import Header from "@/components/Header";
-import VideoAnalysisList from "@/components/VideoAnalysisList";
-import AddVideoModal from "@/components/AddVideoModal";
 
-// Lazy load heavy components for code splitting
+// Lazy load components for code splitting
 const LogViewer = lazy(() => import("./components/LogViewer"));
-const VideoGrid = lazy(() => import("@/components/VideoGrid"));
 const VideoPlayer = lazy(() => import("@/components/VideoPlayer"));
 const ConfigurationModal = lazy(() => import("@/components/ConfigurationModal"));
-const DePinDashboard = lazy(() => import("@/components/DePinDashboard"));
-const PluginManagementPage = lazy(() => import("@/components/Plugins/PluginManagementPage"));
-const PluginSourcesView = lazy(() => import("@/components/Plugins/PluginSourcesView"));
-const PumpFunStreamsView = lazy(() => import("@/components/LivestreamRecorder/PumpFunStreamsView"));
-const OpenRingDevicesView = lazy(() => import("@/components/Plugins/OpenRingDevicesView"));
 const SpatialLayout = lazy(() => import("@/components/SpatialArchitecture").then(m => ({ default: m.SpatialLayout })));
 
 // Loading fallback component
@@ -33,201 +23,29 @@ const RouteLoader: React.FC = () => (
       alignItems: "center",
       justifyContent: "center",
       height: "100vh",
-      backgroundColor: liquidGlassTokens.canvas.base,
+      backgroundColor: 'transparent',
     }}
   >
     <CircularProgress sx={{ color: liquidGlassTokens.neon.cyan }} />
   </Box>
 );
+
 import { useVideos } from "@/hooks/useVideos";
 import { usePlugins } from "@/hooks/usePlugins";
 import { useFilecoinUpload } from "@/hooks/useFilecoinUpload";
-import { Video } from "@/types/video";
-import type { FilecoinConfig, FilecoinUploadStatus } from "@/types/filecoin";
-import {
-  videoService,
-  startAnalysisJob,
-  getVideoJobs,
-  JobProgress,
-} from "@/services/api";
-import usePumpFunSources from "@/hooks/usePumpFunSources";
+import type { FilecoinConfig } from "@/types/filecoin";
 import {
   SettingsNavigationProvider,
   useSettingsNavigation,
 } from "@/context/SettingsNavigationContext";
-import {
-  DEFAULT_AI_CONFIG,
-  isAiConfigDefault,
-  isFilecoinConfigured,
-} from "@/utils/settingsValidation";
 
-
-const MainApp: React.FC = () => {
-  const navigate = useNavigate();
-  const {
-    videos,
-    videoGroups,
-    loading,
-    error,
-    videoTimestamps,
-    addVideo,
-    refreshVideos,
-    fetchTimestampsForVideo,
-    updateVideoSharePreference,
-  } = useVideos();
-  const {
-    isOpen: settingsOpen,
-    activeTab: settingsActiveTab,
-    openSettings,
-    closeSettings,
-    setActiveTab,
-  } = useSettingsNavigation();
+// Wrapper component for SpatialLayout with upload handling
+const SpatialLayoutWrapper: React.FC = () => {
+  const { refreshVideos, addVideo } = useVideos();
+  const { uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
   const { plugins } = usePlugins();
-  const [isAddVideoModalOpen, setAddVideoModalOpen] = useState(false);
-  const [downloadingTorrents, setDownloadingTorrents] = useState<Set<string>>(new Set());
-  const [analysisStatuses, setAnalysisStatuses] = useState<
-    Record<string, "pending" | "analyzing" | "completed" | "error" | "downloading">
-  >({});
-  const [activeJobs, setActiveJobs] = useState<Record<string, number>>({});
-  const [jobProgresses, setJobProgresses] = useState<Record<string, number>>(
-    {}
-  );
-  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
-  const [aiConfig, setAiConfig] = useState<typeof DEFAULT_AI_CONFIG | null>(
-    null
-  );
-
-  // Filecoin upload hook
-  const { uploadStatus, uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
-
-  const fetchBackendConfig = useCallback(async () => {
-    try {
-      const response = await fetch("http://localhost:8000/api/config/");
-      if (!response.ok) {
-        return;
-      }
-
-      const data = await response.json();
-      setAiConfig({
-        analysis_tags: data.analysis_tags,
-        llm_base_url: data.llm_base_url,
-        llm_model: data.llm_model,
-        max_batch_size: data.max_batch_size,
-      });
-    } catch (error) {
-      console.error("Failed to fetch backend config:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchBackendConfig();
-  }, [fetchBackendConfig]);
-
-  // Add search and view mode state
-  const [searchQuery, setSearchQuery] = useState("");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  
-  // Notification state for duplicate detection and other errors
-  const [notification, setNotification] = useState<{
-    open: boolean;
-    message: string;
-    severity: "error" | "warning" | "info" | "success";
-  }>({
-    open: false,
-    message: "",
-    severity: "info",
-  });
-
-  // Initialize upload status from backend data (filecoin_root_cid from database)
-  // This reads from the backend data that's already in the videos array
-  const uploadStatusesFromBackend = useMemo(() => {
-    const statuses: Record<string, FilecoinUploadStatus> = {};
-
-    videos.forEach((video: Video) => {
-      if (video.filecoin_root_cid) {
-        // Video has been uploaded to Filecoin (data from backend)
-        statuses[video.path] = {
-          status: "completed",
-          progress: 100,
-          rootCid: video.filecoin_root_cid,
-        };
-      }
-    });
-
-    return statuses;
-  }, [videos]);
-
-  // Merge backend status with active upload status (active uploads take precedence)
-  const mergedUploadStatuses = useMemo(() => {
-    const merged: Record<string, FilecoinUploadStatus> = { ...uploadStatusesFromBackend };
-
-    // Override with active upload status if it exists (for in-progress uploads)
-    Object.entries(uploadStatus).forEach(([videoPath, status]: [string, FilecoinUploadStatus]) => {
-      merged[videoPath] = status;
-    });
-
-    return merged;
-  }, [uploadStatusesFromBackend, uploadStatus]);
-
-  // Initialize hidden videos from localStorage
-  const [hiddenVideos, setHiddenVideos] = useState<Set<string>>(() => {
-    try {
-      const stored = localStorage.getItem("haven-player-hidden-videos");
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
-
-  // Handle keyboard shortcuts (Command+K for search)
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "k") {
-        event.preventDefault();
-        // Focus the search input using the data attribute
-        const searchInput = document.querySelector(
-          'input[data-search-input="true"]'
-        ) as HTMLInputElement;
-        if (searchInput) {
-          searchInput.focus();
-          searchInput.select();
-        }
-      }
-
-      // Clear search on Escape
-      if (event.key === "Escape" && searchQuery) {
-        setSearchQuery("");
-        // Also clear the search in the header component
-        const searchInput = document.querySelector(
-          'input[data-search-input="true"]'
-        ) as HTMLInputElement;
-        if (searchInput) {
-          searchInput.value = "";
-          // Trigger the change event to update the header state
-          const changeEvent = new Event("input", { bubbles: true });
-          searchInput.dispatchEvent(changeEvent);
-        }
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [searchQuery]);
-
-  // Save hidden videos to localStorage whenever it changes
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        "haven-player-hidden-videos",
-        JSON.stringify([...hiddenVideos])
-      );
-    } catch (error) {
-      console.error("Failed to save hidden videos to localStorage:", error);
-    }
-  }, [hiddenVideos]);
-
-  // Filecoin config for MainApp
   const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
+  const { openSettings } = useSettingsNavigation();
 
   // Load Filecoin config on mount
   useEffect(() => {
@@ -245,61 +63,35 @@ const MainApp: React.FC = () => {
     loadFilecoinConfig();
   }, []);
 
+  // BitTorrent plugin detection
   const isBitTorrentEnabled = useMemo(() => {
     const bittorrentPlugin = plugins.find((p) => p.name === "BitTorrentPlugin");
     return bittorrentPlugin ? bittorrentPlugin.enabled : false;
   }, [plugins]);
 
-  // Load view mode preference from localStorage on mount
-  useEffect(() => {
-    try {
-      const savedViewMode = localStorage.getItem("haven-player-view-mode");
-      if (savedViewMode === "grid" || savedViewMode === "list") {
-        setViewMode(savedViewMode);
+  const handleUploadVideo = useCallback(
+    async (item: any) => {
+      if (!filecoinConfig) {
+        openSettings("filecoin");
+        return;
       }
-    } catch (error) {
-      console.error("Failed to load view mode preference:", error);
-    }
-  }, []);
 
-  // Filter out hidden videos and apply search filter
-  const visibleVideos = videos
-    .filter((video) => !hiddenVideos.has(video.path))
-    .filter((video) => {
-      if (!searchQuery.trim()) return true;
+      try {
+        // Find the video path from the item
+        const videoPath = item.sourceIdentity;
+        await uploadVideoToFilecoin(videoPath, filecoinConfig);
+        console.log(`✅ Uploaded ${item.title} to Filecoin`);
+        await refreshVideos();
+      } catch (error) {
+        console.error(`❌ Failed to upload ${item.title} to Filecoin:`, error);
+      }
+    },
+    [filecoinConfig, uploadVideoToFilecoin, refreshVideos, openSettings]
+  );
 
-      const query = searchQuery.toLowerCase();
-      const searchableFields = [
-        video.title.toLowerCase(),
-        video.path.toLowerCase(),
-        ...(videoTimestamps[video.path]?.map((ts) =>
-          ts.tag_name.toLowerCase()
-        ) || []),
-      ];
-
-      return searchableFields.some((field) => field.includes(query));
-    });
-
-  // Handle search query changes
-  const handleSearch = useCallback((query: string) => {
-    setSearchQuery(query);
-  }, []);
-
-  // Handle view mode changes
-  const handleViewModeChange = useCallback((mode: "grid" | "list") => {
-    setViewMode(mode);
-    // Optionally save to localStorage
-    try {
-      localStorage.setItem("haven-player-view-mode", mode);
-    } catch (error) {
-      console.error("Failed to save view mode preference:", error);
-    }
-  }, []);
-
-  // Use actual Electron file dialog
+  // Handle adding video from local file (Electron file dialog)
   const handleAddVideo = useCallback(async () => {
     try {
-      // Use Electron's file dialog via IPC
       const { ipcRenderer } = require("electron");
       const videoPath = await ipcRenderer.invoke("select-video");
 
@@ -309,47 +101,19 @@ const MainApp: React.FC = () => {
       const videoData = {
         path: videoPath,
         title: fileName,
-        duration: 120, // Mock duration - in real app, would extract from file
-        has_ai_data: false, // Will be set automatically by backend if AI file exists
+        duration: 120,
+        has_ai_data: false,
         thumbnail_path: null,
       };
 
-      const newVideo = await addVideo(videoData);
-
-      // If user is re-adding a previously hidden video, unhide it
-      if (hiddenVideos.has(videoPath)) {
-        setHiddenVideos((prev) => {
-          const updated = new Set(prev);
-          updated.delete(videoPath);
-          return updated;
-        });
-        console.log(`🔄 Unhiding previously removed video: ${fileName}`);
-      }
-
-      // Set initial analysis status based on whether AI data was found
-      if (newVideo.has_ai_data) {
-        setAnalysisStatuses((prev) => ({ ...prev, [videoPath]: "completed" }));
-      } else {
-        setAnalysisStatuses((prev) => ({ ...prev, [videoPath]: "pending" }));
-      }
-    } catch (error: unknown) {
+      await addVideo(videoData);
+      console.log(`✅ Added video: ${fileName}`);
+    } catch (error) {
       console.error("Failed to add video:", error);
-      
-      // Extract error message and show notification
-      let errorMessage = "Failed to add video";
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-      
-      // Show notification with error message
-      setNotification({
-        open: true,
-        message: errorMessage,
-        severity: "error",
-      });
     }
-  }, [addVideo, hiddenVideos]);
+  }, [addVideo]);
 
+  // Handle adding magnet URL
   const handleAddMagnetUrl = useCallback(
     async (url: string) => {
       try {
@@ -360,456 +124,26 @@ const MainApp: React.FC = () => {
         }
         const infohash = infohashMatch[1];
 
-        setDownloadingTorrents((prev) => new Set(prev).add(infohash));
-        setAnalysisStatuses((prev) => ({ ...prev, [infohash]: "downloading" }));
-
-        const result = await ipcRenderer.invoke("add-magnet-url", url);
-        
-        setDownloadingTorrents((prev) => {
-          const newSet = new Set(prev);
-          newSet.delete(infohash);
-          return newSet;
-        });
+        await ipcRenderer.invoke("add-magnet-url", url);
+        console.log(`✅ Added magnet URL: ${infohash}`);
 
         // The main process will handle the download and add the video
         // to the database. We just need to refresh the video list.
         await refreshVideos();
-
       } catch (error) {
         console.error("Failed to add magnet URL:", error);
-        setNotification({
-          open: true,
-          message:
-            error instanceof Error ? error.message : "Failed to add magnet URL",
-          severity: "error",
-        });
       }
     },
     [refreshVideos]
   );
 
-  const ensureAiSettings = useCallback((): boolean => {
-    if (isAiConfigDefault(aiConfig)) {
-      openSettings("ai");
-      if (typeof window !== "undefined") {
-        window.alert("Please configure AI / LLM settings before analyzing.");
-      }
-      return false;
-    }
-    return true;
-  }, [aiConfig, openSettings]);
-
-  const ensureFilecoinSettings = useCallback((): boolean => {
-    if (!isFilecoinConfigured(filecoinConfig)) {
-      openSettings("filecoin");
-      if (typeof window !== "undefined") {
-        window.alert("Please configure Filecoin settings before uploading.");
-      }
-      return false;
-    }
-    return true;
-  }, [filecoinConfig, openSettings]);
-
-  const handleAnalyzeVideo = useCallback(
-    async (video: Video) => {
-      if (!video.has_ai_data && !ensureAiSettings()) {
-        return;
-      }
-
-      if (video.has_ai_data) {
-        // Video already has AI data, just refresh timestamps
-        await fetchTimestampsForVideo(video);
-        setAnalysisStatuses((prev) => ({ ...prev, [video.path]: "completed" }));
-        return;
-      }
-
-      try {
-        // Start analysis job
-        const response = await startAnalysisJob(video.path);
-        const jobId = response.job_id;
-
-        // Track the job
-        setActiveJobs((prev) => ({ ...prev, [video.path]: jobId }));
-        setAnalysisStatuses((prev) => ({ ...prev, [video.path]: "analyzing" }));
-        setJobProgresses((prev) => ({ ...prev, [video.path]: 0 }));
-
-        // Start polling for job progress
-        const pollInterval = setInterval(async () => {
-          try {
-            const jobs = await getVideoJobs(video.path);
-            const currentJob = jobs.find((job) => job.id === jobId);
-
-            if (currentJob) {
-              setJobProgresses((prev) => ({
-                ...prev,
-                [video.path]: currentJob.progress,
-              }));
-
-              if (currentJob.status === "completed") {
-                setAnalysisStatuses((prev) => ({
-                  ...prev,
-                  [video.path]: "completed",
-                }));
-                setActiveJobs((prev) => {
-                  const updated = { ...prev };
-                  delete updated[video.path];
-                  return updated;
-                });
-                // Refresh video data to get new timestamps
-                await fetchTimestampsForVideo(video);
-                await refreshVideos();
-                clearInterval(pollInterval);
-              } else if (currentJob.status === "failed") {
-                setAnalysisStatuses((prev) => ({
-                  ...prev,
-                  [video.path]: "error",
-                }));
-                setActiveJobs((prev) => {
-                  const updated = { ...prev };
-                  delete updated[video.path];
-                  return updated;
-                });
-                clearInterval(pollInterval);
-              }
-            }
-          } catch (error) {
-            console.error("Error polling job status:", error);
-          }
-        }, 1000);
-      } catch (error) {
-        console.error("Failed to start analysis:", error);
-        setAnalysisStatuses((prev) => ({ ...prev, [video.path]: "error" }));
-      }
-    },
-    [fetchTimestampsForVideo, refreshVideos, ensureAiSettings]
-  );
-
-  const handleAnalyzeAll = useCallback(async () => {
-    if (!ensureAiSettings()) {
-      return;
-    }
-    setIsAnalyzingAll(true);
-
-    const videosToAnalyze = visibleVideos.filter(
-      (video) =>
-        !analysisStatuses[video.path] ||
-        analysisStatuses[video.path] === "pending" ||
-        analysisStatuses[video.path] === "error"
-    );
-
-    for (const video of videosToAnalyze) {
-      await handleAnalyzeVideo(video);
-    }
-
-    setIsAnalyzingAll(false);
-  }, [visibleVideos, analysisStatuses, handleAnalyzeVideo, ensureAiSettings]);
-
-  const handlePlayVideo = useCallback(
-    (video: Video) => {
-      navigate(`/player/${encodeURIComponent(video.path)}`);
-    },
-    [navigate]
-  );
-
-  const handleRemoveVideo = useCallback((video: Video) => {
-    // Hide the video from display without deleting from database
-    setHiddenVideos((prev) => new Set([...prev, video.path]));
-
-    // Also remove from analysis statuses to clean up
-    setAnalysisStatuses((prev) => {
-      const updated = { ...prev };
-      delete updated[video.path];
-      return updated;
-    });
-
-    console.log(`🗑️ Hiding video from list: ${video.title}`);
-  }, []);
-
-  const handleRefresh = useCallback(() => {
-    refreshVideos();
-  }, [refreshVideos]);
-
-  // Handle Filecoin upload
-  const handleUploadToFilecoin = useCallback(
-    async (video: Video) => {
-      if (!ensureFilecoinSettings()) {
-        return;
-      }
-      if (!filecoinConfig) {
-        return;
-      }
-
-      try {
-        await uploadVideoToFilecoin(video.path, filecoinConfig);
-        console.log(`✅ Uploaded ${video.title} to Filecoin`);
-        // Refresh videos to get the updated filecoin_root_cid from backend
-        await refreshVideos();
-      } catch (error) {
-        console.error(`❌ Failed to upload ${video.title} to Filecoin:`, error);
-        // Error is already handled by the upload hook
-      }
-    },
-    [filecoinConfig, uploadVideoToFilecoin, refreshVideos, ensureFilecoinSettings]
-  );
-
-  // Initialize analysis statuses for videos with AI data
-  useEffect(() => {
-    const newStatuses: Record<
-      string,
-      "pending" | "analyzing" | "completed" | "error" | "downloading"
-    > = {};
-    visibleVideos.forEach((video) => {
-      if (!(video.path in analysisStatuses)) {
-        newStatuses[video.path] = video.has_ai_data ? "completed" : "pending";
-      }
-    });
-
-    if (Object.keys(newStatuses).length > 0) {
-      setAnalysisStatuses((prev) => ({ ...prev, ...newStatuses }));
-    }
-  }, [visibleVideos, analysisStatuses]);
-
   return (
-    <Box
-      sx={{
-        display: "flex",
-        height: "100vh",
-        backgroundColor: liquidGlassTokens.canvas.base,
-        borderRadius: "16px",
-        overflow: "hidden",
-        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-        margin: "8px",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-      }}
-    >
-      {/* Sidebar */}
-      <Box
-        sx={{
-          background: liquidGlassTokens.canvas.elevated,
-          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-        }}
-      >
-        <Sidebar onRefresh={handleRefresh} />
-      </Box>
-
-      {/* Main content area */}
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          flexGrow: 1,
-          backgroundColor: liquidGlassTokens.canvas.base,
-        }}
-      >
-        {/* Header */}
-        <Box
-          sx={{
-            borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-            backgroundColor: liquidGlassTokens.canvas.elevated,
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          <Header
-            videoCount={visibleVideos.length}
-            onAddVideo={() => setAddVideoModalOpen(true)}
-            onAnalyzeAll={handleAnalyzeAll}
-            isAnalyzing={isAnalyzingAll}
-            onSearch={handleSearch}
-            viewMode={viewMode}
-            onViewModeChange={handleViewModeChange}
-          />
-        </Box>
-
-        {/* Video analysis list */}
-        <Box
-          sx={{
-            flexGrow: 1,
-            backgroundColor: liquidGlassTokens.canvas.base,
-            padding: "16px",
-          }}
-        >
-          <VideoAnalysisList
-            videos={visibleVideos}
-            videoGroups={videoGroups}
-            videoTimestamps={videoTimestamps}
-            analysisStatuses={analysisStatuses}
-            jobProgresses={jobProgresses}
-            viewMode={viewMode}
-            onPlay={handlePlayVideo}
-            onAnalyze={handleAnalyzeVideo}
-            onRemove={handleRemoveVideo}
-            onUpload={handleUploadToFilecoin}
-            onToggleShare={async (video: Video, share: boolean) => {
-              try {
-                await updateVideoSharePreference(video.path, share);
-                await refreshVideos();
-              } catch (error) {
-                console.error("Failed to update share preference:", error);
-                // Show notification for gas errors (works across all EVM chains)
-                if (error instanceof Error && error.message.includes('address:')) {
-                  // Extract token symbol and wallet address
-                  const tokenMatch = error.message.match(/Insufficient\s+(\w+)\s+for\s+gas/i);
-                  const tokenSymbol = tokenMatch ? tokenMatch[1] : 'gas tokens';
-                  
-                  const addressMatch = error.message.match(/address:\s*([0-9a-fA-Fx]{42,})/i);
-                  if (addressMatch) {
-                    const walletAddress = addressMatch[1];
-                    setNotification({
-                      open: true,
-                      severity: "error",
-                      message: `Insufficient ${tokenSymbol} for gas. Please send ${tokenSymbol} to: ${walletAddress}`,
-                    });
-                  } else {
-                    setNotification({
-                      open: true,
-                      severity: "error",
-                      message: error.message,
-                    });
-                  }
-                } else {
-                  setNotification({
-                    open: true,
-                    severity: "error",
-                    message: error instanceof Error ? error.message : "Failed to update share preference",
-                  });
-                }
-              }
-            }}
-            uploadStatuses={mergedUploadStatuses}
-            hiddenVideos={hiddenVideos}
-            searchQuery={searchQuery}
-          />
-        </Box>
-      </Box>
-
-      <AddVideoModal
-        open={isAddVideoModalOpen}
-        onClose={() => setAddVideoModalOpen(false)}
-        onAddLocalFile={handleAddVideo}
-        onAddMagnetUrl={handleAddMagnetUrl}
-        isBitTorrentEnabled={isBitTorrentEnabled}
-      />
-
-      {/* Notification Snackbar for duplicate detection and errors */}
-      <Snackbar
-        open={notification.open}
-        autoHideDuration={6000}
-        onClose={() => setNotification((prev) => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setNotification((prev) => ({ ...prev, open: false }))}
-          severity={notification.severity}
-          sx={{ width: "100%" }}
-        >
-          {notification.message}
-        </Alert>
-      </Snackbar>
-    </Box>
-  );
-};
-
-// Wrapper component for DePinDashboard to access settings context and filecoin config
-const DePinDashboardWrapper: React.FC = () => {
-  const { openSettings } = useSettingsNavigation();
-  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
-
-  // Load Filecoin config on mount
-  useEffect(() => {
-    const loadFilecoinConfig = async () => {
-      try {
-        const { ipcRenderer } = require("electron");
-        const config = await ipcRenderer.invoke("get-filecoin-config");
-        if (config) {
-          setFilecoinConfig(config);
-        }
-      } catch (error) {
-        console.error("Failed to load Filecoin config:", error);
-      }
-    };
-    loadFilecoinConfig();
-  }, []);
-
-  return <DePinDashboard filecoinConfig={filecoinConfig} onRequireSettings={openSettings} />;
-};
-
-// Wrapper component for VideoGrid to handle upload functionality
-const MyVideosPage: React.FC = () => {
-  const { refreshVideos } = useVideos();
-  const { uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
-  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
-  const { openSettings } = useSettingsNavigation();
-
-  // Load Filecoin config on mount
-  useEffect(() => {
-    const loadFilecoinConfig = async () => {
-      try {
-        const { ipcRenderer } = require("electron");
-        const config = await ipcRenderer.invoke("get-filecoin-config");
-        if (config) {
-          setFilecoinConfig(config);
-        }
-      } catch (error) {
-        console.error("Failed to load Filecoin config:", error);
-      }
-    };
-    loadFilecoinConfig();
-  }, []);
-
-  const handleUpload = useCallback(
-    async (video: Video) => {
-      if (!filecoinConfig) {
-        openSettings("filecoin");
-        return;
-      }
-
-      try {
-        await uploadVideoToFilecoin(video.path, filecoinConfig);
-        console.log(`✅ Uploaded ${video.title} to Filecoin`);
-        await refreshVideos();
-      } catch (error) {
-        console.error(`❌ Failed to upload ${video.title} to Filecoin:`, error);
-      }
-    },
-    [filecoinConfig, uploadVideoToFilecoin, refreshVideos, openSettings]
-  );
-
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        height: "100vh",
-        backgroundColor: liquidGlassTokens.canvas.base,
-        borderRadius: "16px",
-        overflow: "hidden",
-        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-        margin: "8px",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-      }}
-    >
-      <Box
-        sx={{
-          background: liquidGlassTokens.canvas.elevated,
-          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-        }}
-      >
-        <Sidebar />
-      </Box>
-
-      <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
-        <Box
-          sx={{
-            flexGrow: 1,
-            backgroundColor: liquidGlassTokens.canvas.base,
-            padding: "16px",
-            height: "100%",
-            overflow: "auto",
-          }}
-        >
-          <VideoGrid onUpload={handleUpload} />
-        </Box>
-      </Box>
-    </Box>
+    <SpatialLayout
+      onUploadVideo={handleUploadVideo}
+      onAddVideo={handleAddVideo}
+      onAddMagnetUrl={handleAddMagnetUrl}
+      isBitTorrentEnabled={isBitTorrentEnabled}
+    />
   );
 };
 
@@ -840,7 +174,7 @@ const GlobalConfigurationModal: React.FC = () => {
   }, []);
 
   const handleConfigSave = useCallback(
-    async (configToSave: typeof DEFAULT_AI_CONFIG) => {
+    async (configToSave: any) => {
       try {
         const response = await fetch("http://localhost:8000/api/config/", {
           method: "PUT",
@@ -882,182 +216,6 @@ const GlobalConfigurationModal: React.FC = () => {
   );
 };
 
-// Wrapper component for PumpFunPlugin streams view
-const PumpFunStreamsWrapper: React.FC = () => {
-  const {
-    streams,
-    subscriptions,
-    loading,
-    loadingStreams,
-    loadingSubscriptions,
-    error,
-    errorStreams,
-    errorSubscriptions,
-    refresh,
-    refreshStreams,
-    refreshSubscriptions,
-    subscribe,
-    unsubscribe,
-    updateSubscription,
-  } = usePumpFunSources({ pluginName: "PumpFunPlugin", autoRefresh: true, refreshInterval: 600000 });
-
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        height: "100vh",
-        backgroundColor: liquidGlassTokens.canvas.base,
-        borderRadius: "16px",
-        overflow: "hidden",
-        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-        margin: "8px",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-      }}
-    >
-      <Box
-        sx={{
-          background: liquidGlassTokens.canvas.elevated,
-          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-        }}
-      >
-        <Sidebar />
-      </Box>
-
-      <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
-        <Box
-          sx={{
-            flexGrow: 1,
-            backgroundColor: liquidGlassTokens.canvas.base,
-            padding: "16px",
-            height: "100%",
-            overflow: "auto",
-          }}
-        >
-          <PumpFunStreamsView
-            pluginName="PumpFunPlugin"
-            streams={streams}
-            subscriptions={subscriptions}
-            loading={loading}
-            error={errorStreams || errorSubscriptions}
-            onRefresh={refresh}
-            onSubscribe={subscribe}
-            onUnsubscribe={unsubscribe}
-            onUpdateSubscription={updateSubscription}
-          />
-        </Box>
-      </Box>
-    </Box>
-  );
-};
-
-import useOpenRingSources from "@/hooks/useOpenRingSources";
-
-// Wrapper component for OpenRingPlugin devices view
-const OpenRingDevicesWrapper: React.FC = () => {
-  const {
-    devices,
-    subscriptions,
-    loading,
-    error,
-    refresh,
-    subscribe,
-    unsubscribe,
-  } = useOpenRingSources({ pluginName: "OpenRingPlugin", autoRefresh: true, refreshInterval: 60000 });
-
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        height: "100vh",
-        backgroundColor: liquidGlassTokens.canvas.base,
-        borderRadius: "16px",
-        overflow: "hidden",
-        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-        margin: "8px",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-      }}
-    >
-      <Box
-        sx={{
-          background: liquidGlassTokens.canvas.elevated,
-          borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-        }}
-      >
-        <Sidebar />
-      </Box>
-
-      <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
-        <Box
-          sx={{
-            flexGrow: 1,
-            backgroundColor: liquidGlassTokens.canvas.base,
-            padding: "16px",
-            height: "100%",
-            overflow: "auto",
-          }}
-        >
-          <OpenRingDevicesView
-            pluginName="OpenRingPlugin"
-            devices={devices}
-            subscriptions={subscriptions}
-            loading={loading}
-            error={error}
-            onRefresh={refresh}
-            onSubscribe={subscribe}
-            onUnsubscribe={unsubscribe}
-          />
-        </Box>
-      </Box>
-    </Box>
-  );
-};
-
-// Wrapper component for SpatialLayout with upload handling
-const SpatialLayoutWrapper: React.FC = () => {
-  const { refreshVideos } = useVideos();
-  const { uploadVideo: uploadVideoToFilecoin } = useFilecoinUpload();
-  const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
-  const { openSettings } = useSettingsNavigation();
-
-  // Load Filecoin config on mount
-  useEffect(() => {
-    const loadFilecoinConfig = async () => {
-      try {
-        const { ipcRenderer } = require("electron");
-        const config = await ipcRenderer.invoke("get-filecoin-config");
-        if (config) {
-          setFilecoinConfig(config);
-        }
-      } catch (error) {
-        console.error("Failed to load Filecoin config:", error);
-      }
-    };
-    loadFilecoinConfig();
-  }, []);
-
-  const handleUploadVideo = useCallback(
-    async (item: any) => {
-      if (!filecoinConfig) {
-        openSettings("filecoin");
-        return;
-      }
-
-      try {
-        // Find the video path from the item
-        const videoPath = item.sourceIdentity;
-        await uploadVideoToFilecoin(videoPath, filecoinConfig);
-        console.log(`✅ Uploaded ${item.title} to Filecoin`);
-        await refreshVideos();
-      } catch (error) {
-        console.error(`❌ Failed to upload ${item.title} to Filecoin:`, error);
-      }
-    },
-    [filecoinConfig, uploadVideoToFilecoin, refreshVideos, openSettings]
-  );
-
-  return <SpatialLayout onUploadVideo={handleUploadVideo} />;
-};
-
 const App: React.FC = () => {
   return (
     <SettingsNavigationProvider>
@@ -1065,7 +223,7 @@ const App: React.FC = () => {
         <CssBaseline />
         <Box
           sx={{
-            backgroundColor: liquidGlassTokens.canvas.base,
+            backgroundColor: 'transparent',
             minHeight: "100vh",
             padding: "0",
             position: "relative",
@@ -1074,144 +232,23 @@ const App: React.FC = () => {
           {/* Global Circuit Substrate Background */}
           <CircuitSubstrate
             density={4}
-            opacity={0.06}
+            opacity={0.15}
             animated={true}
           />
           <Router>
             <Routes>
-              {/* New Spatial Architecture Layout */}
+              {/* Archive is now the main entry point */}
+              <Route path="/" element={<Navigate to="/archive" replace />} />
               <Route path="/archive" element={<SpatialLayoutWrapper />} />
-              <Route path="/" element={<MainApp />} />
-              <Route path="/my-videos" element={<MyVideosPage />} />
-              <Route
-                path="/depin"
-                element={
-                  <Box
-                    sx={{
-                      display: "flex",
-                      height: "100vh",
-                      backgroundColor: liquidGlassTokens.canvas.base,
-                      borderRadius: "16px",
-                      overflow: "hidden",
-                      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-                      margin: "8px",
-                      border: "1px solid rgba(255, 255, 255, 0.08)",
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        background: liquidGlassTokens.canvas.elevated,
-                        borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-                      }}
-                    >
-                      <Sidebar />
-                    </Box>
-
-                    <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
-                      <Box
-                        sx={{
-                          flexGrow: 1,
-                          backgroundColor: liquidGlassTokens.canvas.base,
-                          padding: "16px",
-                          height: "100%",
-                          overflow: "auto",
-                        }}
-                      >
-                        <DePinDashboardWrapper />
-                      </Box>
-                    </Box>
-                  </Box>
-                }
-              />
-              <Route
-                path="/plugins"
-                element={
-                  <Box
-                    sx={{
-                      display: "flex",
-                      height: "100vh",
-                      backgroundColor: liquidGlassTokens.canvas.base,
-                      borderRadius: "16px",
-                      overflow: "hidden",
-                      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-                      margin: "8px",
-                      border: "1px solid rgba(255, 255, 255, 0.08)",
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        background: liquidGlassTokens.canvas.elevated,
-                        borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-                      }}
-                    >
-                      <Sidebar />
-                    </Box>
-
-                    <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
-                      <Box
-                        sx={{
-                          flexGrow: 1,
-                          backgroundColor: liquidGlassTokens.canvas.base,
-                          padding: "16px",
-                          height: "100%",
-                          overflow: "auto",
-                        }}
-                      >
-                        <PluginManagementPage />
-                      </Box>
-                    </Box>
-                  </Box>
-                }
-              />
-              <Route
-                path="/plugins/:pluginName/sources"
-                element={
-                  <Box
-                    sx={{
-                      display: "flex",
-                      height: "100vh",
-                      backgroundColor: liquidGlassTokens.canvas.base,
-                      borderRadius: "16px",
-                      overflow: "hidden",
-                      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.12)",
-                      margin: "8px",
-                      border: "1px solid rgba(255, 255, 255, 0.08)",
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        background: liquidGlassTokens.canvas.elevated,
-                        borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-                      }}
-                    >
-                      <Sidebar />
-                    </Box>
-
-                    <Box sx={{ flexGrow: 1, backgroundColor: liquidGlassTokens.canvas.base }}>
-                      <Box
-                        sx={{
-                          flexGrow: 1,
-                          backgroundColor: liquidGlassTokens.canvas.base,
-                          padding: "16px",
-                          height: "100%",
-                          overflow: "auto",
-                        }}
-                      >
-                        <PluginSourcesView />
-                      </Box>
-                    </Box>
-                  </Box>
-                }
-              />
-              <Route
-                path="/plugins/PumpFunPlugin/sources"
-                element={<PumpFunStreamsWrapper />}
-              />
-              <Route
-                path="/plugins/OpenRingPlugin/sources"
-                element={<OpenRingDevicesWrapper />}
-              />
+              
+              {/* Video player route - still needed for playback */}
               <Route path="/player/:videoPath" element={<VideoPlayer />} />
+              
+              {/* Redirect old routes to archive */}
+              <Route path="/my-videos" element={<Navigate to="/archive" replace />} />
+              <Route path="/depin" element={<Navigate to="/archive" replace />} />
+              <Route path="/plugins" element={<Navigate to="/archive" replace />} />
+              <Route path="/plugins/*" element={<Navigate to="/archive" replace />} />
             </Routes>
           </Router>
           {/* Global Configuration Modal - available from all routes */}

@@ -25,6 +25,7 @@ import {
   FormHelperText,
   SelectChangeEvent,
   Grid,
+  Breadcrumbs,
 } from "@mui/material";
 import {
   Save as SaveIcon,
@@ -40,6 +41,9 @@ import {
   Refresh as RefreshIcon,
   ContentCopy as ContentCopyIcon,
   Add as AddIcon,
+  CloudSync as UploadWorkerIcon,
+  NavigateNext as NavigateNextIcon,
+  Settings as SettingsIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig, ArkivConfig } from "@/types/filecoin";
 import { restoreService, evmService } from "@/services/api";
@@ -114,6 +118,15 @@ const defaultAppConfig: EditableAppConfig = {
   llm_model: "zai-org/glm-4.6v-flash",
   max_batch_size: 1,
   download_directory: "downloads",
+};
+
+const defaultUploadWorkerConfig = {
+  enabled: false,
+  pollInterval: 15000,  // milliseconds
+  maxConcurrentUploads: 1,
+  retryAttempts: 3,
+  gatewaySelection: 'auto',  // 'auto' or 'custom'
+  customGatewayUrl: '',
 };
 
 // Glass panel styles for Liquid Glass design
@@ -228,14 +241,16 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [checkingBalance, setCheckingBalance] = useState(false);
   const [balanceInfo, setBalanceInfo] = useState<{ wallet_address: string; chain_name: string; native_token_symbol: string; balance_ether: number; has_sufficient_balance: boolean; } | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
+  const [uploadWorkerConfig, setUploadWorkerConfig] = useState(defaultUploadWorkerConfig);
+  const [loadingUploadWorker, setLoadingUploadWorker] = useState(false);
 
   const isFilecoinTab = activeTab === "filecoin" || activeTab === "encryption";
   const isArkivTab = activeTab === "arkiv";
   const isPlaybackTab = activeTab === "playback";
-  const loading = loadingAi || loadingFilecoin || loadingArkiv || loadingGateway;
+  const isUploadWorkerTab = activeTab === "upload-worker";
+  const loading = loadingAi || loadingFilecoin || loadingArkiv || loadingGateway || loadingUploadWorker;
 
   useEffect(() => { if (open) { setError(null); setFilecoinError(null); setArkivError(null); loadConfig(); loadAvailableModels(); loadFilecoinConfig(); loadArkivConfig(); loadGatewayConfig(); } }, [open]);
-  useEffect(() => { if (initialFilecoinConfig) setFilecoinConfig(initialFilecoinConfig); }, [initialFilecoinConfig]);
 
   const loadConfig = async () => {
     try {
@@ -255,22 +270,46 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   };
 
   const loadFilecoinConfig = async () => {
-    if (initialFilecoinConfig) return;
     try {
       setLoadingFilecoin(true);
       const savedConfig = await ipcRenderer.invoke("get-filecoin-config");
-      if (savedConfig) setFilecoinConfig({ privateKey: savedConfig.privateKey || "", rpcUrl: savedConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1", dataSetId: savedConfig.dataSetId, encryptionEnabled: savedConfig.encryptionEnabled ?? false });
-      else setFilecoinConfig(defaultFilecoinConfig);
-    } catch { setFilecoinConfig(defaultFilecoinConfig); } finally { setLoadingFilecoin(false); }
+      if (savedConfig) {
+        setFilecoinConfig({
+          privateKey: savedConfig.privateKey || "",
+          rpcUrl: savedConfig.rpcUrl || "wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1",
+          dataSetId: savedConfig.dataSetId,
+          encryptionEnabled: savedConfig.encryptionEnabled ?? false,
+        });
+      } else {
+        setFilecoinConfig(defaultFilecoinConfig);
+      }
+    } catch {
+      setFilecoinConfig(defaultFilecoinConfig);
+    } finally {
+      setLoadingFilecoin(false);
+    }
   };
 
   const loadArkivConfig = async () => {
     try {
-      setLoadingArkiv(true); setArkivError(null);
+      setLoadingArkiv(true);
+      setArkivError(null);
       const savedConfig = await ipcRenderer.invoke("get-arkiv-config");
-      if (savedConfig) setArkivConfig({ rpcUrl: savedConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc", enabled: savedConfig.enabled ?? false, syncEnabled: savedConfig.syncEnabled ?? false, expirationWeeks: savedConfig.expirationWeeks ?? 4 });
-      else setArkivConfig(defaultArkivConfig);
-    } catch { setArkivConfig(defaultArkivConfig); } finally { setLoadingArkiv(false); }
+      if (savedConfig) {
+        setArkivConfig({
+          rpcUrl: savedConfig.rpcUrl || "https://mendoza.hoodi.arkiv.network/rpc",
+          enabled: savedConfig.enabled ?? false,
+          syncEnabled: savedConfig.syncEnabled ?? false,
+          expirationWeeks: savedConfig.expirationWeeks ?? 4,
+        });
+      } else {
+        setArkivConfig(defaultArkivConfig);
+      }
+    } catch {
+      setArkivConfig(defaultArkivConfig);
+    } finally {
+      setLoadingArkiv(false);
+    }
   };
 
   const loadAvailableModels = async () => {
@@ -611,6 +650,34 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     </Box>
   );
 
+  const renderUploadWorkerContent = (): JSX.Element => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
+      <SectionHeader icon={<UploadWorkerIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Upload Worker Configuration" color={liquidGlassTokens.neon.cyan} />
+      
+      {/* Enable/Disable Upload Worker */}
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, p: 2, borderRadius: liquidGlassTokens.radius.md, backgroundColor: uploadWorkerConfig.enabled ? `${liquidGlassTokens.neon.success}10` : 'rgba(255, 255, 255, 0.03)', border: `1px solid ${uploadWorkerConfig.enabled ? liquidGlassTokens.neon.success : liquidGlassTokens.glass.border}` }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <UploadWorkerIcon sx={{ color: uploadWorkerConfig.enabled ? liquidGlassTokens.neon.success : 'rgba(255, 255, 255, 0.4)', fontSize: 20 }} />
+          <FormControlLabel control={<Switch checked={uploadWorkerConfig.enabled} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUploadWorkerConfig((prev) => ({ ...prev, enabled: e.target.checked }))} sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: liquidGlassTokens.neon.success }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: `${liquidGlassTokens.neon.success}60` } }} />} label={<Typography sx={{ fontWeight: 500, fontSize: "14px", color: "#fff" }}>Enable Upload Worker</Typography>} sx={{ margin: 0 }} />
+        </Box>
+        <Typography sx={{ fontSize: "12px", color: 'rgba(255, 255, 255, 0.5)', ml: 4.5 }}>{uploadWorkerConfig.enabled ? "Upload worker will automatically process pending uploads" : "Upload worker is disabled"}</Typography>
+      </Box>
+
+      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
+
+      {/* Poll Interval */}
+      <TextField fullWidth label="Poll Interval (seconds)" type="number" value={uploadWorkerConfig.pollInterval / 1000} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const seconds = parseInt(e.target.value, 10); setUploadWorkerConfig((prev) => ({ ...prev, pollInterval: isNaN(seconds) || seconds < 5 ? 5000 : seconds * 1000 })); }} inputProps={{ min: 5, max: 300 }} helperText="How often to check for new uploads (5-300 seconds)" disabled={!uploadWorkerConfig.enabled} sx={glassInputStyles} />
+
+      {/* Max Concurrent Uploads */}
+      <TextField fullWidth label="Max Concurrent Uploads" type="number" value={uploadWorkerConfig.maxConcurrentUploads} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const count = parseInt(e.target.value, 10); setUploadWorkerConfig((prev) => ({ ...prev, maxConcurrentUploads: isNaN(count) || count < 1 ? 1 : count > 5 ? 5 : count })); }} inputProps={{ min: 1, max: 5 }} helperText="Maximum number of simultaneous uploads (1-5)" disabled={!uploadWorkerConfig.enabled} sx={glassInputStyles} />
+
+      {/* Retry Attempts */}
+      <TextField fullWidth label="Retry Attempts" type="number" value={uploadWorkerConfig.retryAttempts} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const attempts = parseInt(e.target.value, 10); setUploadWorkerConfig((prev) => ({ ...prev, retryAttempts: isNaN(attempts) || attempts < 0 ? 0 : attempts > 10 ? 10 : attempts })); }} inputProps={{ min: 0, max: 10 }} helperText="Number of retry attempts for failed uploads (0-10)" disabled={!uploadWorkerConfig.enabled} sx={glassInputStyles} />
+
+      <Alert severity="info" sx={{ backgroundColor: `${liquidGlassTokens.neon.cyan}10`, border: `1px solid ${liquidGlassTokens.neon.cyan}30`, color: liquidGlassTokens.neon.cyan }}><Typography sx={{ fontSize: "12px" }}><strong>Note:</strong> Upload worker requires Filecoin configuration. Configure your private key in the Filecoin tab.</Typography></Alert>
+    </Box>
+  );
+
   const renderContent = (): JSX.Element | null => {
     switch (activeTab) {
       case "ai": return renderAiContent();
@@ -619,17 +686,67 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       case "filecoin": return renderFilecoinContent();
       case "encryption": return renderEncryptionContent();
       case "arkiv": return renderArkivContent();
+      case "upload-worker": return renderUploadWorkerContent();
       default: return null;
     }
   };
 
-  const saveLabel = isPlaybackTab ? "Save Playback Settings" : isFilecoinTab ? "Save Filecoin Settings" : isArkivTab ? "Save Arkiv Settings" : "Save Configuration";
+  const saveLabel = isPlaybackTab ? "Save Playback Settings" : isFilecoinTab ? "Save Filecoin Settings" : isArkivTab ? "Save Arkiv Settings" : isUploadWorkerTab ? "Save Upload Worker Settings" : "Save Configuration";
+
+  // Get current tab label for breadcrumb
+  const getCurrentTabLabel = (): string => {
+    switch (activeTab) {
+      case "ai": return "AI / LLM";
+      case "playback": return "Playback";
+      case "processing": return "Processing";
+      case "filecoin": return "Filecoin";
+      case "encryption": return "Encryption";
+      case "arkiv": return "Arkiv";
+      case "upload-worker": return "Upload Worker";
+      default: return "Settings";
+    }
+  };
 
   return (
       <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { backgroundColor: liquidGlassTokens.canvas.base, color: "#fff", overflow: "hidden", border: glassPanelStyles.border, borderRadius: glassPanelStyles.borderRadius, boxShadow: glassPanelStyles.boxShadow } }} BackdropProps={{ sx: { backgroundColor: "rgba(0, 0, 0, 0.7)", backdropFilter: "blur(12px)" } }}>
-      <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pb: 1, px: 3, pt: 3, backgroundColor: liquidGlassTokens.canvas.elevated, borderBottom: `1px solid ${liquidGlassTokens.glass.border}`, fontWeight: 600, fontSize: "18px", color: "#fff", letterSpacing: "-0.01em" }}>
-        Settings
-        <IconButton onClick={onClose} sx={{ color: 'rgba(255, 255, 255, 0.6)', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.08)' } }}><CloseIcon /></IconButton>
+      <DialogTitle sx={{ display: "flex", flexDirection: "column", gap: 1.5, pb: 2, px: 3, pt: 2.5, backgroundColor: liquidGlassTokens.canvas.elevated, borderBottom: `1px solid ${liquidGlassTokens.glass.border}` }}>
+        {/* Breadcrumb Navigation */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Breadcrumbs
+            separator={<NavigateNextIcon sx={{ fontSize: 16, color: 'rgba(255, 255, 255, 0.3)' }} />}
+            sx={{
+              '& .MuiBreadcrumbs-ol': {
+                alignItems: 'center',
+              },
+            }}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+                color: 'rgba(255, 255, 255, 0.5)',
+                fontSize: '0.8rem',
+              }}
+            >
+              <SettingsIcon sx={{ fontSize: 14 }} />
+              <Typography variant="caption" sx={{ color: 'inherit' }}>
+                Settings
+              </Typography>
+            </Box>
+            <Typography
+              variant="caption"
+              sx={{
+                color: liquidGlassTokens.neon.cyan,
+                fontSize: '0.8rem',
+                fontWeight: 600,
+              }}
+            >
+              {getCurrentTabLabel()}
+            </Typography>
+          </Breadcrumbs>
+          <IconButton onClick={onClose} sx={{ color: 'rgba(255, 255, 255, 0.6)', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.08)' } }}><CloseIcon /></IconButton>
+        </Box>
       </DialogTitle>
 
       <DialogContent sx={{ px: 3, py: 3, backgroundColor: liquidGlassTokens.canvas.base }}>
@@ -642,6 +759,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
           <Tab label="Filecoin" value="filecoin" icon={<CloudUploadIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Encryption" value="encryption" icon={<LockIcon fontSize="small" />} iconPosition="start" />
           <Tab label="Arkiv" value="arkiv" icon={<ArkivIcon fontSize="small" />} iconPosition="start" />
+          <Tab label="Upload Worker" value="upload-worker" icon={<UploadWorkerIcon fontSize="small" />} iconPosition="start" />
         </Tabs>
 
         {loading ? <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}><CircularProgress sx={{ color: liquidGlassTokens.neon.cyan }} /></Box> : <Box sx={{ mt: 3 }}>{renderContent()}</Box>}

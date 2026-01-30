@@ -2,7 +2,7 @@
  * Operation Queue Tray - Zone 4 (Bottom Dock)
  * 
  * Persistent but non-dominant display of active operations.
- * Shows upload queue, recording sessions, and sync status.
+ * Shows upload queue, recording sessions, sync status, and per-plugin job status.
  * Expandable for details, collapsible for focus.
  */
 
@@ -26,13 +26,16 @@ import {
   Error as ErrorIcon,
   Pending as PendingIcon,
   Close as CloseIcon,
+  Download as DownloadIcon,
+  Extension as PluginIcon,
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
-import type { QueueStats, RecordingSession } from '@/types/transformation';
+import type { QueueStats, RecordingSession, PluginJobStatus } from '@/types/transformation';
 
 interface OperationQueueTrayProps {
   queueStats: QueueStats;
   recordingSessions: RecordingSession[];
+  pluginJobs?: PluginJobStatus[];
   expanded: boolean;
   onToggleExpand: () => void;
 }
@@ -40,15 +43,17 @@ interface OperationQueueTrayProps {
 const OperationQueueTray: React.FC<OperationQueueTrayProps> = ({
   queueStats,
   recordingSessions,
+  pluginJobs = [],
   expanded,
   onToggleExpand,
 }) => {
   const hasActiveOperations = queueStats.uploading > 0 || recordingSessions.length > 0;
   const hasErrors = queueStats.failed > 0;
   const hasPending = queueStats.pending > 0 || queueStats.syncPending > 0;
+  const hasPluginJobs = pluginJobs.length > 0 && pluginJobs.some(j => j.totalActive > 0);
 
   // If nothing to show, return minimal bar
-  if (!hasActiveOperations && !hasErrors && !hasPending && queueStats.completed === 0) {
+  if (!hasActiveOperations && !hasErrors && !hasPending && !hasPluginJobs && queueStats.completed === 0) {
     return null;
   }
 
@@ -133,6 +138,11 @@ const OperationQueueTray: React.FC<OperationQueueTrayProps> = ({
               </Typography>
             </Box>
           )}
+
+          {/* Per-Plugin Job Status */}
+          {hasPluginJobs && pluginJobs.map((plugin) => (
+            <PluginJobPill key={plugin.pluginName} plugin={plugin} />
+          ))}
         </Box>
 
         {/* Right - Expand Toggle */}
@@ -169,10 +179,32 @@ const OperationQueueTray: React.FC<OperationQueueTrayProps> = ({
             display: 'flex',
             flexDirection: 'column',
             gap: 2,
-            maxHeight: '200px',
+            maxHeight: '280px',
             overflow: 'auto',
           }}
         >
+          {/* Plugin Jobs Section */}
+          {hasPluginJobs && (
+            <Box>
+              <Typography
+                sx={{
+                  fontSize: '11px',
+                  color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  mb: 1,
+                }}
+              >
+                Plugin Activity
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {pluginJobs.map((plugin) => (
+                  <PluginJobDetailItem key={plugin.pluginName} plugin={plugin} />
+                ))}
+              </Box>
+            </Box>
+          )}
+
           {/* Active Recordings Section */}
           {recordingSessions.length > 0 && (
             <Box>
@@ -267,6 +299,136 @@ const OperationQueueTray: React.FC<OperationQueueTrayProps> = ({
           )}
         </Box>
       </Collapse>
+    </Box>
+  );
+};
+
+// Plugin Job Pill - Compact display for collapsed bar
+interface PluginJobPillProps {
+  plugin: PluginJobStatus;
+}
+
+const PluginJobPill: React.FC<PluginJobPillProps> = ({ plugin }) => {
+  const tooltipText = [
+    plugin.recording > 0 && `${plugin.recording} recording`,
+    plugin.downloading > 0 && `${plugin.downloading} downloading`,
+  ].filter(Boolean).join(', ');
+
+  return (
+    <Tooltip title={`${plugin.pluginDisplayName}: ${tooltipText || 'active'}`}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 1.5,
+          py: 0.5,
+          background: `${plugin.color}10`,
+          border: `1px solid ${plugin.color}30`,
+          borderRadius: `${liquidGlassTokens.radius.sm}px`,
+          transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
+          '&:hover': {
+            background: `${plugin.color}15`,
+            borderColor: `${plugin.color}50`,
+          },
+        }}
+      >
+        <PluginIcon
+          sx={{
+            fontSize: 12,
+            color: plugin.color,
+            animation: 'pulse 1.5s infinite',
+          }}
+        />
+        <Typography
+          sx={{
+            fontSize: '12px',
+            fontWeight: 500,
+            color: plugin.color,
+          }}
+        >
+          {plugin.totalActive} {plugin.pluginDisplayName.split(' ')[0]}
+        </Typography>
+      </Box>
+    </Tooltip>
+  );
+};
+
+// Plugin Job Detail Item - Expanded view
+interface PluginJobDetailItemProps {
+  plugin: PluginJobStatus;
+}
+
+const PluginJobDetailItem: React.FC<PluginJobDetailItemProps> = ({ plugin }) => {
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        px: 2,
+        py: 1,
+        background: `${plugin.color}08`,
+        border: `1px solid ${plugin.color}20`,
+        borderRadius: `${liquidGlassTokens.radius.sm}px`,
+      }}
+    >
+      <PluginIcon
+        sx={{
+          fontSize: 14,
+          color: plugin.color,
+        }}
+      />
+      <Typography
+        sx={{
+          flex: 1,
+          fontSize: '13px',
+          fontWeight: 500,
+          color: `rgba(255, 255, 255, ${liquidGlassTokens.text.primary})`,
+        }}
+      >
+        {plugin.pluginDisplayName}
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        {plugin.recording > 0 && (
+          <Chip
+            size="small"
+            icon={<RecordingIcon sx={{ fontSize: 10, color: plugin.color }} />}
+            label={`${plugin.recording} recording`}
+            sx={{
+              height: 22,
+              fontSize: '11px',
+              fontWeight: 500,
+              background: `${plugin.color}15`,
+              color: plugin.color,
+              border: `1px solid ${plugin.color}30`,
+              '& .MuiChip-icon': {
+                marginLeft: '6px',
+                color: plugin.color,
+              },
+            }}
+          />
+        )}
+        {plugin.downloading > 0 && (
+          <Chip
+            size="small"
+            icon={<DownloadIcon sx={{ fontSize: 10, color: plugin.color }} />}
+            label={`${plugin.downloading} downloading`}
+            sx={{
+              height: 22,
+              fontSize: '11px',
+              fontWeight: 500,
+              background: `${plugin.color}15`,
+              color: plugin.color,
+              border: `1px solid ${plugin.color}30`,
+              '& .MuiChip-icon': {
+                marginLeft: '6px',
+                color: plugin.color,
+              },
+            }}
+          />
+        )}
+      </Box>
     </Box>
   );
 };

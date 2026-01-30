@@ -30,6 +30,13 @@ export { default as DetailPanel } from './DetailPanel';
 // Deprecated - functionality merged into BottomDock
 export { default as OperationQueueTray } from './OperationQueueTray';
 
+// Pipeline Stage Indicator
+export { default as PipelineStageIndicator } from './PipelineStageIndicator';
+
+// DePIN Components
+export { default as RewardsTooltip } from './RewardsTooltip';
+export { default as OperationsPanel } from './OperationsPanel';
+
 // Hooks
 export { useLayoutMode } from './hooks/useLayoutMode';
 export type { 

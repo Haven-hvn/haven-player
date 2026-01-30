@@ -49,7 +49,8 @@ import {
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import type { LayoutMode } from './hooks/useLayoutMode';
-import type { TransformationItem, QueueStats, RecordingSession } from '@/types/transformation';
+import type { TransformationItem, QueueStats, RecordingSession, PluginJobStatus } from '@/types/transformation';
+import OperationQueueTray from './OperationQueueTray';
 
 interface BottomDockProps {
   // Mode & state
@@ -65,6 +66,7 @@ interface BottomDockProps {
   // Queue info
   queueStats: QueueStats;
   recordingSessions: RecordingSession[];
+  pluginJobs?: PluginJobStatus[];
   
   // Actions
   onExpand: () => void;
@@ -73,6 +75,7 @@ interface BottomDockProps {
   
   // Primary actions
   onAddVideo: () => void;
+  onOpenAddVideoModal: () => void;
   onSearch: () => void;
   onQuickUpload: (files: FileList) => void;
   onUrlImport: (url: string) => void;
@@ -88,6 +91,9 @@ interface BottomDockProps {
   // Density control
   gridDensity: 'compact' | 'normal' | 'comfortable';
   onDensityChange: (density: 'compact' | 'normal' | 'comfortable') => void;
+  
+  // BitTorrent plugin
+  isBitTorrentEnabled?: boolean;
 }
 
 const BottomDock: React.FC<BottomDockProps> = ({
@@ -99,10 +105,12 @@ const BottomDock: React.FC<BottomDockProps> = ({
   hasItems,
   queueStats,
   recordingSessions,
+  pluginJobs = [],
   onExpand,
   onCollapse,
   onToggle,
   onAddVideo,
+  onOpenAddVideoModal,
   onSearch,
   onQuickUpload,
   onUrlImport,
@@ -114,6 +122,7 @@ const BottomDock: React.FC<BottomDockProps> = ({
   onStopAll,
   gridDensity,
   onDensityChange,
+  isBitTorrentEnabled = false,
 }) => {
   // Local state
   const [urlInput, setUrlInput] = useState('');
@@ -195,7 +204,7 @@ const BottomDock: React.FC<BottomDockProps> = ({
           <Button
             variant="contained"
             startIcon={<AddIcon />}
-            onClick={onAddVideo}
+            onClick={onOpenAddVideoModal}
             sx={{
               background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}30 0%, ${liquidGlassTokens.neon.cyan}15 100%)`,
               border: `1px solid ${liquidGlassTokens.neon.cyan}50`,
@@ -353,7 +362,7 @@ const BottomDock: React.FC<BottomDockProps> = ({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
         <Tooltip title="Add Video">
           <IconButton
-            onClick={onAddVideo}
+            onClick={onOpenAddVideoModal}
             sx={{
               color: liquidGlassTokens.neon.cyan,
               '&:hover': {
@@ -411,7 +420,7 @@ const BottomDock: React.FC<BottomDockProps> = ({
           alignItems: 'center',
           gap: 1,
           px: 2,
-          background: liquidGlassTokens.canvas.elevated,
+          background: `${liquidGlassTokens.canvas.elevated}99`, // 60% opacity - allows circuit to show
           backdropFilter: 'blur(20px)',
           borderRadius: `${liquidGlassTokens.radius.lg}px`,
           border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -573,6 +582,15 @@ const BottomDock: React.FC<BottomDockProps> = ({
         </Box>
       </Box>
 
+      {/* Operation Queue Tray - Shows upload/processing status */}
+      <OperationQueueTray
+        queueStats={queueStats}
+        recordingSessions={recordingSessions}
+        pluginJobs={pluginJobs}
+        expanded={expanded}
+        onToggleExpand={onToggle}
+      />
+
       {/* Expanded Content */}
       <Collapse in={expanded}>
         <Box
@@ -600,7 +618,7 @@ const BottomDock: React.FC<BottomDockProps> = ({
             <TextField
               fullWidth
               size="small"
-              placeholder="Paste video URL..."
+              placeholder={isBitTorrentEnabled ? "Paste video URL or magnet link..." : "Paste video URL..."}
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}

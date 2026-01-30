@@ -114,33 +114,84 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
     streak: 0,
   });
 
-  // Fetch system health from backend API
+  // Fetch Filecoin config from Electron main process (source of truth)
+  const fetchFilecoinConfig = useCallback(async () => {
+    try {
+      // @ts-ignore - electron IPC
+      const { ipcRenderer } = window.require('electron');
+      const config = await ipcRenderer.invoke('get-filecoin-config');
+      return config;
+    } catch (error) {
+      console.error('Failed to fetch Filecoin config:', error);
+      return null;
+    }
+  }, []);
+
+  // Fetch wallet address from Electron main process
+  const fetchWalletAddress = useCallback(async () => {
+    try {
+      // @ts-ignore - electron IPC
+      const { ipcRenderer } = window.require('electron');
+      const result = await ipcRenderer.invoke('get-wallet-address');
+      return result?.wallet_address || null;
+    } catch (error) {
+      console.error('Failed to fetch wallet address:', error);
+      return null;
+    }
+  }, []);
+
+  // Fetch system health from backend API and combine with Filecoin config
   const fetchSystemHealth = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/health');
+      // Fetch backend health, Filecoin config, and wallet address in parallel
+      const [response, filecoinConfig, walletAddress] = await Promise.all([
+        fetch('http://localhost:8000/api/health'),
+        fetchFilecoinConfig(),
+        fetchWalletAddress(),
+      ]);
+
       if (!response.ok) {
         throw new Error('Health check failed');
       }
-      
+
       const data = await response.json();
-      
+
+      // Use Filecoin config as source of truth for wallet/encryption status
+      // Backend may not have correct env vars set
+      const hasWallet = !!filecoinConfig?.privateKey;
+      const isEncryptionEnabled = filecoinConfig?.encryptionEnabled === true;
+
       setSystemHealth({
-        backendConnected: data.backend_connected,
-        walletConnected: data.wallet_connected,
-        walletAddress: data.wallet_address,
-        encryptionEnabled: data.encryption_enabled,
-        points: data.points,
-        streak: data.streak,
+        backendConnected: data.backend_connected ?? true,
+        // Wallet is connected if we have a private key in config
+        walletConnected: hasWallet,
+        // Show public wallet address (not private key!)
+        walletAddress: walletAddress || undefined,
+        // Encryption is enabled only if config flag is true AND wallet is connected
+        encryptionEnabled: isEncryptionEnabled && hasWallet,
+        points: data.points ?? 0,
+        streak: data.streak ?? 0,
       });
-      
     } catch (error) {
       console.error('Failed to fetch system health:', error);
-      setSystemHealth((prev: SystemHealth) => ({
-        ...prev,
+      // Even if backend fails, try to get Filecoin config for wallet status
+      const [filecoinConfig, walletAddress] = await Promise.all([
+        fetchFilecoinConfig(),
+        fetchWalletAddress(),
+      ]);
+      const hasWallet = !!filecoinConfig?.privateKey;
+      const isEncryptionEnabled = filecoinConfig?.encryptionEnabled === true;
+
+      setSystemHealth({
         backendConnected: false,
-      }));
+        walletConnected: hasWallet,
+        walletAddress: walletAddress || undefined,
+        encryptionEnabled: isEncryptionEnabled && hasWallet,
+        points: 0,
+        streak: 0,
+      });
     }
-  }, []);
+  }, [fetchFilecoinConfig, fetchWalletAddress]);
 
   // Poll health status periodically
   useEffect(() => {

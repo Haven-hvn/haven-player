@@ -1,0 +1,8 @@
+{
+  "borderRadius": "16px",
+  "borderTopLeftRadius": "16px",
+  "borderTopRightRadius": "16px",
+  "borderBottomLeftRadius": "16px",
+  "borderBottomRightRadius": "16px",
+  "className": "MuiPaper-root MuiPaper-elevation MuiPaper-rounded MuiPaper-elevation24 MuiDialog-paper MuiDialog-paperScrollPaper MuiDialog-paperWidthMd MuiDialog-paperFullWidth css-b446fp-MuiPaper-root-MuiDialog-paper"
+}

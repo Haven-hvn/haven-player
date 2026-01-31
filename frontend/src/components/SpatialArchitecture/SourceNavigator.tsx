@@ -15,6 +15,7 @@
  */
 
 import React, { useState, useCallback, useRef } from 'react';
+import appIcon from '../../../appicon.png';
 import {
   Box,
   Typography,
@@ -208,10 +209,14 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
             },
           }}
         >
-          <StorageIcon
+          <Box
+            component="img"
+            src={appIcon}
+            alt="Haven"
             sx={{
-              color: liquidGlassTokens.neon.cyan,
-              fontSize: '22px',
+              width: 28,
+              height: 28,
+              objectFit: 'contain',
               filter: `drop-shadow(0 0 4px ${liquidGlassTokens.neon.cyan})`,
             }}
           />

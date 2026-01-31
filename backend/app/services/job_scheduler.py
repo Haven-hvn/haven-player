@@ -189,6 +189,7 @@ class JobScheduler:
         This removes jobs for plugins that are:
         - Not loaded in the plugin manager
         - Disabled in the database
+        - Deleted from the RecurringJob table (orphaned jobs)
         """
         db = SessionLocal()
         try:
@@ -201,8 +202,7 @@ class JobScheduler:
             removed_count = 0
             for aps_job in aps_jobs:
                 try:
-                    # Extract job_id from job name (format: "plugin_name:job_name")
-                    # or from job id (format: "job_{job_id}")
+                    # Extract job_id from job id (format: "job_{job_id}")
                     job_id = None
                     if aps_job.id and aps_job.id.startswith("job_"):
                         try:
@@ -236,8 +236,8 @@ class JobScheduler:
                     job = db.query(RecurringJob).filter(RecurringJob.id == job_id).first()
                     
                     if not job:
-                        # Job doesn't exist in database, remove from scheduler
-                        logger.info(f"Removing orphaned job from scheduler: {aps_job.id}")
+                        # Job doesn't exist in database, remove from scheduler (orphaned job)
+                        logger.info(f"Removing orphaned job from scheduler (not in database): {aps_job.id}")
                         self.scheduler.remove_job(aps_job.id)
                         removed_count += 1
                         continue

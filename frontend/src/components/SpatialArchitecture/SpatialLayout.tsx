@@ -176,6 +176,11 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     setPluginConfigPopupOpen(true);
   }, []);
 
+  // Derive the current plugin data from the plugins array to get fresh status
+  const currentPlugin = selectedPlugin
+    ? plugins.find(p => p.name === selectedPlugin.name) || selectedPlugin
+    : null;
+
   const handleClosePluginPopups = useCallback(() => {
     setPluginSelectionPopupOpen(false);
     setPluginConfigPopupOpen(false);
@@ -451,8 +456,8 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
       {/* Plugin Configuration Popup */}
       <PluginConfigPopup
         open={pluginConfigPopupOpen}
-        plugin={selectedPlugin}
-        health={selectedPlugin ? healthStatus.find(h => h.plugin_name === selectedPlugin.name) : undefined}
+        plugin={currentPlugin}
+        health={currentPlugin ? healthStatus.find(h => h.plugin_name === currentPlugin.name) : undefined}
         onClose={handleClosePluginPopups}
         onLoadPlugin={handleLoadPlugin}
         onUnloadPlugin={handleUnloadPlugin}

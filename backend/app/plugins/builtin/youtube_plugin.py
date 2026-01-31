@@ -29,7 +29,7 @@ from app.plugins.plugin_interface import (
     MediaType,
     DefaultJobConfig,
 )
-from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin
+from app.plugins.mixins import CollectionPluginMixin, ConfigurablePluginMixin, RetryableMixin
 
 from app.models.config import AppConfig
 from app.models.database import get_db as get_db_session
@@ -43,7 +43,7 @@ from app.utils.video.video_file_validator import is_video_content
 logger = logging.getLogger(__name__)
 
 
-class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixin):
+class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMixin, RetryableMixin):
     """
     YouTube recording plugin with standardized operations.
 

@@ -100,9 +100,12 @@ class PluginManager:
 
     async def _create_default_jobs(self, plugin: ArchiverPlugin) -> None:
         """
-        Create default jobs for a plugin.
+        Create default jobs for a plugin on first load only.
 
-        Called after a plugin is loaded.
+        This method only creates default jobs when a plugin is loaded for the
+        first time. Once default jobs have been initialized (even if empty),
+        this method will not recreate them, allowing users to delete default
+        jobs without them being automatically restored.
 
         Args:
             plugin: The loaded plugin instance
@@ -115,21 +118,75 @@ class PluginManager:
         if not hasattr(metadata, 'default_jobs') or not metadata.default_jobs:
             return
 
-        logger.info(f"Creating {len(metadata.default_jobs)} default job(s) for {metadata.name}...")
-        for job_config in metadata.default_jobs:
-            try:
-                await self.job_scheduler.ensure_job(
-                    plugin_name=metadata.name,
-                    job_name=job_config.job_name,
-                    schedule=job_config.schedule,
-                    method=job_config.method,
-                    on_success=job_config.on_success,
-                    config=job_config.config,
-                    enabled=job_config.enabled
+        # Check if default jobs have already been initialized for this plugin
+        from app.models.database import SessionLocal
+        from app.models.plugin import Plugin as PluginModel
+        from sqlalchemy.exc import IntegrityError
+        
+        db = SessionLocal()
+        try:
+            db_plugin = db.query(PluginModel).filter(
+                PluginModel.name == metadata.name
+            ).first()
+            
+            logger.info(f"[_create_default_jobs] {metadata.name}: db_plugin={db_plugin is not None}, "
+                       f"default_jobs_initialized={db_plugin.default_jobs_initialized if db_plugin else 'N/A'}")
+            
+            if db_plugin and db_plugin.default_jobs_initialized:
+                logger.info(f"Default jobs already initialized for {metadata.name}, skipping")
+                return
+            
+            # If plugin record doesn't exist yet, create it now
+            # (the API layer will update it with config later)
+            if not db_plugin:
+                logger.info(f"Creating plugin record for {metadata.name}")
+                db_plugin = PluginModel(
+                    name=metadata.name,
+                    enabled=True,
+                    config={},
+                    default_jobs_initialized=False
                 )
-                logger.info(f"✅ Created default job: {job_config.job_name}")
-            except Exception as e:
-                logger.warning(f"⚠️  Failed to create default job {job_config.job_name}: {e}")
+                db.add(db_plugin)
+                try:
+                    db.commit()
+                    db.refresh(db_plugin)
+                    logger.info(f"Created plugin record for {metadata.name}, id={db_plugin.id}")
+                except IntegrityError:
+                    # Race condition: another process created the record
+                    db.rollback()
+                    db_plugin = db.query(PluginModel).filter(
+                        PluginModel.name == metadata.name
+                    ).first()
+                    logger.info(f"Race condition: plugin record for {metadata.name} already exists, "
+                               f"default_jobs_initialized={db_plugin.default_jobs_initialized if db_plugin else 'N/A'}")
+                    if db_plugin and db_plugin.default_jobs_initialized:
+                        logger.info(f"Default jobs already initialized for {metadata.name} (race condition), skipping")
+                        return
+            
+            # Create default jobs
+            logger.info(f"Creating {len(metadata.default_jobs)} default job(s) for {metadata.name}...")
+            for job_config in metadata.default_jobs:
+                try:
+                    await self.job_scheduler.ensure_job(
+                        plugin_name=metadata.name,
+                        job_name=job_config.job_name,
+                        schedule=job_config.schedule,
+                        method=job_config.method,
+                        on_success=job_config.on_success,
+                        config=job_config.config,
+                        enabled=job_config.enabled
+                    )
+                    logger.info(f"✅ Created default job: {job_config.job_name}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Failed to create default job {job_config.job_name}: {e}")
+            
+            # Mark default jobs as initialized so they won't be recreated
+            db_plugin.default_jobs_initialized = True
+            db.commit()
+            logger.info(f"✅ Default jobs initialized for {metadata.name}")
+            
+        finally:
+            db.close()
     
     def is_worker_plugin(self, plugin_name: str) -> bool:
         """

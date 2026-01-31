@@ -6,7 +6,7 @@
  * to present a unified transformation-first view.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useVideos } from './useVideos';
 import { useUploadWorker } from './useUploadWorker';
 import { usePlugins } from './usePlugins';
@@ -108,11 +108,15 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
   // System health state
   const [systemHealth, setSystemHealth] = useState<SystemHealth>({
     backendConnected: false,
+    backendStatus: 'loading',
     walletConnected: false,
     encryptionEnabled: false,
     points: 0,
     streak: 0,
   });
+
+  // Track initial load - don't show 'disconnected' on startup
+  const initialCheckRef = useRef(true);
 
   // Fetch Filecoin config from Electron main process (source of truth)
   const fetchFilecoinConfig = useCallback(async () => {
@@ -144,6 +148,7 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
   const fetchSystemHealth = useCallback(async () => {
     try {
       // Fetch backend health, Filecoin config, and wallet address in parallel
+      // Note: No timeout - we wait for the backend to be ready, however long it takes
       const [response, filecoinConfig, walletAddress] = await Promise.all([
         fetch('http://localhost:8000/api/health'),
         fetchFilecoinConfig(),
@@ -163,6 +168,7 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
 
       setSystemHealth({
         backendConnected: data.backend_connected ?? true,
+        backendStatus: data.backend_connected ? 'connected' : 'disconnected',
         // Wallet is connected if we have a private key in config
         walletConnected: hasWallet,
         // Show public wallet address (not private key!)
@@ -172,6 +178,8 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
         points: data.points ?? 0,
         streak: data.streak ?? 0,
       });
+      // Mark initial check complete
+      initialCheckRef.current = false;
     } catch (error) {
       console.error('Failed to fetch system health:', error);
       // Even if backend fails, try to get Filecoin config for wallet status
@@ -182,14 +190,23 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
       const hasWallet = !!filecoinConfig?.privateKey;
       const isEncryptionEnabled = filecoinConfig?.encryptionEnabled === true;
 
-      setSystemHealth({
-        backendConnected: false,
-        walletConnected: hasWallet,
-        walletAddress: walletAddress || undefined,
-        encryptionEnabled: isEncryptionEnabled && hasWallet,
-        points: 0,
-        streak: 0,
-      });
+      // On initial load, keep showing 'loading' until backend responds
+      // Don't show 'disconnected' on startup - the backend might just be starting up
+      // Only show 'disconnected' if we were previously connected
+      if (initialCheckRef.current) {
+        // Backend is still starting up - stay in loading state and retry
+        // Don't update state, just let the next poll try again
+        console.log('[useTransformationPipeline] Backend not ready yet, staying in loading state...');
+      } else {
+        // We were previously connected, now we're not - show disconnected
+        setSystemHealth(prev => ({
+          ...prev,
+          backendConnected: false,
+          backendStatus: 'disconnected',
+          points: 0,
+          streak: 0,
+        }));
+      }
     }
   }, [fetchFilecoinConfig, fetchWalletAddress]);
 

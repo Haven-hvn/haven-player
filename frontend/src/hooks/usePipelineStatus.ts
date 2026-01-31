@@ -99,9 +99,15 @@ export function usePipelineStatus(queueStats?: QueueStats): UsePipelineStatusRet
   }, []);
 
   // Fetch active jobs from backend
+  // NOTE: This endpoint is currently returning 404, so we're disabling polling for it
+  // to avoid unnecessary network requests every 5 seconds
   const fetchActiveJobs = useCallback(async () => {
+    // Temporarily disabled - endpoint returns 404
+    setActiveJobs([]);
+    return [];
+    
+    /* Original code - restore when endpoint is fixed:
     try {
-      // Get processing jobs
       const jobs = await getAllJobs('processing');
       setActiveJobs(jobs);
       return jobs;
@@ -109,6 +115,7 @@ export function usePipelineStatus(queueStats?: QueueStats): UsePipelineStatusRet
       console.error('Failed to fetch active jobs:', err);
       return [];
     }
+    */
   }, []);
 
   // Fetch plugin sources (for download/recording status)
@@ -289,31 +296,45 @@ export function usePipelineStatus(queueStats?: QueueStats): UsePipelineStatusRet
     return jobs.sort((a, b) => b.totalActive - a.totalActive);
   }, [plugins, pluginSources]);
 
-  // Main refresh function
+  // Main refresh function (lightweight - no discover_sources calls)
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     
     try {
-      const [pluginList] = await Promise.all([
+      await Promise.all([
         fetchPlugins(),
         fetchActiveJobs(),
         fetchUploadStatus(),
       ]);
-      
-      await fetchPluginSources(pluginList);
+      // Note: fetchPluginSources is NOT called here to avoid triggering
+      // discover_sources() on all plugins every 5 seconds
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch pipeline status');
     } finally {
       setLoading(false);
     }
-  }, [fetchPlugins, fetchActiveJobs, fetchUploadStatus, fetchPluginSources]);
+  }, [fetchPlugins, fetchActiveJobs, fetchUploadStatus]);
 
-  // Set up polling
+  // Fetch plugin sources once on mount (not in polling loop)
+  // This avoids calling discover_sources() every 5 seconds
+  useEffect(() => {
+    const fetchSourcesOnce = async () => {
+      try {
+        const plugins = await pluginService.getAll();
+        await fetchPluginSources(plugins);
+      } catch (err) {
+        console.warn('Failed to fetch plugin sources:', err);
+      }
+    };
+    fetchSourcesOnce();
+  }, [fetchPluginSources]);
+
+  // Set up polling for lightweight status updates only
   useEffect(() => {
     refresh();
     
-    // Poll every 5 seconds when active
+    // Poll every 5 seconds when active (does NOT call discover_sources)
     intervalRef.current = setInterval(refresh, 5000);
     
     return () => {

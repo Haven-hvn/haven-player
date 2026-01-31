@@ -80,7 +80,7 @@ const PluginConfigPopup: React.FC<PluginConfigPopupProps> = ({
 
   return (
     <>
-      <ClickAwayListener onClickAway={onClose}>
+      <ClickAwayListener onClickAway={() => { if (!configModalOpen) onClose(); }}>
         <Fade in={open} timeout={200}>
           <Box
             sx={{
@@ -191,13 +191,19 @@ const PluginConfigPopup: React.FC<PluginConfigPopupProps> = ({
 
       {/* Configuration Modal */}
       {plugin && (
-        <PluginConfigurationModal
-          open={configModalOpen}
-          pluginName={plugin.name}
-          pluginDisplayName={plugin.name}
-          onClose={() => setConfigModalOpen(false)}
-          onSave={handleConfigSave}
-        />
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <PluginConfigurationModal
+            open={configModalOpen}
+            pluginName={plugin.name}
+            pluginDisplayName={plugin.name}
+            onClose={() => setConfigModalOpen(false)}
+            onSave={handleConfigSave}
+          />
+        </div>
       )}
     </>
   );

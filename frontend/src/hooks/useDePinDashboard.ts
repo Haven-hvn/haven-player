@@ -85,50 +85,35 @@ export function useDePinDashboard() {
   // Load active operations from all plugins
   const loadActiveOperations = useCallback(async () => {
     try {
-      const plugins = await pluginService.getAll();
-      const archivalPlugins = plugins.filter((p: PluginMetadata) => 
-        p.capabilities?.some((cap) => 
-          typeof cap === 'string' ? cap === 'archival' : cap.name === 'archival'
-        )
-      );
+      // Use the lightweight /depin/operations endpoint instead of calling
+      // discover_sources() on each plugin via getPluginSources()
+      const response = await fetch('http://localhost:8000/api/depin/operations');
+      const data = await response.json();
       
-      const allOperations: DePinActiveOperation[] = [];
-      
-      for (const plugin of archivalPlugins) {
-        try {
-          const sources = await pluginService.getPluginSources(plugin.name);
-          
-          // Convert sources to active operations
-          for (const source of sources.sources) {
-            if (source.metadata?.status === 'running' || source.metadata?.status === 'archiving') {
-              // Map 'archiving' status to 'running' for compatibility
-              const status = source.metadata?.status === 'archiving' ? 'running' : source.metadata?.status;
-              allOperations.push({
-                operation_id: `${plugin.name}-${source.source_id}`,
-                plugin_name: plugin.name,
-                plugin_display_name: plugin.description || plugin.name,
-                operation_type: source.metadata?.operation_type || 'real-time',
-                source_id: source.source_id,
-                source_name: source.metadata?.name || source.source_id,
-                source_uri: source.uri,
-                status: (status as 'pending' | 'running' | 'paused' | 'completed' | 'failed') || 'running',
-                progress: source.metadata?.progress || 0,
-                start_time: new Date(source.metadata?.start_time || Date.now()),
-                estimated_completion: source.metadata?.estimated_completion 
-                  ? new Date(source.metadata.estimated_completion) 
-                  : undefined,
-                duration_seconds: source.metadata?.duration_seconds || 0,
-                file_size_bytes: source.metadata?.file_size_bytes,
-              });
-            }
-          }
-        } catch (err) {
-          console.warn(`Failed to load operations for ${plugin.name}:`, err);
-        }
+      if (data.success && data.operations) {
+        const allOperations: DePinActiveOperation[] = data.operations.map((op: any) => ({
+          operation_id: op.operation_id,
+          plugin_name: op.plugin_name,
+          plugin_display_name: op.plugin_display_name,
+          operation_type: op.operation_type || 'real-time',
+          source_id: op.source_id,
+          source_name: op.source_name,
+          source_uri: op.source_uri,
+          status: op.status || 'running',
+          progress: op.progress || 0,
+          start_time: op.start_time ? new Date(op.start_time) : new Date(),
+          estimated_completion: op.estimated_completion 
+            ? new Date(op.estimated_completion) 
+            : undefined,
+          duration_seconds: op.duration_seconds || 0,
+          file_size_bytes: op.file_size_bytes,
+        }));
+        
+        setState((prev: DePinDashboardState) => ({ ...prev, active_operations: allOperations }));
+        return allOperations;
       }
       
-      setState((prev: DePinDashboardState) => ({ ...prev, active_operations: allOperations }));
-      return allOperations;
+      return [];
     } catch (err) {
       console.error('Failed to load active operations:', err);
       return [];
@@ -178,9 +163,9 @@ export function useDePinDashboard() {
       runTick(); // Run immediately
       tickIntervalRef.current = setInterval(runTick, 60000); // Every minute
       
-      // Start status updates (more frequent)
+      // Start status updates (every 30 seconds - don't need to discover sources that often)
       await loadActiveOperations();
-      statusIntervalRef.current = setInterval(loadActiveOperations, 5000);
+      statusIntervalRef.current = setInterval(loadActiveOperations, 30000);
     } else {
       // Stop tick loop
       if (tickIntervalRef.current) {

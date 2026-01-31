@@ -145,7 +145,7 @@ export function usePluginConfiguration(pluginName: string) {
   }, []);
 
   const handleConfigChange = useCallback((newConfig: YouTubePluginConfig | BitTorrentPluginConfig | Record<string, any>) => {
-    setConfig(newConfig);
+    setConfig((prev) => ({ ...prev, ...newConfig }));
   }, []);
 
   // Save configuration

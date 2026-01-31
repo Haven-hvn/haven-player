@@ -78,9 +78,13 @@ export interface Source {
   lastActivity?: string;
 }
 
+// Backend connection status
+export type BackendStatus = 'loading' | 'connected' | 'disconnected';
+
 // System health status
 export interface SystemHealth {
   backendConnected: boolean;
+  backendStatus: BackendStatus;
   walletConnected: boolean;
   walletAddress?: string;
   walletBalance?: string;

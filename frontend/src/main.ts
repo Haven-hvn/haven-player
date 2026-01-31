@@ -1075,6 +1075,22 @@ async function handleGetMemoryStats(): Promise<NodeJS.MemoryUsage> {
   return process.memoryUsage();
 }
 
+/**
+ * Handle get-upload-status IPC call
+ * Returns active upload and encryption status for the pipeline UI
+ */
+async function handleGetUploadStatus(): Promise<{
+  activeUploads: string[];
+  encrypting: string[];
+}> {
+  // TODO: Integrate with UploadWorker to get actual active uploads
+  // For now, return empty arrays to prevent errors
+  return {
+    activeUploads: [],
+    encrypting: [],
+  };
+}
+
 // ============================================================================
 // PHASE 1: IPC Handler Registration & Cleanup
 // ============================================================================
@@ -1104,6 +1120,7 @@ function registerIPCHandlers(): void {
     'upload-worker:get-status': handleUploadWorkerGetStatus,
     'upload-worker:update-config': handleUploadWorkerUpdateConfig,
     'get-memory-stats': handleGetMemoryStats,
+    'get-upload-status': handleGetUploadStatus,
   };
 
   for (const [channel, handler] of Object.entries(handlers)) {
@@ -1131,9 +1148,17 @@ function cleanupIPCHandlers(): void {
 // ============================================================================
 
 function createWindow() {
+  // Determine the correct icon path based on environment and platform
+  const isWindows = platform() === 'win32';
+  const iconFile = isWindows ? 'appicon.ico' : 'appicon.png';
+  const iconPath = app.isPackaged
+    ? path.join(app.getAppPath(), iconFile)
+    : path.join(__dirname, '..', iconFile);
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    icon: iconPath,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,

@@ -28,6 +28,9 @@ class Plugin(Base):
     config = Column(JSON, nullable=True)
     priority = Column(Integer, default=0, nullable=False)
     version = Column(String(50), nullable=True)
+    # Tracks whether default jobs have been initialized for this plugin.
+    # This prevents recreating default jobs after user has deleted them.
+    default_jobs_initialized = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
@@ -43,6 +46,7 @@ class Plugin(Base):
             "config": self.config,
             "priority": self.priority,
             "version": self.version,
+            "default_jobs_initialized": self.default_jobs_initialized,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

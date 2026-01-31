@@ -9,6 +9,51 @@ from app.api.recording import recording_service
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+@router.get("/operations", response_model=Dict[str, Any])
+async def get_active_operations():
+    """
+    Get currently active operations from all plugins.
+    
+    This is a lightweight endpoint that returns active/recording operations
+    without calling discover_sources() on plugins. Used by the DePIN dashboard
+    for status updates.
+    """
+    try:
+        if not plugin_manager:
+            return {"success": False, "operations": []}
+        
+        operations = []
+        
+        # Get active recordings from the recording service
+        active_recordings = recording_service.active_recordings
+        for mint_id, recorder in active_recordings.items():
+            operations.append({
+                "operation_id": f"webrtc-archiver-{mint_id}",
+                "plugin_name": "webrtc-archiver",
+                "plugin_display_name": "WebRTC Archiver",
+                "operation_type": "real-time",
+                "source_id": mint_id,
+                "source_name": mint_id,
+                "source_uri": getattr(recorder, 'source_uri', None),
+                "status": recorder.state.value if hasattr(recorder, 'state') else 'running',
+                "progress": getattr(recorder, 'progress_percent', 0),
+                "start_time": recorder.start_time.isoformat() if hasattr(recorder, 'start_time') and recorder.start_time else None,
+                "duration_seconds": getattr(recorder, 'duration_seconds', 0),
+                "file_size_bytes": getattr(recorder, 'current_file_size', 0),
+            })
+        
+        # TODO: Add active operations from other plugins (YouTube, BitTorrent, etc.)
+        # These should be retrieved from the database or plugin-specific state,
+        # not by calling discover_sources()
+        
+        return {"success": True, "operations": operations}
+    
+    except Exception as e:
+        logger.error(f"Error getting active operations: {e}", exc_info=True)
+        return {"success": False, "operations": [], "error": str(e)}
+
+
 @router.post("/tick", response_model=Dict[str, Any])
 async def depin_tick():
     """

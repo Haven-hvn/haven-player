@@ -45,7 +45,7 @@ def _is_valid_phash(phash: Optional[str]) -> bool:
 class VideoCreate(BaseModel):
     path: str
     title: str
-    duration: int
+    duration: float
     has_ai_data: bool = False
     thumbnail_path: Optional[str] = None
     phash: Optional[str] = None
@@ -65,7 +65,7 @@ class VideoResponse(BaseModel):
     id: int
     path: str
     title: str
-    duration: int
+    duration: float
     has_ai_data: bool
     thumbnail_path: Optional[str]
     position: int

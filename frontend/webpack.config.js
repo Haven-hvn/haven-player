@@ -81,7 +81,15 @@ module.exports = [
     // Copy Python backend files to dist so they can be packaged by electron-builder
     plugins: [new CopyPlugin({
     patterns: [
-
+      // Copy app icons to dist
+      {
+        from: path.resolve(__dirname, 'appicon.ico'),
+        to: 'appicon.ico',
+      },
+      {
+        from: path.resolve(__dirname, 'appicon.png'),
+        to: 'appicon.png',
+      },
       {
         from: path.resolve(__dirname, '../backend'),
         to: 'backend',

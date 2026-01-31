@@ -114,7 +114,9 @@ export function usePlugins(backendConnected?: boolean) {
     setError(null);
     try {
       const plugin = await pluginService.load(name);
-      // Refresh all plugins to get updated state after successful load
+      // Optimistically update the plugin state with the returned data
+      setPlugins((prev) => prev.map((p) => (p.name === name ? plugin : p)));
+      // Also refresh all plugins to ensure consistency
       await refreshPlugins();
       return { success: true, plugin };
     } catch (err) {
@@ -132,7 +134,9 @@ export function usePlugins(backendConnected?: boolean) {
     setError(null);
     try {
       const plugin = await pluginService.unload(name);
-      // Refresh all plugins to get updated state after successful unload
+      // Optimistically update the plugin state with the returned data
+      setPlugins((prev) => prev.map((p) => (p.name === name ? plugin : p)));
+      // Also refresh all plugins to ensure consistency
       await refreshPlugins();
       return { success: true, plugin };
     } catch (err) {
@@ -150,7 +154,9 @@ export function usePlugins(backendConnected?: boolean) {
     setError(null);
     try {
       const plugin = await pluginService.restart(name);
-      // Refresh all plugins to get updated state after successful restart
+      // Optimistically update the plugin state with the returned data
+      setPlugins((prev) => prev.map((p) => (p.name === name ? plugin : p)));
+      // Also refresh all plugins to ensure consistency
       await refreshPlugins();
       return { success: true, plugin };
     } catch (err) {

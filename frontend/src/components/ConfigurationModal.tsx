@@ -250,7 +250,13 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const isUploadWorkerTab = activeTab === "upload-worker";
   const loading = loadingAi || loadingFilecoin || loadingArkiv || loadingGateway || loadingUploadWorker;
 
-  useEffect(() => { if (open) { setError(null); setFilecoinError(null); setArkivError(null); loadConfig(); loadAvailableModels(); loadFilecoinConfig(); loadArkivConfig(); loadGatewayConfig(); } }, [open]);
+  useEffect(() => { if (open) { setError(null); setFilecoinError(null); setArkivError(null); setBalanceInfo(null); setBalanceError(null); loadConfig(); loadAvailableModels(); loadFilecoinConfig(); loadArkivConfig(); loadGatewayConfig(); } }, [open]);
+
+  // Clear balance info when switching tabs to prevent showing wrong chain's balance
+  useEffect(() => {
+    setBalanceInfo(null);
+    setBalanceError(null);
+  }, [activeTab]);
 
   const loadConfig = async () => {
     try {

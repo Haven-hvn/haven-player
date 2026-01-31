@@ -18,20 +18,18 @@ export function YouTubePluginConfig({ config, onChange }: YouTubePluginConfigPro
 
   // Add a new channel
   const addChannel = () => {
+    const newChannel = {
+      name: '',
+      channel_url: '',
+      enabled: true,
+      video_format: 'mp4' as const,
+      video_quality: 'best' as const,
+      download_subtitles: false,
+      auto_archive: true,
+    };
     onChange({
       ...config,
-      channels: [
-        ...channels,
-        {
-          name: '',
-          channel_url: '',
-          enabled: true,
-          video_format: 'mp4',
-          video_quality: 'best',
-          download_subtitles: false,
-          auto_archive: true,
-        },
-      ],
+      channels: [...channels, newChannel],
     });
   };
 

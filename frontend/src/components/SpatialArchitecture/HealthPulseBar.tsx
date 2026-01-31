@@ -30,6 +30,7 @@ import {
   Tooltip,
   Chip,
   Popover,
+  CircularProgress,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -279,10 +280,30 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
 
         {/* Backend Status - Vault icon for bank vault metaphor */}
         <HealthIndicator
-          icon={systemHealth.backendConnected ? <VaultIcon /> : <VaultOffIcon />}
+          icon={
+            systemHealth.backendStatus === 'loading' ? (
+              <CircularProgress size={14} thickness={4} sx={{ color: liquidGlassTokens.neon.cyan }} />
+            ) : systemHealth.backendConnected ? (
+              <VaultIcon />
+            ) : (
+              <VaultOffIcon />
+            )
+          }
           label="Backend"
-          status={systemHealth.backendConnected ? 'connected' : 'disconnected'}
-          tooltip={systemHealth.backendConnected ? 'Backend vault secured' : 'Backend vault disconnected'}
+          status={
+            systemHealth.backendStatus === 'loading'
+              ? 'loading'
+              : systemHealth.backendConnected
+              ? 'connected'
+              : 'disconnected'
+          }
+          tooltip={
+            systemHealth.backendStatus === 'loading'
+              ? 'Backend vault connecting...'
+              : systemHealth.backendConnected
+              ? 'Backend vault secured'
+              : 'Backend vault disconnected'
+          }
         />
 
         {/* Wallet Status - Key icon for physical key metaphor */}
@@ -587,7 +608,7 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
 interface HealthIndicatorProps {
   icon: React.ReactNode;
   label: string;
-  status: 'connected' | 'warning' | 'disconnected';
+  status: 'connected' | 'warning' | 'disconnected' | 'loading';
   tooltip: string;
   onClick?: () => void;
   clickable?: boolean;
@@ -605,6 +626,7 @@ const HealthIndicator: React.FC<HealthIndicatorProps> = ({
     connected: liquidGlassTokens.neon.success,
     warning: liquidGlassTokens.neon.amber,
     disconnected: liquidGlassTokens.neon.error,
+    loading: liquidGlassTokens.neon.cyan,
   };
 
   const color = statusColors[status];
@@ -629,13 +651,15 @@ const HealthIndicator: React.FC<HealthIndicatorProps> = ({
         }}
         onClick={onClick}
       >
-        <StatusDotIcon
-          sx={{
-            fontSize: 8,
-            color: color,
-            filter: `drop-shadow(0 0 3px ${color})`,
-          }}
-        />
+        {status !== 'loading' && (
+          <StatusDotIcon
+            sx={{
+              fontSize: 8,
+              color: color,
+              filter: `drop-shadow(0 0 3px ${color})`,
+            }}
+          />
+        )}
         <Box
           sx={{
             color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,

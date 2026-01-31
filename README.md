@@ -9,13 +9,6 @@ A modern video analysis application with Electron + FastAPI architecture. Haven 
 Sleek Dark-themed video analysis dash
 <img width="1920" height="988" alt="main" src="https://github.com/user-attachments/assets/c4e6d7a9-3317-4374-a816-c5f5050e8a1b" />
 
-
-### Video Analysis Progress
-
-Real-time progress visualization 
-
-![Screenshot 2025-06-21 040642](https://github.com/user-attachments/assets/40c6eade-4392-4fd9-95f0-e9e27e475032)
-
 ### Plugin support
 
 Various plugins available

@@ -4,7 +4,7 @@
 
 A video management application that puts you in control. Store your videos locally, encrypt them for privacy, and access them from anywhere—without giving up ownership of your data.
 
-![screenshot](https://github.com/user-attachments/assets/c4e6d7a9-3317-4374-a816-c5f505e8a1b)
+<img width="1920" height="988" alt="main" src="https://github.com/user-attachments/assets/c4e6d7a9-3317-4374-a816-c5f5050e8a1b" />
 
 ## Why Haven Player?
 
@@ -36,7 +36,8 @@ Archive videos from multiple sources through a unified interface:
 | **YouTube** | Video platforms | Archive channels, tutorials, livestreams |
 | **BitTorrent** | P2P networks | Download and archive distributed content |
 | **WebRTC/Live** | Real-time streams | Record live sessions, webinars, broadcasts |
-| **OpenRing** | Ring streams | Archive video doorbell footage |
+
+<img width="1920" height="988" alt="plugin" src="https://github.com/user-attachments/assets/4e789170-8c50-4c79-b190-8be080a4a9d5" />
 
 ### 🤖 Automatic Recording Agent
 Set rules for what to record and when. The agent monitors sources continuously and archives content matching your criteria—automatically, in the background.

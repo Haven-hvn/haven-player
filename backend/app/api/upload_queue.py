@@ -526,6 +526,14 @@ async def update_vlm_analysis_status(
                 detail=f"Invalid vlm_analysis_status: {update_data.vlm_analysis_status}. Must be one of: {', '.join(valid_statuses)}"
             )
 
+        # Check if job can proceed (not in failure sink)
+        if not queue_entry.can_proceed() and update_data.vlm_analysis_status == 'processing':
+            logger.warning(f"Cannot process VLM analysis for {queue_entry.video_path} - job is in failure sink (failed at stage: {queue_entry.failed_stage})")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot process VLM analysis - job is in failure sink (failed at stage: {queue_entry.failed_stage})"
+            )
+
         # Update status
         queue_entry.vlm_analysis_status = update_data.vlm_analysis_status
 
@@ -537,6 +545,16 @@ async def update_vlm_analysis_status(
         # Update error message if provided
         if update_data.vlm_analysis_error:
             queue_entry.vlm_analysis_error = update_data.vlm_analysis_error
+
+        # If VLM analysis failed, mark as failed in the failure sink
+        if update_data.vlm_analysis_status == 'failed':
+            queue_entry.mark_as_failed(
+                stage='vlm_analysis',
+                reason=update_data.vlm_analysis_error or 'Unknown VLM analysis error'
+            )
+        elif update_data.vlm_analysis_status == 'completed':
+            # VLM analysis completed successfully, update overall status
+            queue_entry.update_overall_status()
 
         # If VLM analysis completed, queue VLM JSON upload
         # NOTE: Arkiv sync is NOT queued here - it will be queued when:
@@ -730,6 +748,21 @@ async def update_upload_status(
             # Terminal states
             from datetime import datetime, timezone
             queue_entry.completed_at = datetime.now(timezone.utc)
+
+            # If upload failed, mark as failed in the failure sink
+            if update_data.status == 'failed':
+                queue_entry.mark_as_failed(
+                    stage='upload',
+                    reason=update_data.error or 'Unknown upload error'
+                )
+                # Skip VLM analysis since upload failed
+                if queue_entry.vlm_analysis_status == 'pending':
+                    queue_entry.vlm_analysis_status = 'skipped'
+                    queue_entry.vlm_analysis_error = f"Upload failed: {update_data.error or 'Unknown error'}"
+                    logger.info(f"Skipping VLM analysis for {queue_entry.video_path} due to upload failure")
+            elif update_data.status == 'completed':
+                # Upload completed successfully, update overall status
+                queue_entry.update_overall_status()
 
         # Update error message if provided
         if update_data.error:

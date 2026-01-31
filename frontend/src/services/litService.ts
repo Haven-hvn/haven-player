@@ -15,8 +15,169 @@ import { createLitClient, type LitClient } from '@lit-protocol/lit-client';
 import { nagaDev } from '@lit-protocol/networks';
 import { createAuthManager, storagePlugins } from '@lit-protocol/auth';
 import { LitAccessControlConditionResource } from '@lit-protocol/auth-helpers';
+import type { LitAuthStorageProvider } from '@lit-protocol/auth';
+import type { LitAuthData } from '@lit-protocol/auth';
+import type { PKPData } from '@lit-protocol/schemas';
 import { ethers } from 'ethers';
 import { createViemAccount } from './viemAdapter';
+
+/**
+ * Check if localStorage is available (browser environment)
+ * Returns false in Node.js/Electron main process
+ */
+function isLocalStorageAvailable(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return false;
+    }
+    // Test actual functionality
+    const testKey = '__lit_storage_test__';
+    localStorage.setItem(testKey, 'test');
+    localStorage.removeItem(testKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a memory-based storage adapter for Node.js environments
+ * This implements LitAuthStorageProvider for use when localStorage is not available
+ * (e.g., Electron main process)
+ * 
+ * NOTE: Session data is NOT persisted - auth signatures will be recreated on each upload.
+ * This is acceptable for background uploads where the wallet private key is always available.
+ */
+function createMemoryStorage(appName: string, networkName: string): LitAuthStorageProvider {
+  // In-memory storage maps
+  const authDataStore = new Map<string, LitAuthData>();
+  const innerDelegationStore = new Map<string, string>();
+  const pkpTokensStore = new Map<string, { tokenIds: string[]; timestamp: number }>();
+  const pkpFullStore = new Map<string, { pkps: PKPData[]; timestamp: number }>();
+  const pkpDetailsStore = new Map<string, { publicKey: string; ethAddress: string }>();
+  const pkpAddressStore = new Map<string, { tokenIds: string[]; timestamp: number }>();
+
+  const AUTH_PREFIX = 'lit-auth';
+  const PKP_PREFIX = 'lit-pkp-tokens';
+  const PKP_FULL_PREFIX = 'lit-pkp-full';
+  const PKP_DETAILS_PREFIX = 'lit-pkp-details';
+  const PKP_ADDRESS_PREFIX = 'lit-pkp-address';
+
+  function buildLookupKey(address: string): string {
+    return `${AUTH_PREFIX}:${appName}:${networkName}:${address}`;
+  }
+
+  function buildPKPCacheKey(authMethodType: number | bigint, authMethodId: string): string {
+    return `${PKP_PREFIX}:${appName}:${networkName}:${authMethodType}:${authMethodId}`;
+  }
+
+  function buildPKPFullCacheKey(authMethodType: number | bigint, authMethodId: string): string {
+    return `${PKP_FULL_PREFIX}:${appName}:${networkName}:${authMethodType}:${authMethodId}`;
+  }
+
+  function buildPKPDetailsCacheKey(tokenId: string): string {
+    return `${PKP_DETAILS_PREFIX}:${appName}:${networkName}:${tokenId}`;
+  }
+
+  function buildPKPAddressCacheKey(ownerAddress: string): string {
+    return `${PKP_ADDRESS_PREFIX}:${appName}:${networkName}:${ownerAddress}`;
+  }
+
+  return {
+    config: { appName, networkName, storageType: 'memory' },
+
+    async read<T extends { address: string }>(params: T): Promise<LitAuthData | null> {
+      const key = buildLookupKey(params.address);
+      return authDataStore.get(key) ?? null;
+    },
+
+    async write<T extends { address: string; authData: LitAuthData }>(params: T): Promise<void> {
+      const key = buildLookupKey(params.address);
+      authDataStore.set(key, params.authData);
+    },
+
+    async writeInnerDelegationAuthSig(params: { publicKey: string; authSig: string }): Promise<void> {
+      const key = buildLookupKey(`${appName}-inner-delegation:${params.publicKey}`);
+      innerDelegationStore.set(key, params.authSig);
+    },
+
+    async readInnerDelegationAuthSig(params: { publicKey: string }): Promise<string | null> {
+      const key = buildLookupKey(`${appName}-inner-delegation:${params.publicKey}`);
+      return innerDelegationStore.get(key) ?? null;
+    },
+
+    async writePKPTokens(params: {
+      authMethodType: number | bigint;
+      authMethodId: string;
+      tokenIds: string[];
+    }): Promise<void> {
+      const key = buildPKPCacheKey(params.authMethodType, params.authMethodId);
+      pkpTokensStore.set(key, { tokenIds: params.tokenIds, timestamp: Date.now() });
+    },
+
+    async readPKPTokens(params: {
+      authMethodType: number | bigint;
+      authMethodId: string;
+    }): Promise<string[] | null> {
+      const key = buildPKPCacheKey(params.authMethodType, params.authMethodId);
+      const value = pkpTokensStore.get(key);
+      return value?.tokenIds ?? null;
+    },
+
+    async writePKPs(params: {
+      authMethodType: number | bigint;
+      authMethodId: string;
+      pkps: PKPData[];
+    }): Promise<void> {
+      const key = buildPKPFullCacheKey(params.authMethodType, params.authMethodId);
+      pkpFullStore.set(key, { pkps: params.pkps, timestamp: Date.now() });
+    },
+
+    async readPKPs(params: {
+      authMethodType: number | bigint;
+      authMethodId: string;
+    }): Promise<PKPData[] | null> {
+      const key = buildPKPFullCacheKey(params.authMethodType, params.authMethodId);
+      const value = pkpFullStore.get(key);
+      return value?.pkps ?? null;
+    },
+
+    async writePKPDetails(params: {
+      tokenId: string;
+      publicKey: string;
+      ethAddress: string;
+    }): Promise<void> {
+      const key = buildPKPDetailsCacheKey(params.tokenId);
+      pkpDetailsStore.set(key, {
+        publicKey: params.publicKey,
+        ethAddress: params.ethAddress,
+      });
+    },
+
+    async readPKPDetails(params: {
+      tokenId: string;
+    }): Promise<{ publicKey: string; ethAddress: string } | null> {
+      const key = buildPKPDetailsCacheKey(params.tokenId);
+      return pkpDetailsStore.get(key) ?? null;
+    },
+
+    async writePKPTokensByAddress(params: {
+      ownerAddress: string;
+      tokenIds: string[];
+    }): Promise<void> {
+      const key = buildPKPAddressCacheKey(params.ownerAddress);
+      pkpAddressStore.set(key, { tokenIds: params.tokenIds, timestamp: Date.now() });
+    },
+
+    async readPKPTokensByAddress(params: {
+      ownerAddress: string;
+    }): Promise<string[] | null> {
+      const key = buildPKPAddressCacheKey(params.ownerAddress);
+      const value = pkpAddressStore.get(key);
+      return value?.tokenIds ?? null;
+    },
+  };
+}
 
 // Define our own AccessControlCondition type to avoid version conflicts
 interface EvmBasicAccessControlCondition {
@@ -96,13 +257,28 @@ export async function initLitClient(): Promise<LitClient> {
   });
 
   // Initialize AuthManager for session management
-  // Using localStorage for session caching
-  authManager = createAuthManager({
-    storage: storagePlugins.localStorage({
-      appName: 'haven-player',
-      networkName: 'naga-dev',
-    }),
-  });
+  // Use localStorage in browser, memory storage in Node.js/Electron main process
+  const appName = 'haven-player';
+  const networkName = 'naga-dev';
+  const useLocalStorage = isLocalStorageAvailable();
+  
+  if (useLocalStorage) {
+    authManager = createAuthManager({
+      storage: storagePlugins.localStorage({
+        appName,
+        networkName,
+      }),
+    });
+    console.log('[Lit] Using localStorage for session caching');
+  } else {
+    // Fallback to memory storage for Node.js/Electron main process
+    // Session signatures will be recreated on each upload, but that's fine
+    // since we have the private key available
+    authManager = createAuthManager({
+      storage: createMemoryStorage(appName, networkName),
+    });
+    console.log('[Lit] Using memory storage for session caching (Node.js environment)');
+  }
 
   console.log('[Lit] Connected to Lit network (naga-dev) - SDK v8');
   return litClient;

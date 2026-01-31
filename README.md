@@ -1,248 +1,104 @@
 # Haven Player
 
-A modern video analysis application with Electron + FastAPI architecture. Haven Player provides AI-powered video analysis with a sleek, dark-themed interface.
+> **Encrypted. Local. Yours forever.**
 
-## 📸 Screens
+A video management application that puts you in control. Store your videos locally, encrypt them for privacy, and access them from anywhere—without giving up ownership of your data.
 
-### Main Application Interface
+![screenshot](https://github.com/user-attachments/assets/c4e6d7a9-3317-4374-a816-c5f505e8a1b)
 
-Sleek Dark-themed video analysis dash
-<img width="1920" height="988" alt="main" src="https://github.com/user-attachments/assets/c4e6d7a9-3317-4374-a816-c5f5050e8a1b" />
+## Why Haven Player?
 
-### Plugin support
+**Your videos, your rules.**
 
-Various plugins available
+Most video platforms make you choose between convenience and control. Either you host everything yourself (high maintenance) or you upload to a service that controls access to your data (loss of privacy). Haven Player offers a third path:
 
-<img width="1920" height="988" alt="plugin" src="https://github.com/user-attachments/assets/4e789170-8c50-4c79-b190-8be080a4a9d5" />
+- **Local-first**: Your videos live on your machine. Fast access, no bandwidth costs.
+- **Encrypted**: Your private videos stay private. Only you (or people you authorize) can view them.
+- **Portable**: Take your entire library with you. Restore it anywhere. Your catalog syncs across devices.
+- **Share without hosting**: Grant access to specific people without running a public server.
+
+## Features
+
+### 🔒 Client-Side Encryption
+Encrypt videos before they leave your machine. Only holders of the encryption key can decrypt and view the content. Even if the encrypted files are publicly accessible, they remain unreadable without authorization.
+
+Access controls let you define who can decrypt your content:
+- Only you (default)
+- Specific accounts you designate
+- Members of a group you define
+- Holders of specific credentials
+
+### 📥 Plugin-Based Media Ingestion
+Archive videos from multiple sources through a unified interface:
+
+| Plugin | Source Type | Use Case |
+|--------|-------------|----------|
+| **YouTube** | Video platforms | Archive channels, tutorials, livestreams |
+| **BitTorrent** | P2P networks | Download and archive distributed content |
+| **WebRTC/Live** | Real-time streams | Record live sessions, webinars, broadcasts |
+| **OpenRing** | Ring streams | Archive video doorbell footage |
+
+### 🤖 Automatic Recording Agent
+Set rules for what to record and when. The agent monitors sources continuously and archives content matching your criteria—automatically, in the background.
+
+### 🧠 AI Video Analysis
+Built-in visual language model (VLM) processing analyzes your videos:
+- Automatic content tagging
+- Timeline visualization of analyzed segments
+- Searchable metadata
+
+### 🔄 Catalog Restore & Sync
+Your video catalog (metadata, analysis, access controls) can be synchronized across devices. Lose your machine? Restore your entire library catalog from backup. The encrypted video files can be retrieved separately using their content identifiers.
+
+### 📊 Spatial Operations Dashboard
+Visual interface showing:
+- Active recording operations
+- Plugin health and status
+- Storage utilization
+- Processing queue
 
 ## Architecture
 
-This application consists of two main components:
-
-### Backend (FastAPI + SQLAlchemy)
-- **Location**: `backend/`
-- **Technology**: FastAPI, SQLAlchemy, SQLite
-- **Features**: RESTful API, video metadata management, AI analysis timestamps
-- **Database**: SQLite with videos and timestamps tables
-- **Testing**: 100% test coverage with pytest
-
-### Frontend (Electron + React)
-- **Location**: `frontend/`
-- **Technology**: Electron, React, TypeScript, Material-UI
-- **Features**: Dark theme UI, video analysis visualization, real-time progress tracking
-- **Testing**: Jest + React Testing Library
-
-## Key Features
-
-### 🎯 AI Video Analysis Interface
-- **Dynamic video list** with real-time analysis progress
-- **Timeline visualization** showing analyzed segments
-- **Status indicators** (pending, analyzing, completed, error)
-- **Batch processing** with "Analyze All" functionality
-
-### 🎨 Modern UI Design
-- **Dark theme** (#2a2a2a background)
-- **Sidebar navigation** with vertical icons
-- **Header with counters** and action buttons
-- **Responsive layout** with hover effects
-
-### 📊 Data Management
-- **Video metadata** storage and retrieval
-- **AI analysis timestamps** with confidence scores
-- **RESTful API** for all operations
-- **Real-time updates** across the interface
-
-### YouTube Plugin Requirements
-
-The YouTube plugin uses yt-dlp to download videos. For full functionality, you may need additional dependencies:
-
-#### JavaScript Runtime (Required for YouTube)
-
-YouTube has deprecated video extraction without a JavaScript runtime. Without it, yt-dlp will fail for many videos (especially age-gated or bot-protected content).
-
-**Install Deno** (Recommended - Smaller, Faster):
-```bash
-# macOS
-brew install deno
-
-# Windows
-# Download from https://deno.land/install
-
-# Linux
-curl -fsSL https://deno.land/install.sh | sh
 ```
-
-**Install Node.js** (Alternative):
-```bash
-# macOS
-brew install node
-
-# Windows
-# Download from https://nodejs.org
-
-# Linux
-# Use your distribution's package manager (e.g., sudo apt install nodejs)
-```
-
-**What happens without a JS runtime?**
-- YouTube downloads are in degraded mode
-- Only basic download formats work (lower quality)
-- Age-gated and bot-protected videos will fail to download
-- The application will still function, just with limited YouTube capabilities
-
-#### YouTube Authentic Cookies (Optional - For Age-Gated Videos)
-
-To download age-gated or bot-protected YouTube videos, you need to provide authentication cookies:
-
-**Option 1: Browser Extension (Recommended)**
-1. Install the "Get cookies.txt LOCALLY" extension for Chrome or Firefox
-2. Sign in to YouTube in your browser
-3. Click the extension icon and export cookies
-4. Configure the cookie file path via the YouTube plugin settings
-
-**Option 2: yt-dlp Browser Export**
-```bash
-# Export cookies from Chrome/Firefox to a file
-yt-dlp --cookies-from-browser chrome --cookies cookies.txt
-```
-
-**Security Note**: Never commit cookie files to version control. They contain authentication credentials.
-
-#### FFmpeg (Optional - For Better Video Quality)
-
-FFmpeg is optional but recommended for better video quality and format optimization:
-
-```bash
-# macOS
-brew install ffmpeg
-
-# Windows
-# Download from https://ffmpeg.org/download.html
-
-# Linux (Debian/Ubuntu)
-sudo apt install ffmpeg
+┌─────────────────────────────────────────────────────────────┐
+│                     ELECTRON FRONTEND                        │
+│  • Dark-themed UI (Material-UI)                             │
+│  • Video player with timeline visualization                 │
+│  • Plugin configuration panels                              │
+│  • Operations dashboard                                     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    FASTAPI BACKEND                           │
+│  • RESTful API for video/metadata management                │
+│  • Plugin system (YouTube, BitTorrent, WebRTC, etc.)        │
+│  • AI analysis pipeline                                     │
+│  • Upload coordination                                      │
+│  • SQLite database (local)                                  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
 
 ### Prerequisites
-- **Python 3.12+** for backend
-- **Node.js 18+** for frontend
-- **Git** for version control
-- **MetaMask** browser extension (for Filecoin wallet setup)
+- Python 3.12+
+- Node.js 18+
+- FFmpeg (optional, for better video quality)
+- Deno or Node.js runtime (for YouTube downloads)
 
-### Filecoin Wallet Setup
+### Backend
 
-Haven Player supports uploading videos to Filecoin using the Calibration testnet. To use this feature, you'll need to set up a wallet with testnet tokens.
-
-#### 1. Install and Configure MetaMask
-
-1. **Install MetaMask**:
-   - Download and install MetaMask from [metamask.io](https://metamask.io/)
-   - Create a new wallet or import an existing one
-   - **Important**: Use a test wallet for development. Never use your main wallet with real funds.
-
-2. **Add Filecoin Calibration Testnet to MetaMask**:
-   - Open MetaMask and click the network dropdown (top of the extension)
-   - Click "Add Network" or "Add a network manually"
-   - Enter the following details:
-     - **Network Name**: `Filecoin Calibration`
-     - **New RPC URL**: `https://api.calibration.node.glif.io/rpc/v1`
-     - **Chain ID**: `314159`
-     - **Currency Symbol**: `tFIL`
-     - **Block Explorer URL**: `https://calibration.filscan.io/`
-   - Click "Save"
-
-   Alternatively, you can use [chainid.network](https://chainid.network/) to add the network automatically.
-
-#### 2. Get Testnet FIL (tFIL) Tokens
-
-Testnet FIL is required to pay for transaction fees (gas) on the Calibration testnet.
-
-1. **Get tFIL from the Faucet**:
-   - Visit the [Filecoin Calibration Faucet](https://faucet.calibnet.chainsafe-fil.io/)
-   - Enter your MetaMask wallet address (copy it from MetaMask)
-   - Click "Send Funds" or "Request tFIL"
-   - Wait a few minutes for the transaction to complete
-   - Verify receipt by checking your MetaMask balance (should show tFIL)
-
-   **Note**: You may need to request multiple times if you need more tokens. The faucet typically provides a small amount per request.
-
-#### 3. Get Testnet USDFC Tokens
-
-USDFC (USD Filecoin) tokens are required for storage payments when uploading videos to Filecoin.
-
-1. **Mint Test USDFC**:
-   - Visit the [USDFC Testnet Application](https://stg.usdfc.net)
-   - Connect your MetaMask wallet (make sure you're on the Calibration testnet)
-   - Navigate to the "Trove" or "Mint" section
-   - Follow the instructions to mint test USDFC using your tFIL as collateral
-   - You'll need some tFIL in your wallet to use as collateral
-
-   **Alternative**: Some faucets may provide USDFC directly. Check the [Secured Finance documentation](https://docs.secured.finance/usdfc-stablecoin/getting-started/getting-test-usdfc-on-testnet) for the latest methods.
-
-#### 4. Export Your Private Key
-
-To use your wallet in Haven Player, you'll need to export your private key from MetaMask:
-
-1. **Export Private Key from MetaMask**:
-   - Open MetaMask extension
-   - Click the three dots (menu) in the top right
-   - Select "Account details"
-   - Click "Export Private Key"
-   - Enter your MetaMask password
-   - **Copy the private key** (it will look like: `0x1234...` or just `1234...`)
-   - **Important**: Keep this private key secure and never share it publicly
-
-2. **Configure in Haven Player**:
-   - Open Haven Player
-   - Navigate to the Filecoin configuration (usually in settings or via a Filecoin upload button)
-   - Paste your private key into the "Private Key" field
-   - The application will automatically add the `0x` prefix if it's missing
-   - The RPC URL should default to: `wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1`
-   - Optionally, enter a Data Set ID if you want to use an existing dataset
-   - Click "Save Configuration"
-
-#### 5. Verify Your Setup
-
-Before uploading videos, verify that:
-- ✅ MetaMask is configured with the Calibration testnet
-- ✅ Your wallet has tFIL tokens (for gas fees)
-- ✅ Your wallet has USDFC tokens (for storage payments)
-- ✅ Your private key is correctly configured in Haven Player
-- ✅ The RPC URL is set correctly
-
-#### Security Best Practices
-
-- **Never share your private key**: Keep it secure and never commit it to version control
-- **Use a test wallet**: Create a separate MetaMask wallet specifically for testing
-- **Testnet tokens only**: Remember that testnet tokens (tFIL, test USDFC) have no real value
-- **Backup your wallet**: Make sure you have your MetaMask seed phrase backed up securely
-
-#### Troubleshooting
-
-**Issue**: "Synapse SDK initialization timed out"
-- **Solution**: Verify your RPC URL is correct: `wss://wss.calibration.node.glif.io/apigw/lotus/rpc/v1`
-
-**Issue**: "Upload blocked: Payment setup incomplete"
-- **Solution**: Ensure you have both tFIL (for gas) and USDFC (for storage payments) in your wallet
-
-**Issue**: "Invalid private key format"
-- **Solution**: The private key should be 66 characters with `0x` prefix, or 64 characters without. MetaMask exports without `0x`, but the app will add it automatically.
-
-**Issue**: "Insufficient balance"
-- **Solution**: Request more tFIL from the faucet or mint more USDFC using your tFIL collateral
-
-### 1. Backend Setup
 ```bash
 cd backend
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-The API will be available at http://localhost:8000
+API available at http://localhost:8000
 
-### 2. Frontend Setup
+### Frontend
+
 ```bash
 cd frontend
 npm install
@@ -250,117 +106,109 @@ npm run build
 npm start
 ```
 
-## API Endpoints
+### YouTube Plugin Setup
 
-- `GET /api/videos/` - Get all videos
-- `POST /api/videos/` - Create a new video
-- `POST /api/videos/{video_path}/timestamps/` - Add AI analysis timestamps
-- `GET /api/videos/{video_path}/timestamps/` - Get video timestamps
-- `DELETE /api/videos/{video_path}` - Delete a video
-- `PUT /api/videos/{video_path}/move-to-front` - Reorder videos
+For full YouTube functionality, install a JavaScript runtime:
+
+```bash
+# macOS
+brew install deno
+
+# Linux
+curl -fsSL https://deno.land/install.sh | sh
+
+# Windows
+# Download from https://deno.land/install
+```
+
+For age-restricted content, configure authentication cookies via the plugin settings.
+
+## Data Flow
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Source     │────▶│   Local      │────▶│  Encrypted   │
+│  (Plugin)    │     │   Storage    │     │   Backup     │
+└──────────────┘     └──────────────┘     └──────────────┘
+                            │                    │
+                            ▼                    ▼
+                     ┌──────────────┐     ┌──────────────┐
+                     │   AI         │     │   Access     │
+                     │   Analysis   │     │   Controls   │
+                     └──────────────┘     └──────────────┘
+```
+
+1. **Ingest**: Plugins download or record from various sources
+2. **Store**: Videos saved to local SQLite + filesystem
+3. **Analyze**: Optional AI processing extracts metadata
+4. **Encrypt** (optional): Files encrypted with access controls
+5. **Backup** (optional): Encrypted copies stored with retrieval credentials
+6. **Restore**: Catalog metadata syncs; encrypted files retrieved on demand
+
+## Encryption & Access Control
+
+Haven Player uses threshold encryption for access control:
+
+- **Encryption**: Files are encrypted locally before any network operation
+- **Access Policies**: You define who can decrypt using account lists, group membership, or credential ownership
+- **Decryption**: Only authorized parties can reconstruct the encryption key
+
+No centralized server ever holds the decryption key. If you lose your key, the encrypted data cannot be recovered—just as it should be for true data ownership.
+
+## Project Structure
+
+```
+haven-player/
+├── backend/              # FastAPI server
+│   ├── app/
+│   │   ├── api/          # API endpoints
+│   │   ├── models/       # Database models
+│   │   ├── plugins/      # Built-in plugins (YouTube, BitTorrent, etc.)
+│   │   └── services/     # Business logic
+│   └── tests/
+├── frontend/             # Electron + React app
+│   ├── src/
+│   │   ├── components/   # React components
+│   │   ├── services/     # API services, encryption
+│   │   └── main.ts       # Electron main process
+│   └── tests/
+└── docs/                 # Architecture documentation
+```
 
 ## Testing
 
-### Backend Tests
+Backend:
 ```bash
 cd backend
 pytest --cov=app --cov-report=term-missing
 ```
 
-### Frontend Tests
+Frontend:
 ```bash
 cd frontend
 npm test
-npm run test:coverage
 ```
-
-## GUI Specifications
-
-The interface follows a data-driven design:
-
-### Layout Structure
-```
-┌─[Sidebar]─┬─[Header: Counter + Add + Analyze All]─┐
-│           │                                      │
-│ [Icons]   │ [Video 1: Thumbnail | Meta | ████▓▓ | Status | Action] │
-│           │ [Video 2: Thumbnail | Meta | ██▓▓▓▓ | Status | Action] │
-│           │ [Video 3: Thumbnail | Meta | ▓▓▓▓▓▓ | Status | Action] │
-│           │                                      │
-└───────────┴──────────────────────────────────────┘
-```
-
-### Video Analysis Visualization
-- **Blue segments** (████): AI-analyzed portions
-- **Gray segments** (▓▓▓▓): Unanalyzed or no-content areas
-- **Progress bars**: Real-time analysis status
-- **Dynamic counters**: Auto-updating video counts
 
 ## Development
 
 ### Backend Development
 ```bash
 cd backend
-pytest  # Run tests
-uvicorn app.main:app --reload  # Development server
+uvicorn app.main:app --reload
 ```
 
 ### Frontend Development
 ```bash
 cd frontend
-npm run dev  # Development with hot reload
-npm test  # Run tests
+npm run dev
 ```
 
-## Migration Notes
+## Security Notes
 
-This project represents a complete migration from the original PyQt desktop application to a modern web-based architecture:
-
-### ✅ Migration Complete
-- ✅ **Backend**: PyQt SQLite → FastAPI + SQLAlchemy
-- ✅ **Frontend**: PyQt GUI → Electron + React + TypeScript
-- ✅ **Database**: Direct access → RESTful API
-- ✅ **UI**: Native widgets → Material-UI components
-- ✅ **Testing**: Manual → 100% automated test coverage
-- ✅ **Architecture**: Monolithic → Microservices-ready
-
-### Key Improvements
-- **Cross-platform**: Runs on Windows, macOS, Linux
-- **Scalable**: API-first architecture
-- **Modern**: React with TypeScript and Material-UI
-- **Tested**: Complete unit and integration test coverage
-- **Maintainable**: Clean separation of concerns
-
-## Project Structure
-
-```
-haven-player/
-├── backend/           # FastAPI server
-│   ├── app/
-│   │   ├── api/       # API endpoints
-│   │   ├── models/    # Database models
-│   │   └── main.py    # FastAPI app
-│   ├── tests/         # Backend tests
-│   └── requirements.txt
-├── frontend/          # Electron + React app
-│   ├── src/
-│   │   ├── components/  # React components
-│   │   ├── hooks/       # Custom React hooks
-│   │   ├── services/    # API services
-│   │   ├── types/       # TypeScript types
-│   │   └── main.ts      # Electron main process
-│   ├── tests/         # Frontend tests
-│   └── package.json
-└── README.md
-```
-
-## Contributing
-
-1. Follow TypeScript strict mode guidelines
-2. Maintain 100% test coverage
-3. Use proper type definitions (no `any` types)
-4. Follow the established GUI specifications
-5. Write tests for all new features
+- **Private keys**: Never commit credentials to version control
+- **Cookies**: Authentication cookies contain sensitive data—store securely
+- **Encryption**: Encrypted files without the key are unrecoverable. Back up your keys.
 
 ## License
 
-MIT License 
+MIT License

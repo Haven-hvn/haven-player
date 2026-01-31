@@ -90,6 +90,27 @@ class UploadQueue(Base):
     vlm_json_upload_completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     vlm_json_upload_error: Mapped[str] = mapped_column(Text, nullable=True)
 
+    # Overall status and failure sink
+    # - pending: Job is pending (no stage has started)
+    # - processing: At least one stage is in progress
+    # - completed: All required stages completed successfully
+    # - failed: One or more stages failed (job is in the failure sink)
+    overall_status: Mapped[str] = mapped_column(String, default='pending', nullable=False, index=True)
+    
+    # Which stage failed (if overall_status is 'failed')
+    # - download: Video download failed
+    # - upload: FileCoin upload failed
+    # - vlm_analysis: VLM analysis failed
+    # - vlm_json_upload: VLM JSON upload failed
+    # - arkiv_sync: Arkiv sync failed
+    failed_stage: Mapped[str] = mapped_column(String, nullable=True, index=True)
+    
+    # When the failure occurred
+    failed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    
+    # Detailed error message for the failure
+    failure_reason: Mapped[str] = mapped_column(Text, nullable=True)
+
     def to_dict(self) -> dict:
         """
         Convert UploadQueue to dictionary representation.
@@ -121,6 +142,10 @@ class UploadQueue(Base):
             'vlm_json_upload_started_at': self.vlm_json_upload_started_at.isoformat() if self.vlm_json_upload_started_at else None,
             'vlm_json_upload_completed_at': self.vlm_json_upload_completed_at.isoformat() if self.vlm_json_upload_completed_at else None,
             'vlm_json_upload_error': self.vlm_json_upload_error,
+            'overall_status': self.overall_status,
+            'failed_stage': self.failed_stage,
+            'failed_at': self.failed_at.isoformat() if self.failed_at else None,
+            'failure_reason': self.failure_reason,
         }
 
     def can_retry(self) -> bool:
@@ -305,3 +330,89 @@ class UploadQueue(Base):
             True if vlm_json_upload_status is 'failed', False otherwise
         """
         return self.vlm_json_upload_status == 'failed'
+
+    def is_overall_failed(self) -> bool:
+        """
+        Check if the overall job has failed (in the failure sink).
+
+        Returns:
+            True if overall_status is 'failed', False otherwise
+        """
+        return self.overall_status == 'failed'
+
+    def is_overall_processing(self) -> bool:
+        """
+        Check if the overall job is processing.
+
+        Returns:
+            True if overall_status is 'processing', False otherwise
+        """
+        return self.overall_status == 'processing'
+
+    def is_overall_completed(self) -> bool:
+        """
+        Check if the overall job is completed.
+
+        Returns:
+            True if overall_status is 'completed', False otherwise
+        """
+        return self.overall_status == 'completed'
+
+    def mark_as_failed(self, stage: str, reason: str) -> None:
+        """
+        Mark the job as failed in the failure sink.
+
+        This prevents downstream stages from running.
+
+        Args:
+            stage: Which stage failed (download, upload, vlm_analysis, vlm_json_upload, arkiv_sync)
+            reason: Detailed error message
+        """
+        from datetime import datetime, timezone
+        self.overall_status = 'failed'
+        self.failed_stage = stage
+        self.failed_at = datetime.now(timezone.utc)
+        self.failure_reason = reason
+
+    def can_proceed(self) -> bool:
+        """
+        Check if downstream stages can proceed.
+
+        Returns:
+            True if job is not in failure sink, False otherwise
+        """
+        return self.overall_status != 'failed'
+
+    def update_overall_status(self) -> None:
+        """
+        Update overall status based on individual stage statuses.
+
+        This should be called after any stage status change.
+        """
+        # If already failed, stay failed
+        if self.overall_status == 'failed':
+            return
+
+        # Check if any stage is processing
+        if (self.status == 'processing' or
+            self.vlm_analysis_status == 'processing' or
+            self.vlm_json_upload_status == 'processing' or
+            self.arkiv_sync_status == 'syncing'):
+            self.overall_status = 'processing'
+            return
+
+        # Check if all required stages are completed
+        # Required stages: upload (status='completed')
+        # Optional stages: vlm_analysis, vlm_json_upload, arkiv_sync
+        upload_complete = self.status == 'completed'
+        vlm_complete = (self.vlm_analysis_status in ['completed', 'skipped'] or
+                       self.vlm_analysis_status is None)
+        vlm_json_complete = (self.vlm_json_upload_status in ['completed', 'skipped'] or
+                            self.vlm_json_upload_status is None)
+        arkiv_complete = (self.arkiv_sync_status in ['completed', 'skipped'] or
+                         self.arkiv_sync_status is None)
+
+        if upload_complete and vlm_complete and vlm_json_complete and arkiv_complete:
+            self.overall_status = 'completed'
+        else:
+            self.overall_status = 'processing'

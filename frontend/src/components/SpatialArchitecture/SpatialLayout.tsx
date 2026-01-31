@@ -62,13 +62,10 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
     mode,
     config,
     selectedItem,
-    playerItem,
     selectionCount,
     isTransitioning,
     enterBrowseMode,
     enterFocusedMode,
-    enterPlayerMode,
-    exitPlayerMode,
     selectItem,
     hoverItem,
     clearSelection,
@@ -147,10 +144,9 @@ const SpatialLayout: React.FC<SpatialLayoutProps> = ({ onUploadVideo, onAddVideo
   }, [hoverItem]);
 
   const handleItemPlay = useCallback((item: TransformationItem) => {
-    // Double-click transforms the Stage, doesn't navigate
-    // ANTI-PATTERN AVOIDED: Full-Page Video Player
-    enterPlayerMode(item);
-  }, [enterPlayerMode]);
+    // Navigate to the video player route
+    navigate(`/player/${encodeURIComponent(item.sourceIdentity)}`);
+  }, [navigate]);
 
   const handleItemUpload = useCallback((item: TransformationItem) => {
     if (onUploadVideo) {

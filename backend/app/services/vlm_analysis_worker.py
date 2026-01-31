@@ -112,6 +112,15 @@ class VLMAnalysisWorker:
                 logger.warning(f"VLM analysis job {queue_id} not found")
                 return False
 
+            # Check if job can proceed (not in failure sink)
+            if not queue_entry.can_proceed():
+                logger.warning(f"Skipping VLM analysis for {queue_entry.video_path} - job failed at earlier stage: {queue_entry.failed_stage}")
+                await self.mark_vlm_analysis_skipped(
+                    queue_id,
+                    f"Job failed at earlier stage: {queue_entry.failed_stage} - {queue_entry.failure_reason}"
+                )
+                return True
+
             # Get video record
             video = db.query(Video).filter(Video.path == queue_entry.video_path).first()
             if not video:

@@ -1,29 +1,24 @@
 /**
- * UploadWorker Configuration Component
+ * UploadWorker Status Component
  *
- * Simple component to display and control the upload worker status and configuration.
+ * Displays the upload worker status and queue statistics.
+ * The worker auto-starts with the backend - no manual control needed.
  */
 
 import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Switch,
-  FormControlLabel,
   Alert,
-  Paper,
   Card,
   CardContent,
   Chip,
   Grid,
-    useTheme,
-  } from '@mui/material';
-  import {
-    CloudUpload as CloudUploadIcon,
-    CheckCircle as CheckCircleIcon,
-    Error as ErrorIcon,
-    Info as InfoIcon,
-  } from '@mui/icons-material';
+} from '@mui/material';
+import {
+  CloudUpload as CloudUploadIcon,
+  Info as InfoIcon,
+} from '@mui/icons-material';
 import { useUploadWorker } from '@/hooks/useUploadWorker';
 import { uploadCoordinatorConfigService } from '@/services/uploadCoordinatorConfigService';
 import type { UploadCoordinatorConfig } from '@/types/plugin';
@@ -33,17 +28,12 @@ interface UploadWorkerConfigProps {
 }
 
 const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigured }) => {
-  const theme = useTheme();
   const {
     status,
     queueStats,
-    loading,
     error,
-    start,
-    stop,
   } = useUploadWorker();
   const [backendConfig, setBackendConfig] = useState<UploadCoordinatorConfig | null>(null);
-  const [backendLoading, setBackendLoading] = useState(false);
 
   // Load backend config on mount
   useEffect(() => {
@@ -51,55 +41,6 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
       .then(setBackendConfig)
       .catch(console.error);
   }, []);
-
-  const handleToggleActive = async (enabled: boolean) => {
-    try {
-      if (enabled) {
-        if (!filecoinConfigured) {
-          console.warn('Filecoin not configured, cannot start upload worker');
-          return;
-        }
-
-        // First, update backend configuration
-        setBackendLoading(true);
-        try {
-          await uploadCoordinatorConfigService.enable();
-          console.log('✅ Enabled backend upload coordinator (auto-upload for plugin downloads)');
-        } catch (err) {
-          console.error('Failed to enable backend upload coordinator:', err);
-          // Continue anyway - frontend worker can still run
-        }
-
-        // Then, start frontend upload worker
-        await start({ enabled: true, pollInterval: 15000 });
-
-        // Refresh backend config
-        const updatedConfig = await uploadCoordinatorConfigService.getConfig();
-        setBackendConfig(updatedConfig);
-      } else {
-        // First, update backend configuration
-        setBackendLoading(true);
-        try {
-          await uploadCoordinatorConfigService.disable();
-          console.log('✅ Disabled backend upload coordinator');
-        } catch (err) {
-          console.error('Failed to disable backend upload coordinator:', err);
-          // Continue anyway
-        }
-
-        // Then, stop frontend upload worker
-        await stop();
-
-        // Refresh backend config
-        const updatedConfig = await uploadCoordinatorConfigService.getConfig();
-        setBackendConfig(updatedConfig);
-      }
-    } catch (err) {
-      console.error('Failed to toggle upload worker:', err);
-    } finally {
-      setBackendLoading(false);
-    }
-  };
 
   return (
     <Box sx={{ mb: 3 }}>
@@ -125,21 +66,22 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={status?.isRunning || false}
-                      onChange={(e) => handleToggleActive(e.target.checked)}
-                      disabled={loading || backendLoading || !filecoinConfigured}
-                      color="success"
-                    />
-                  }
-                  label={
-                    <Typography sx={{ fontWeight: 600 }}>
-                      {backendLoading ? 'Updating...' : (status?.isRunning ? 'Upload Worker Active' : 'Upload Worker Inactive')}
-                    </Typography>
-                  }
+                <CloudUploadIcon 
+                  sx={{ 
+                    color: status?.isRunning ? 'success.main' : 'text.secondary',
+                    fontSize: 28 
+                  }} 
                 />
+                <Box>
+                  <Typography sx={{ fontWeight: 600 }}>
+                    {status?.isRunning ? 'Upload Worker Running' : 'Upload Worker Stopped'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {status?.isRunning 
+                      ? 'Automatically processing pending uploads' 
+                      : 'Will start automatically when backend is ready'}
+                  </Typography>
+                </Box>
               </Box>
 
               {/* Backend UploadCoordinator Status */}
@@ -156,12 +98,6 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
               </Alert>
 
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-                <Chip
-                  icon={<CloudUploadIcon />}
-                  label={`Frontend Worker: ${status?.config.enabled ? 'Enabled' : 'Disabled'}`}
-                  size="small"
-                  color={status?.config.enabled ? 'success' : 'default'}
-                />
                 <Chip
                   label={`Poll Interval: ${(status?.config.pollInterval ?? 15000) / 1000}s`}
                   size="small"

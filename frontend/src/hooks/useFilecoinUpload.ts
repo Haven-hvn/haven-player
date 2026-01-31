@@ -183,12 +183,23 @@ export const useFilecoinUpload = (): UseFilecoinUploadReturn => {
 
         return result;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+        const rawErrorMessage = error instanceof Error ? error.message : 'Upload failed';
 
         // Clean up error message by removing "Filecoin upload failed: " prefix if present
-        const cleanedErrorMessage = errorMessage.startsWith('Filecoin upload failed: ')
-          ? errorMessage.substring('Filecoin upload failed: '.length)
-          : errorMessage;
+        // This prefix is added by filecoinService.ts when wrapping errors
+        let cleanedErrorMessage = rawErrorMessage.startsWith('Filecoin upload failed: ')
+          ? rawErrorMessage.substring('Filecoin upload failed: '.length)
+          : rawErrorMessage;
+        
+        // Ensure payment-related errors are clear and actionable
+        if (cleanedErrorMessage.toLowerCase().includes('deposit') || 
+            cleanedErrorMessage.toLowerCase().includes('balance') ||
+            cleanedErrorMessage.toLowerCase().includes('payment') ||
+            cleanedErrorMessage.toLowerCase().includes('allowance') ||
+            cleanedErrorMessage.toLowerCase().includes('usdfc')) {
+          // Keep the original message as it's already user-friendly from the service
+          console.log('[Filecoin Upload] Payment validation error:', cleanedErrorMessage);
+        }
 
         // Ensure errors surface in logs for debugging instead of failing silently in the renderer.
         // eslint-disable-next-line no-console

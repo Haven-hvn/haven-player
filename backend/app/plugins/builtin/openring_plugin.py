@@ -227,6 +227,46 @@ class OpenRingPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMi
         service = await self._get_authenticated_service()
         if not service:
             return False
+
+    async def get_active_operations(self) -> List[Dict[str, Any]]:
+        """
+        Get currently active operations from this plugin.
+        
+        Returns a list of all currently active recording operations
+        without calling discover_sources(). This is a lightweight method
+        used for status updates and monitoring.
+        
+        Returns:
+            List of operation dictionaries with recording status.
+        """
+        try:
+            operations = []
+            metadata = self.get_metadata()
+            
+            # Get active recordings from the recording manager
+            active_recordings = self._recording_manager.active_recordings
+            
+            for device_id, session in active_recordings.items():
+                operations.append({
+                    "operation_id": f"openring-{device_id}",
+                    "plugin_name": metadata.name,
+                    "plugin_display_name": "OpenRing Archiver",
+                    "operation_type": "recording",
+                    "source_id": str(device_id),
+                    "source_name": f"Device {device_id}",
+                    "source_uri": getattr(session, 'source_uri', None),
+                    "status": "recording" if session.is_recording else "idle",
+                    "progress": 0,  # OpenRing doesn't track progress
+                    "start_time": session.start_time.isoformat() if hasattr(session, 'start_time') and session.start_time else None,
+                    "duration_seconds": int((datetime.now() - session.start_time).total_seconds()) if hasattr(session, 'start_time') and session.start_time else 0,
+                    "file_size_bytes": getattr(session, 'current_file_size', 0),
+                })
+            
+            return operations
+        except Exception as e:
+            logger.error(f"Error getting active operations: {e}")
+            return []
+
         try:
             await service.fetch_devices()
             return True

@@ -1,21 +1,46 @@
-import { LitNodeClient } from '@lit-protocol/lit-node-client';
-import { LIT_NETWORK, LIT_ABILITY } from '@lit-protocol/constants';
+/**
+ * Lit Protocol Service - Lit SDK v8 (Naga) Implementation
+ * 
+ * This service provides encryption/decryption capabilities using Lit Protocol.
+ * Migrated from SDK v7 (Datil) to SDK v8 (Naga).
+ * 
+ * Key changes in v8:
+ * - Uses createLitClient instead of LitNodeClient class
+ * - Uses AuthManager with viem accounts instead of manual session signatures
+ * - Network changed from datil-dev to nagaDev
+ * - Encryption/decryption APIs updated for unified access control conditions
+ */
+
+import { createLitClient, type LitClient } from '@lit-protocol/lit-client';
+import { nagaDev } from '@lit-protocol/networks';
+import { createAuthManager, storagePlugins } from '@lit-protocol/auth';
 import { LitAccessControlConditionResource } from '@lit-protocol/auth-helpers';
-import type {
-  SessionSigsMap,
-  AuthSig,
-} from '@lit-protocol/types';
 import { ethers } from 'ethers';
+import { createViemAccount } from './viemAdapter';
 
 // Define our own AccessControlCondition type to avoid version conflicts
 interface EvmBasicAccessControlCondition {
   contractAddress: string;
-  standardContractType: string;
-  chain: string;
+  standardContractType: '' | 'PKPPermissions' | 'timestamp' | 'ERC20' | 'ERC721' | 'ERC721MetadataName' | 'ERC1155' | 'CASK' | 'Creaton' | 'POAP' | 'MolochDAOv2.1' | 'ProofOfHumanity' | 'SIWE' | 'LitAction';
+  chain: 'ethereum' | 'sepolia' | 'goerli' | 'polygon' | 'mumbai' | 'bsc' | 'avalanche' | 'fuji' | 'arbitrum' | 'optimism' | 'base' | 'filecoin' | 'yellowstone' | 'fantom' | 'xdai';
   method: string;
   parameters: string[];
   returnValueTest: {
-    comparator: string;
+    comparator: '=' | 'contains' | '>' | '>=' | '<' | '<=';
+    value: string;
+  };
+}
+
+// Unified access control condition format for v8
+interface UnifiedAccessControlCondition {
+  conditionType: 'evmBasic';
+  contractAddress: string;
+  standardContractType: '' | 'PKPPermissions' | 'timestamp' | 'ERC20' | 'ERC721' | 'ERC721MetadataName' | 'ERC1155' | 'CASK' | 'Creaton' | 'POAP' | 'MolochDAOv2.1' | 'ProofOfHumanity' | 'SIWE' | 'LitAction';
+  chain: 'ethereum' | 'sepolia' | 'goerli' | 'polygon' | 'mumbai' | 'bsc' | 'avalanche' | 'fuji' | 'arbitrum' | 'optimism' | 'base' | 'filecoin' | 'yellowstone' | 'fantom' | 'xdai';
+  method: string;
+  parameters: string[];
+  returnValueTest: {
+    comparator: '=' | 'contains' | '>' | '>=' | '<' | '<=';
     value: string;
   };
 }
@@ -28,10 +53,13 @@ export interface LitEncryptionMetadata {
   dataToEncryptHash: string;
   accessControlConditions: EvmBasicAccessControlCondition[];
   chain: string;
+  // Version field for future compatibility checks
+  version?: 'v8';
 }
 
-// Lit client singleton
-let litNodeClient: LitNodeClient | null = null;
+// Lit client and auth manager singletons
+let litClient: LitClient | null = null;
+let authManager: ReturnType<typeof createAuthManager> | null = null;
 
 /**
  * Normalize private key by ensuring it has 0x prefix
@@ -54,37 +82,40 @@ export function getWalletAddressFromPrivateKey(privateKey: string): string {
 }
 
 /**
- * Initialize or get existing Lit Node client
- * Uses Datil-dev network (free development network)
+ * Initialize or get existing Lit client
+ * Uses Naga-dev network (free development network) - Lit SDK v8
  */
-export async function initLitClient(): Promise<LitNodeClient> {
-  if (litNodeClient && litNodeClient.ready) {
-    return litNodeClient;
+export async function initLitClient(): Promise<LitClient> {
+  if (litClient) {
+    return litClient;
   }
 
-  // Use DatilDev network - cast to any to avoid type conflicts between versions
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const network = (LIT_NETWORK as any).DatilDev || 'datil-dev';
-
-  litNodeClient = new LitNodeClient({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    litNetwork: network as any,
-    debug: false,
+  // Create Lit client for v8
+  litClient = await createLitClient({
+    network: nagaDev,
   });
 
-  await litNodeClient.connect();
-  console.log(`[Lit] Connected to Lit network (${network})`);
+  // Initialize AuthManager for session management
+  // Using localStorage for session caching
+  authManager = createAuthManager({
+    storage: storagePlugins.localStorage({
+      appName: 'haven-player',
+      networkName: 'naga-dev',
+    }),
+  });
 
-  return litNodeClient;
+  console.log('[Lit] Connected to Lit network (naga-dev) - SDK v8');
+  return litClient;
 }
 
 /**
  * Disconnect Lit client
  */
 export async function disconnectLitClient(): Promise<void> {
-  if (litNodeClient) {
-    await litNodeClient.disconnect();
-    litNodeClient = null;
+  if (litClient) {
+    await litClient.disconnect();
+    litClient = null;
+    authManager = null;
     console.log('[Lit] Disconnected from Lit network');
   }
 }
@@ -112,152 +143,50 @@ function createOwnerOnlyAccessControlConditions(
 }
 
 /**
- * Parameters passed to authNeededCallback by Lit Protocol
+ * Convert standard access control conditions to unified format (v8)
  */
-interface AuthCallbackParams {
-  chain?: string;
-  resources?: string[];
-  expiration?: string;
-  uri?: string;
-  nonce?: string;
-  statement?: string;
+function toUnifiedAccessControlConditions(
+  conditions: EvmBasicAccessControlCondition[]
+): UnifiedAccessControlCondition[] {
+  return conditions.map(condition => ({
+    conditionType: 'evmBasic',
+    ...condition,
+  }));
 }
 
 /**
- * Generate a random nonce for SIWE messages
+ * Get authentication context for Lit Protocol operations (v8)
+ * Replaces the old session signatures approach with AuthManager
  */
-function generateNonce(): string {
-  const array = new Uint8Array(16);
-  crypto.getRandomValues(array);
-  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Create an auth signature from a private key for Lit Protocol
- * The callback receives params from Lit nodes that MUST be included in the signed message
- */
-async function createAuthSigFromPrivateKey(
+async function getAuthContext(
   privateKey: string,
-  params: AuthCallbackParams
-): Promise<AuthSig> {
-  const normalizedKey = normalizePrivateKey(privateKey);
-  const wallet = new ethers.Wallet(normalizedKey);
-  
-  const domain = 'localhost';
-  const statement = params.statement || 'Sign this message to authenticate with Lit Protocol.';
-  
-  // Use the URI from params (session public key) - this is CRITICAL
-  // The Lit nodes verify that we signed the correct session key
-  const uri = params.uri || 'https://localhost/login';
-  const expiration = params.expiration || new Date(Date.now() + 1000 * 60 * 60).toISOString();
-  const nonce = params.nonce || generateNonce();
-  const issuedAt = new Date().toISOString();
-  
-  // Format resources if provided - must be in correct SIWE format
-  const resourcesLines = params.resources && params.resources.length > 0
-    ? params.resources.map(r => `- ${r}`).join('\n')
-    : '';
-  const resourcesSection = resourcesLines ? `\nResources:\n${resourcesLines}` : '';
-  
-  // Create SIWE message - format must be EXACT for Lit Protocol
-  // See: https://eips.ethereum.org/EIPS/eip-4361
-  const siweMessage = `${domain} wants you to sign in with your Ethereum account:
-${wallet.address}
-
-${statement}
-
-URI: ${uri}
-Version: 1
-Chain ID: 1
-Nonce: ${nonce}
-Issued At: ${issuedAt}
-Expiration Time: ${expiration}${resourcesSection}`;
-
-  console.log('[Lit] Signing SIWE message for address:', wallet.address);
-  console.log('[Lit] SIWE URI (session key):', uri);
-  
-  const signature = await wallet.signMessage(siweMessage);
-  
-  return {
-    sig: signature,
-    derivedVia: 'web3.eth.personal.sign',
-    signedMessage: siweMessage,
-    address: wallet.address,
-  };
-}
-
-/**
- * Get session signatures for Lit Protocol operations
- * @param client - Lit Node Client instance
- * @param privateKey - Private key for authentication
- * @param accessControlConditions - Access control conditions to create resource from
- * @param chain - Chain name (default: 'ethereum')
- */
-async function getSessionSigs(
-  client: LitNodeClient,
-  privateKey: string,
-  accessControlConditions: EvmBasicAccessControlCondition[],
   chain: string = 'ethereum'
-): Promise<SessionSigsMap> {
-  const normalizedKey = normalizePrivateKey(privateKey);
-  
-  // Create the resource from access control conditions
-  // For access control condition decryption, we can use '*' as a wildcard
-  const litResource = new LitAccessControlConditionResource('*');
-  
-  // Use LIT_ABILITY from constants - cast to avoid type conflicts between versions
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const decryptionAbility = (LIT_ABILITY as any).AccessControlConditionDecryption;
-  
-  const expiration = new Date(Date.now() + 1000 * 60 * 60).toISOString(); // 1 hour
-  
-  console.log('[Lit] Getting session signatures for chain:', chain);
-  
-  try {
-    const sessionSigs = await client.getSessionSigs({
-      chain,
-      expiration,
-      resourceAbilityRequests: [
+): Promise<any> {
+  if (!litClient || !authManager) {
+    throw new Error('Lit client not initialized. Call initLitClient() first.');
+  }
+
+  const viemAccount = createViemAccount(privateKey);
+
+  const authContext = await authManager.createEoaAuthContext({
+    authConfig: {
+      domain: 'haven-player.local',
+      statement: 'Sign this message to authenticate with Haven Player',
+      resources: [
         {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          resource: litResource as any,
-          ability: decryptionAbility,
+          resource: new LitAccessControlConditionResource('*'),
+          ability: 'access-control-condition-decryption',
         },
       ],
-      // authNeededCallback receives params from Lit nodes including the session public key
-      // We MUST sign a message that includes this session key (params.uri)
-      authNeededCallback: async (params: AuthCallbackParams) => {
-        console.log('[Lit] authNeededCallback called with params:', JSON.stringify({
-          chain: params.chain,
-          uri: params.uri,
-          expiration: params.expiration,
-          nonce: params.nonce,
-          resources: params.resources,
-        }, null, 2));
-        
-        // Create AuthSig using the params from Lit nodes - this includes the session key URI
-        const authSig = await createAuthSigFromPrivateKey(normalizedKey, params);
-        
-        console.log('[Lit] Created AuthSig for address:', authSig.address);
-        
-        return authSig;
-      },
-    });
+      expiration: new Date(Date.now() + 1000 * 60 * 60).toISOString(), // 1 hour
+    },
+    config: {
+      account: viemAccount,
+    },
+    litClient,
+  });
 
-    console.log('[Lit] Session signatures obtained successfully');
-    return sessionSigs;
-  } catch (error) {
-    // Better error handling for DOMException and other errors
-    if (error instanceof DOMException) {
-      console.error('[Lit] DOMException:', error.name, error.message);
-      throw new Error(`Failed to create session signatures: ${error.message}`);
-    }
-    if (error instanceof Error) {
-      console.error('[Lit] Session signature error:', error.message);
-      throw error;
-    }
-    throw new Error('Unknown error creating session signatures');
-  }
+  return authContext;
 }
 
 /**
@@ -282,57 +211,77 @@ export async function decryptVideo(
   onProgress?: (message: string) => void
 ): Promise<Blob> {
   onProgress?.('Initializing Lit Protocol...');
-  
+
   const client = await initLitClient();
-  
+
   onProgress?.('Authenticating wallet...');
-  
-  // Get session signatures for decryption with matching access control conditions
-  const sessionSigs = await getSessionSigs(
-    client,
-    privateKey,
-    metadata.accessControlConditions,
-    metadata.chain
-  );
+
+  // Get authentication context for decryption (v8)
+  const authContext = await getAuthContext(privateKey, metadata.chain);
 
   onProgress?.('Decrypting video...');
-  
+
   // Decode encryptedData from IPFS (UTF-8 bytes) back to base64 string
   // Lit Protocol returns base64 string, which we encode as UTF-8 bytes for IPFS storage
   let ciphertext: string;
   if (!encryptedData || encryptedData.length === 0) {
-    throw new Error('No encrypted data provided. Cannot decrypt video. The video may be missing the encrypted file on Filecoin/IPFS.');
+    throw new Error(
+      'No encrypted data provided. Cannot decrypt video. ' +
+      'The video may be missing the encrypted file on Filecoin/IPFS.'
+    );
   }
-  
+
   try {
     // Decode UTF-8 bytes back to base64 string
     ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
   } catch (decodeError) {
-    throw new Error(`Failed to decode encrypted data: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete.`);
+    throw new Error(
+      `Failed to decode encrypted data: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. ` +
+      'The encrypted file may be corrupted or incomplete.'
+    );
   }
 
-  // Decrypt the file - cast accessControlConditions to avoid version type conflicts
-  let decryptResponse;
+  // Convert access control conditions to unified format (v8)
+  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(
+    metadata.accessControlConditions
+  );
+
+  // Decrypt the file using v8 API
+  let decrypted: Uint8Array;
   try {
-    decryptResponse = await client.decrypt({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      accessControlConditions: metadata.accessControlConditions as any,
+    const decryptResponse = await client.decrypt({
+      data: {
+        ciphertext,
+        dataToEncryptHash: metadata.dataToEncryptHash,
+      },
+      unifiedAccessControlConditions,
+      authContext, // v8: use authContext instead of sessionSigs
       chain: metadata.chain,
-      ciphertext,
-      dataToEncryptHash: metadata.dataToEncryptHash,
-      sessionSigs,
     });
+    decrypted = decryptResponse.decryptedData;
   } catch (error) {
     // Better error handling for decrypt errors
     if (error instanceof DOMException) {
       console.error('[Lit] DOMException during decryption:', error.message, error);
-      throw new Error(`Decryption failed: ${error.message}. Please verify your access control conditions and wallet configuration.`);
+      throw new Error(
+        `Decryption failed: ${error.message}. ` +
+        'Please verify your access control conditions and wallet configuration.'
+      );
     }
     if (error instanceof Error) {
       // Check for specific Lit Protocol errors
-      if (error.message.includes('session key') || error.message.includes('signing shares')) {
-        console.error('[Lit] Session signature error:', error.message, error);
-        throw new Error(`Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`);
+      if (error.message.includes('auth') || error.message.includes('authentication')) {
+        console.error('[Lit] Authentication error:', error.message, error);
+        throw new Error(
+          `Authentication failed: ${error.message}. ` +
+          'Please verify your wallet private key matches the encryption key.'
+        );
+      }
+      if (error.message.includes('unified access control')) {
+        console.error('[Lit] Access control error:', error.message, error);
+        throw new Error(
+          'Invalid encryption format. This video may need to be re-uploaded with the current SDK version.'
+        );
       }
       throw error;
     }
@@ -340,9 +289,9 @@ export async function decryptVideo(
   }
 
   onProgress?.('Decryption complete');
-  
+
   // Convert decrypted data to blob using safe buffer conversion
-  const decryptedBuffer = toArrayBuffer(decryptResponse.decryptedData);
+  const decryptedBuffer = toArrayBuffer(decrypted);
   const decryptedBlob = new Blob([decryptedBuffer], {
     type: 'video/mp4',
   });
@@ -363,36 +312,39 @@ export async function encryptFileForStorage(
   metadata: LitEncryptionMetadata;
 }> {
   onProgress?.('Initializing Lit Protocol...');
-  
+
   const client = await initLitClient();
   const walletAddress = getWalletAddressFromPrivateKey(privateKey);
-  
+
   onProgress?.('Creating access control conditions...');
-  
+
   const accessControlConditions = createOwnerOnlyAccessControlConditions(walletAddress);
-  
+
+  // Convert to unified access control conditions format for v8
+  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(accessControlConditions);
+
   onProgress?.('Encrypting file...');
-  
+
   const fileUint8Array = new Uint8Array(fileBuffer);
-  
-  // Encrypt the file - cast accessControlConditions to avoid version type conflicts
-  const encryptResponse = await client.encrypt({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accessControlConditions: accessControlConditions as any,
+
+  // Encrypt the file using v8 API
+  const encrypted = await client.encrypt({
     dataToEncrypt: fileUint8Array,
+    unifiedAccessControlConditions,
+    chain: 'ethereum',
   });
 
   onProgress?.('Encryption complete');
-  
+
   // Lit Protocol returns ciphertext as a base64 string
   // Encode it as UTF-8 bytes for IPFS storage
   const encoder = new TextEncoder();
-  const encryptedData = encoder.encode(encryptResponse.ciphertext);
-  
+  const encryptedData = encoder.encode(encrypted.ciphertext);
+
   // Verify the encoding is reversible (sanity check)
   const decoder = new TextDecoder('utf-8');
   const decodedBack = decoder.decode(encryptedData);
-  if (decodedBack !== encryptResponse.ciphertext) {
+  if (decodedBack !== encrypted.ciphertext) {
     throw new Error('Failed to properly encode ciphertext for storage - encoding/decoding mismatch');
   }
 
@@ -400,9 +352,10 @@ export async function encryptFileForStorage(
   // This ensures consistent behavior: always decode from IPFS, not from metadata
   const metadata: LitEncryptionMetadata = {
     // ciphertext is intentionally omitted - it's stored on IPFS only
-    dataToEncryptHash: encryptResponse.dataToEncryptHash,
+    dataToEncryptHash: encrypted.dataToEncryptHash,
     accessControlConditions,
     chain: 'ethereum',
+    version: 'v8', // Mark as v8 for future compatibility
   };
 
   return {
@@ -422,32 +375,34 @@ export async function decryptTextWithLit(
   onProgress?: (message: string) => void
 ): Promise<string> {
   onProgress?.('Initializing Lit Protocol...');
-  
+
   const client = await initLitClient();
-  
+
   onProgress?.('Authenticating wallet...');
-  
-  // Get session signatures for decryption with matching access control conditions
-  const sessionSigs = await getSessionSigs(
-    client,
-    privateKey,
-    metadata.accessControlConditions,
-    metadata.chain
-  );
+
+  // Get authentication context for decryption (v8)
+  const authContext = await getAuthContext(privateKey, metadata.chain);
 
   onProgress?.('Decrypting text...');
-  
-  // Decrypt the text
-  let decryptResponse;
+
+  // Convert access control conditions to unified format (v8)
+  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(
+    metadata.accessControlConditions
+  );
+
+  // Decrypt the text using v8 API
+  let decrypted: Uint8Array;
   try {
-    decryptResponse = await client.decrypt({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      accessControlConditions: metadata.accessControlConditions as any,
+    const decryptResponse = await client.decrypt({
+      data: {
+        ciphertext,
+        dataToEncryptHash: metadata.dataToEncryptHash,
+      },
+      unifiedAccessControlConditions,
+      authContext, // v8: use authContext instead of sessionSigs
       chain: metadata.chain,
-      ciphertext,
-      dataToEncryptHash: metadata.dataToEncryptHash,
-      sessionSigs,
     });
+    decrypted = decryptResponse.decryptedData;
   } catch (error) {
     if (error instanceof Error) {
       throw new Error(`Failed to decrypt text: ${error.message}`);
@@ -456,10 +411,10 @@ export async function decryptTextWithLit(
   }
 
   onProgress?.('Decryption complete');
-  
+
   // Convert decrypted data to string
   const decoder = new TextDecoder();
-  return decoder.decode(decryptResponse.decryptedData);
+  return decoder.decode(decrypted);
 }
 
 /**
@@ -482,15 +437,19 @@ export async function encryptTextWithLit(
   onProgress?.('Creating access control conditions...');
   const accessControlConditions = createOwnerOnlyAccessControlConditions(walletAddress);
 
+  // Convert to unified access control conditions format for v8
+  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(accessControlConditions);
+
   onProgress?.('Encrypting text...');
 
   const encoder = new TextEncoder();
   const dataToEncrypt = encoder.encode(text);
 
-  const encryptResponse = await client.encrypt({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accessControlConditions: accessControlConditions as any,
+  // Encrypt using v8 API
+  const encrypted = await client.encrypt({
     dataToEncrypt,
+    unifiedAccessControlConditions,
+    chain: 'ethereum',
   });
 
   onProgress?.('Encryption complete');
@@ -498,13 +457,14 @@ export async function encryptTextWithLit(
   // Don't store ciphertext in metadata - it's returned separately
   const metadata: LitEncryptionMetadata = {
     // ciphertext is intentionally omitted - it's returned separately
-    dataToEncryptHash: encryptResponse.dataToEncryptHash,
+    dataToEncryptHash: encrypted.dataToEncryptHash,
     accessControlConditions,
     chain: 'ethereum',
+    version: 'v8', // Mark as v8 for future compatibility
   };
 
   return {
-    ciphertext: encryptResponse.ciphertext,
+    ciphertext: encrypted.ciphertext,
     metadata,
   };
 }
@@ -520,63 +480,81 @@ export async function decryptFileFromStorage(
   onProgress?: (message: string) => void
 ): Promise<Blob> {
   onProgress?.('Initializing Lit Protocol...');
-  
+
   const client = await initLitClient();
-  
+
   onProgress?.('Authenticating wallet...');
-  
-  // Get session signatures for decryption with matching access control conditions
-  const sessionSigs = await getSessionSigs(
-    client,
-    privateKey,
-    metadata.accessControlConditions,
-    metadata.chain
-  );
+
+  // Get authentication context for decryption (v8)
+  const authContext = await getAuthContext(privateKey, metadata.chain);
 
   onProgress?.('Decrypting file...');
-  
+
   // Lit Protocol expects ciphertext as a base64 string
   // Decode encryptedData from IPFS (UTF-8 bytes) back to base64 string
   // The encryptedData was stored using TextEncoder, so we decode it back
   if (!encryptedData || encryptedData.length === 0) {
-    throw new Error('No encrypted data provided. Cannot decrypt video. The video may be missing the encrypted file on Filecoin/IPFS.');
+    throw new Error(
+      'No encrypted data provided. Cannot decrypt video. ' +
+      'The video may be missing the encrypted file on Filecoin/IPFS.'
+    );
   }
-  
+
   let ciphertext: string;
   try {
     // Decode UTF-8 bytes back to base64 string
     ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
-    
+
     // Validate the decoded ciphertext looks reasonable
     if (ciphertext.length < 10) {
       throw new Error('Decoded ciphertext appears invalid (too short)');
     }
   } catch (decodeError) {
-    throw new Error(`Failed to decode encrypted data from IPFS: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. The encrypted file may be corrupted or incomplete. Please ensure the video was properly uploaded to Filecoin.`);
+    throw new Error(
+      `Failed to decode encrypted data from IPFS: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. ` +
+      'The encrypted file may be corrupted or incomplete. Please ensure the video was properly uploaded to Filecoin.'
+    );
   }
-  
-  // Decrypt the file - cast accessControlConditions to avoid version type conflicts
-  let decryptResponse;
+
+  // Convert access control conditions to unified format (v8)
+  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(
+    metadata.accessControlConditions
+  );
+
+  // Decrypt the file using v8 API
+  let decrypted: Uint8Array;
   try {
-    decryptResponse = await client.decrypt({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      accessControlConditions: metadata.accessControlConditions as any,
+    const decryptResponse = await client.decrypt({
+      data: {
+        ciphertext,
+        dataToEncryptHash: metadata.dataToEncryptHash,
+      },
+      unifiedAccessControlConditions,
+      authContext, // v8: use authContext instead of sessionSigs
       chain: metadata.chain,
-      ciphertext,
-      dataToEncryptHash: metadata.dataToEncryptHash,
-      sessionSigs,
     });
+    decrypted = decryptResponse.decryptedData;
   } catch (error) {
     // Better error handling for decrypt errors
     if (error instanceof DOMException) {
       console.error('[Lit] DOMException during decryption:', error.message, error);
-      throw new Error(`Decryption failed: ${error.message}. Please verify your access control conditions and wallet configuration.`);
+      throw new Error(
+        `Decryption failed: ${error.message}. Please verify your access control conditions and wallet configuration.`
+      );
     }
     if (error instanceof Error) {
       // Check for specific Lit Protocol errors
-      if (error.message.includes('session key') || error.message.includes('signing shares')) {
-        console.error('[Lit] Session signature error:', error.message, error);
-        throw new Error(`Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`);
+      if (error.message.includes('auth') || error.message.includes('authentication')) {
+        console.error('[Lit] Authentication error:', error.message, error);
+        throw new Error(
+          `Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`
+        );
+      }
+      if (error.message.includes('unified access control')) {
+        console.error('[Lit] Access control error:', error.message, error);
+        throw new Error(
+          'Invalid encryption format. This video may need to be re-uploaded with the current SDK version.'
+        );
       }
       throw error;
     }
@@ -584,9 +562,9 @@ export async function decryptFileFromStorage(
   }
 
   onProgress?.('Decryption complete');
-  
+
   // Convert decrypted data to blob using safe buffer conversion
-  const decryptedBuffer = toArrayBuffer(decryptResponse.decryptedData);
+  const decryptedBuffer = toArrayBuffer(decrypted);
   const decryptedBlob = new Blob([decryptedBuffer], {
     type: mimeType,
   });
@@ -598,7 +576,7 @@ export async function decryptFileFromStorage(
  * Check if Lit client is connected
  */
 export function isLitClientConnected(): boolean {
-  return litNodeClient !== null && litNodeClient.ready;
+  return litClient !== null;
 }
 
 /**
@@ -607,8 +585,10 @@ export function isLitClientConnected(): boolean {
  */
 export function serializeEncryptionMetadata(metadata: LitEncryptionMetadata): string {
   // Ensure ciphertext is never included in metadata
-  if ('ciphertext' in metadata && metadata.ciphertext !== undefined) {
-    throw new Error('Cannot serialize metadata with ciphertext - ciphertext must only be stored on IPFS, not in metadata');
+  if ('ciphertext' in metadata && (metadata as Record<string, unknown>).ciphertext !== undefined) {
+    throw new Error(
+      'Cannot serialize metadata with ciphertext - ciphertext must only be stored on IPFS, not in metadata'
+    );
   }
   return JSON.stringify(metadata);
 }
@@ -618,4 +598,12 @@ export function serializeEncryptionMetadata(metadata: LitEncryptionMetadata): st
  */
 export function deserializeEncryptionMetadata(metadataJson: string): LitEncryptionMetadata {
   return JSON.parse(metadataJson) as LitEncryptionMetadata;
+}
+
+/**
+ * Check if metadata is from v8 SDK
+ * Useful for detecting compatibility issues
+ */
+export function isV8Metadata(metadata: LitEncryptionMetadata): boolean {
+  return metadata.version === 'v8';
 }

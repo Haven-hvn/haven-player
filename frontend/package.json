@@ -43,6 +43,7 @@
     "electron": "40.0.0",
     "html-webpack-plugin": "5.6.6",
     "jest": "30.2.0",
+    "jest-environment-jsdom": "^30.2.0",
     "livekit-client": "2.17.0",
     "process": "0.11.10",
     "style-loader": "^4.0.0",
@@ -59,10 +60,9 @@
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@ipld/car": "5.4.2",
-    "@lit-protocol/auth-helpers": "8.2.0",
-    "@lit-protocol/constants": "9.0.0",
-    "@lit-protocol/lit-node-client": "7.4.0",
-    "@lit-protocol/types": "8.0.2",
+    "@lit-protocol/auth": "^8.2.3",
+    "@lit-protocol/lit-client": "^8.3.1",
+    "@lit-protocol/networks": "^8.4.1",
     "@mui/icons-material": "7.3.7",
     "@mui/material": "7.3.7",
     "@opentelemetry/api": "1.9.0",
@@ -84,7 +84,8 @@
     "react-dom": "19.2.3",
     "react-player": "3.4.0",
     "react-router-dom": "7.12.0",
-    "utf-8-validate": "6.0.6"
+    "utf-8-validate": "6.0.6",
+    "viem": "^2.38.3"
   },
   "overrides": {
     "use-sync-external-store": "1.6.0"

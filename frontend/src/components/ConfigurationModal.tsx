@@ -120,15 +120,6 @@ const defaultAppConfig: EditableAppConfig = {
   download_directory: "downloads",
 };
 
-const defaultUploadWorkerConfig = {
-  enabled: false,
-  pollInterval: 15000,  // milliseconds
-  maxConcurrentUploads: 1,
-  retryAttempts: 3,
-  gatewaySelection: 'auto',  // 'auto' or 'custom'
-  customGatewayUrl: '',
-};
-
 // Glass panel styles for Liquid Glass design
 const glassPanelStyles = {
   background: liquidGlassTokens.glass.fill,
@@ -241,14 +232,12 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
   const [checkingBalance, setCheckingBalance] = useState(false);
   const [balanceInfo, setBalanceInfo] = useState<{ wallet_address: string; chain_name: string; native_token_symbol: string; balance_ether: number; has_sufficient_balance: boolean; } | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
-  const [uploadWorkerConfig, setUploadWorkerConfig] = useState(defaultUploadWorkerConfig);
-  const [loadingUploadWorker, setLoadingUploadWorker] = useState(false);
 
   const isFilecoinTab = activeTab === "filecoin" || activeTab === "encryption";
   const isArkivTab = activeTab === "arkiv";
   const isPlaybackTab = activeTab === "playback";
   const isUploadWorkerTab = activeTab === "upload-worker";
-  const loading = loadingAi || loadingFilecoin || loadingArkiv || loadingGateway || loadingUploadWorker;
+  const loading = loadingAi || loadingFilecoin || loadingArkiv || loadingGateway;
 
   useEffect(() => { if (open) { setError(null); setFilecoinError(null); setArkivError(null); setBalanceInfo(null); setBalanceError(null); loadConfig(); loadAvailableModels(); loadFilecoinConfig(); loadArkivConfig(); loadGatewayConfig(); } }, [open]);
 
@@ -658,29 +647,30 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
 
   const renderUploadWorkerContent = (): JSX.Element => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, mt: 2 }}>
-      <SectionHeader icon={<UploadWorkerIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Upload Worker Configuration" color={liquidGlassTokens.neon.cyan} />
+      <SectionHeader icon={<UploadWorkerIcon sx={{ color: "#fff", fontSize: 16 }} />} title="Upload Worker Status" color={liquidGlassTokens.neon.cyan} />
       
-      {/* Enable/Disable Upload Worker */}
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, p: 2, borderRadius: liquidGlassTokens.radius.md, backgroundColor: uploadWorkerConfig.enabled ? `${liquidGlassTokens.neon.success}10` : 'rgba(255, 255, 255, 0.03)', border: `1px solid ${uploadWorkerConfig.enabled ? liquidGlassTokens.neon.success : liquidGlassTokens.glass.border}` }}>
+      {/* Status Card */}
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 2, p: 3, borderRadius: liquidGlassTokens.radius.md, backgroundColor: `${liquidGlassTokens.neon.success}10`, border: `1px solid ${liquidGlassTokens.neon.success}` }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <UploadWorkerIcon sx={{ color: uploadWorkerConfig.enabled ? liquidGlassTokens.neon.success : 'rgba(255, 255, 255, 0.4)', fontSize: 20 }} />
-          <FormControlLabel control={<Switch checked={uploadWorkerConfig.enabled} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUploadWorkerConfig((prev) => ({ ...prev, enabled: e.target.checked }))} sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: liquidGlassTokens.neon.success }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: `${liquidGlassTokens.neon.success}60` } }} />} label={<Typography sx={{ fontWeight: 500, fontSize: "14px", color: "#fff" }}>Enable Upload Worker</Typography>} sx={{ margin: 0 }} />
+          <UploadWorkerIcon sx={{ color: liquidGlassTokens.neon.success, fontSize: 24 }} />
+          <Box>
+            <Typography sx={{ fontWeight: 600, fontSize: "16px", color: "#fff" }}>Upload Worker Active</Typography>
+            <Typography sx={{ fontSize: "13px", color: 'rgba(255, 255, 255, 0.6)' }}>Automatically processes pending uploads</Typography>
+          </Box>
         </Box>
-        <Typography sx={{ fontSize: "12px", color: 'rgba(255, 255, 255, 0.5)', ml: 4.5 }}>{uploadWorkerConfig.enabled ? "Upload worker will automatically process pending uploads" : "Upload worker is disabled"}</Typography>
       </Box>
 
-      <Divider sx={{ borderColor: liquidGlassTokens.glass.border }} />
+      <Alert severity="info" sx={{ backgroundColor: `${liquidGlassTokens.neon.cyan}10`, border: `1px solid ${liquidGlassTokens.neon.cyan}30`, color: liquidGlassTokens.neon.cyan }}>
+        <Typography sx={{ fontSize: "13px" }}>
+          <strong>How it works:</strong> The upload worker automatically starts when the backend is running. It checks for pending uploads every 15 seconds and uploads them to Filecoin using your configured settings.
+        </Typography>
+      </Alert>
 
-      {/* Poll Interval */}
-      <TextField fullWidth label="Poll Interval (seconds)" type="number" value={uploadWorkerConfig.pollInterval / 1000} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const seconds = parseInt(e.target.value, 10); setUploadWorkerConfig((prev) => ({ ...prev, pollInterval: isNaN(seconds) || seconds < 5 ? 5000 : seconds * 1000 })); }} inputProps={{ min: 5, max: 300 }} helperText="How often to check for new uploads (5-300 seconds)" disabled={!uploadWorkerConfig.enabled} sx={glassInputStyles} />
-
-      {/* Max Concurrent Uploads */}
-      <TextField fullWidth label="Max Concurrent Uploads" type="number" value={uploadWorkerConfig.maxConcurrentUploads} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const count = parseInt(e.target.value, 10); setUploadWorkerConfig((prev) => ({ ...prev, maxConcurrentUploads: isNaN(count) || count < 1 ? 1 : count > 5 ? 5 : count })); }} inputProps={{ min: 1, max: 5 }} helperText="Maximum number of simultaneous uploads (1-5)" disabled={!uploadWorkerConfig.enabled} sx={glassInputStyles} />
-
-      {/* Retry Attempts */}
-      <TextField fullWidth label="Retry Attempts" type="number" value={uploadWorkerConfig.retryAttempts} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const attempts = parseInt(e.target.value, 10); setUploadWorkerConfig((prev) => ({ ...prev, retryAttempts: isNaN(attempts) || attempts < 0 ? 0 : attempts > 10 ? 10 : attempts })); }} inputProps={{ min: 0, max: 10 }} helperText="Number of retry attempts for failed uploads (0-10)" disabled={!uploadWorkerConfig.enabled} sx={glassInputStyles} />
-
-      <Alert severity="info" sx={{ backgroundColor: `${liquidGlassTokens.neon.cyan}10`, border: `1px solid ${liquidGlassTokens.neon.cyan}30`, color: liquidGlassTokens.neon.cyan }}><Typography sx={{ fontSize: "12px" }}><strong>Note:</strong> Upload worker requires Filecoin configuration. Configure your private key in the Filecoin tab.</Typography></Alert>
+      <Alert severity="warning" sx={{ backgroundColor: `${liquidGlassTokens.neon.amber}10`, border: `1px solid ${liquidGlassTokens.neon.amber}30`, color: liquidGlassTokens.neon.amber }}>
+        <Typography sx={{ fontSize: "13px" }}>
+          <strong>Requirements:</strong> Filecoin must be configured with a valid private key. Videos are uploaded automatically after download.
+        </Typography>
+      </Alert>
     </Box>
   );
 
@@ -697,7 +687,7 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
     }
   };
 
-  const saveLabel = isPlaybackTab ? "Save Playback Settings" : isFilecoinTab ? "Save Filecoin Settings" : isArkivTab ? "Save Arkiv Settings" : isUploadWorkerTab ? "Save Upload Worker Settings" : "Save Configuration";
+  const saveLabel = isPlaybackTab ? "Save Playback Settings" : isFilecoinTab ? "Save Filecoin Settings" : isArkivTab ? "Save Arkiv Settings" : "Save Configuration";
 
   // Get current tab label for breadcrumb
   const getCurrentTabLabel = (): string => {
@@ -772,8 +762,10 @@ const ConfigurationModal: React.FC<ConfigurationModalProps> = ({
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 3, pt: 2, backgroundColor: liquidGlassTokens.canvas.elevated, borderTop: `1px solid ${liquidGlassTokens.glass.border}`, gap: 2 }}>
-        <Button onClick={onClose} disabled={saving} sx={glassButtonStyles.secondary}>Cancel</Button>
-        <Button onClick={handleSave} disabled={loading || saving || (isFilecoinTab && !filecoinConfig.privateKey.trim())} variant="contained" startIcon={saving ? <CircularProgress size={16} sx={{ color: "#fff" }} /> : <SaveIcon />} sx={{ background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}30 0%, ${liquidGlassTokens.neon.magenta}30 100%)`, border: `1px solid ${liquidGlassTokens.neon.cyan}50`, color: '#fff', px: 4, '&:hover': { background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}40 0%, ${liquidGlassTokens.neon.magenta}40 100%)`, boxShadow: glowEffects.cyan(0.3) }, '&:disabled': { background: 'rgba(255, 255, 255, 0.05)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.3)' } }}>{saving ? "Saving..." : saveLabel}</Button>
+        <Button onClick={onClose} disabled={saving} sx={glassButtonStyles.secondary}>Close</Button>
+        {!isUploadWorkerTab && (
+          <Button onClick={handleSave} disabled={loading || saving || (isFilecoinTab && !filecoinConfig.privateKey.trim())} variant="contained" startIcon={saving ? <CircularProgress size={16} sx={{ color: "#fff" }} /> : <SaveIcon />} sx={{ background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}30 0%, ${liquidGlassTokens.neon.magenta}30 100%)`, border: `1px solid ${liquidGlassTokens.neon.cyan}50`, color: '#fff', px: 4, '&:hover': { background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}40 0%, ${liquidGlassTokens.neon.magenta}40 100%)`, boxShadow: glowEffects.cyan(0.3) }, '&:disabled': { background: 'rgba(255, 255, 255, 0.05)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.3)' } }}>{saving ? "Saving..." : saveLabel}</Button>
+        )}
       </DialogActions>
     </Dialog>
   );

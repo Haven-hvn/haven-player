@@ -106,6 +106,11 @@ export interface QueueStats {
   failed: number;
   syncPending: number;
   syncCompleted: number;
+  // VLM analysis stats
+  vlm_analysis_pending?: number;
+  vlm_analysis_processing?: number;
+  vlm_analysis_completed?: number;
+  vlm_analysis_failed?: number;
 }
 
 // Recording session

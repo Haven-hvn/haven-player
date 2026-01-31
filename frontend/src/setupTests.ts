@@ -1,5 +1,13 @@
 import '@testing-library/jest-dom';
 
+// Polyfill TextEncoder and TextDecoder for Node.js test environment
+// This is required for viem and other libraries that use these APIs
+if (typeof TextEncoder === 'undefined') {
+  const { TextEncoder: TextEncoderPolyfill, TextDecoder: TextDecoderPolyfill } = require('util');
+  global.TextEncoder = TextEncoderPolyfill;
+  global.TextDecoder = TextDecoderPolyfill;
+}
+
 // Define the mock IPC renderer type
 interface MockIpcRenderer {
   invoke: jest.Mock;
@@ -66,4 +74,4 @@ console.warn = (...args: any[]) => {
 };
 
 // Global test utilities
-global.mockIpcRenderer = mockIpcRenderer; 
+global.mockIpcRenderer = mockIpcRenderer;

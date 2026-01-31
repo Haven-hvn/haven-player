@@ -5,7 +5,7 @@ import {
   Route,
   Navigate,
 } from "react-router-dom";
-import { ThemeProvider, CssBaseline, Box, CircularProgress } from "@mui/material";
+import { ThemeProvider, CssBaseline, Box, CircularProgress, Snackbar, Alert } from "@mui/material";
 import { liquidGlassTheme, liquidGlassTokens } from "@/styles/liquidGlassTheme";
 import { CircuitSubstrate } from "@/components/LiquidGlass";
 
@@ -46,6 +46,10 @@ const SpatialLayoutWrapper: React.FC = () => {
   const { plugins } = usePlugins();
   const [filecoinConfig, setFilecoinConfig] = useState<FilecoinConfig | null>(null);
   const { openSettings } = useSettingsNavigation();
+  
+  // Error notification state
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showError, setShowError] = useState(false);
 
   // Load Filecoin config on mount
   useEffect(() => {
@@ -83,11 +87,21 @@ const SpatialLayoutWrapper: React.FC = () => {
         console.log(`✅ Uploaded ${item.title} to Filecoin`);
         await refreshVideos();
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Upload failed';
         console.error(`❌ Failed to upload ${item.title} to Filecoin:`, error);
+        
+        // Show error to user
+        setUploadError(errorMessage);
+        setShowError(true);
       }
     },
     [filecoinConfig, uploadVideoToFilecoin, refreshVideos, openSettings]
   );
+  
+  const handleCloseError = useCallback(() => {
+    setShowError(false);
+    setUploadError(null);
+  }, []);
 
   // Handle adding video from local file (Electron file dialog)
   const handleAddVideo = useCallback(async () => {
@@ -138,12 +152,39 @@ const SpatialLayoutWrapper: React.FC = () => {
   );
 
   return (
-    <SpatialLayout
-      onUploadVideo={handleUploadVideo}
-      onAddVideo={handleAddVideo}
-      onAddMagnetUrl={handleAddMagnetUrl}
-      isBitTorrentEnabled={isBitTorrentEnabled}
-    />
+    <>
+      <SpatialLayout
+        onUploadVideo={handleUploadVideo}
+        onAddVideo={handleAddVideo}
+        onAddMagnetUrl={handleAddMagnetUrl}
+        isBitTorrentEnabled={isBitTorrentEnabled}
+      />
+      
+      {/* Upload Error Notification */}
+      <Snackbar
+        open={showError}
+        autoHideDuration={10000}
+        onClose={handleCloseError}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={handleCloseError}
+          severity="error"
+          sx={{
+            backgroundColor: `${liquidGlassTokens.neon.error}15`,
+            border: `1px solid ${liquidGlassTokens.neon.error}40`,
+            color: '#fff',
+            backdropFilter: 'blur(12px)',
+            maxWidth: '500px',
+            '& .MuiAlert-message': {
+              wordBreak: 'break-word',
+            },
+          }}
+        >
+          {uploadError}
+        </Alert>
+      </Snackbar>
+    </>
   );
 };
 

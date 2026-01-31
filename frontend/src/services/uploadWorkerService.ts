@@ -19,6 +19,19 @@ export type { UploadQueueStatus, UploadQueueEntry };
 export interface UploadWorkerStatus {
   isRunning: boolean;
   config: UploadWorkerConfig;
+  currentOperation?: {
+    id: number;
+    videoPath: string;
+    stage: string;
+  };
+  recentErrors: Array<{
+    id: number;
+    videoPath: string;
+    stage: string;
+    message: string;
+    timestamp: string;
+  }>;
+  errorCounts: Record<string, number>;
 }
 
 export interface UploadWorkerStartResponse {

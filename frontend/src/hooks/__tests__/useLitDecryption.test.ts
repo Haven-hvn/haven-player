@@ -1,5 +1,4 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useLitDecryption } from '../useLitDecryption';
 import type { Video } from '@/types/video';
 
 // Mock electron ipcRenderer
@@ -11,20 +10,13 @@ jest.mock('electron', () => ({
   ipcRenderer: mockIpcRenderer,
 }), { virtual: true });
 
-// Also mock the require('electron') pattern used in the hook
-jest.mock('../../hooks/useLitDecryption', () => {
-  const originalModule = jest.requireActual('../../hooks/useLitDecryption');
-  return {
-    ...originalModule,
-  };
-});
-
 // Mock the litService
 jest.mock('../../services/litService', () => ({
   decryptFileFromStorage: jest.fn(),
   deserializeEncryptionMetadata: jest.fn(),
 }));
 
+import { useLitDecryption } from '../useLitDecryption';
 import { decryptFileFromStorage, deserializeEncryptionMetadata } from '@/services/litService';
 
 const mockDecryptFileFromStorage = decryptFileFromStorage as jest.Mock;
@@ -193,4 +185,3 @@ describe('useLitDecryption', () => {
     expect(result.current.isEncrypted).toBe(true);
   });
 });
-

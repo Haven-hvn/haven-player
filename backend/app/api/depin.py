@@ -18,6 +18,9 @@ async def get_active_operations():
     This is a lightweight endpoint that returns active/recording operations
     without calling discover_sources() on plugins. Used by the DePIN dashboard
     for status updates.
+    
+    This endpoint now uses the plugin interface's get_active_operations() method
+    to retrieve active operations from all loaded plugins in a generalized way.
     """
     try:
         if not plugin_manager:
@@ -25,27 +28,26 @@ async def get_active_operations():
         
         operations = []
         
-        # Get active recordings from the recording service
-        active_recordings = recording_service.active_recordings
-        for mint_id, recorder in active_recordings.items():
-            operations.append({
-                "operation_id": f"webrtc-archiver-{mint_id}",
-                "plugin_name": "webrtc-archiver",
-                "plugin_display_name": "WebRTC Archiver",
-                "operation_type": "real-time",
-                "source_id": mint_id,
-                "source_name": mint_id,
-                "source_uri": getattr(recorder, 'source_uri', None),
-                "status": recorder.state.value if hasattr(recorder, 'state') else 'running',
-                "progress": getattr(recorder, 'progress_percent', 0),
-                "start_time": recorder.start_time.isoformat() if hasattr(recorder, 'start_time') and recorder.start_time else None,
-                "duration_seconds": getattr(recorder, 'duration_seconds', 0),
-                "file_size_bytes": getattr(recorder, 'current_file_size', 0),
-            })
+        # Get active operations from all loaded plugins
+        loaded_plugins = plugin_manager.get_loaded_plugins()
         
-        # TODO: Add active operations from other plugins (YouTube, BitTorrent, etc.)
-        # These should be retrieved from the database or plugin-specific state,
-        # not by calling discover_sources()
+        for plugin_name in loaded_plugins:
+            try:
+                plugin = plugin_manager.get_plugin(plugin_name)
+                if not plugin:
+                    logger.warning(f"Plugin {plugin_name} not found in registry")
+                    continue
+                
+                # Get active operations from this plugin
+                plugin_operations = await plugin.get_active_operations()
+                operations.extend(plugin_operations)
+                
+                logger.debug(f"Retrieved {len(plugin_operations)} active operations from {plugin_name}")
+                
+            except Exception as e:
+                logger.error(f"Error getting active operations from plugin {plugin_name}: {e}", exc_info=True)
+                # Continue with other plugins even if one fails
+                continue
         
         return {"success": True, "operations": operations}
     

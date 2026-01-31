@@ -524,19 +524,44 @@ async function handleUploadToFilecoin(
   const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
   const file = new File([blob], fileName, { type: mimeType });
 
-  const result = await uploadVideoToFilecoin({
-    file,
-    config,
-    filePath: videoPath,
-    onProgress: (progress) => {
-      mainWindow?.webContents.send('filecoin-upload-progress', {
-        videoPath,
-        progress,
-      });
-    },
-  });
+  try {
+    const result = await uploadVideoToFilecoin({
+      file,
+      config,
+      filePath: videoPath,
+      onProgress: (progress) => {
+        mainWindow?.webContents.send('filecoin-upload-progress', {
+          videoPath,
+          progress,
+        });
+      },
+    });
 
-  return result;
+    return result;
+  } catch (error) {
+    // Extract the most meaningful error message for the user
+    let errorMessage: string;
+    
+    if (error instanceof Error) {
+      // If the error already has a clean message (like from payment validation),
+      // use it directly. The filecoinService already formats these well.
+      errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    } else {
+      errorMessage = 'Unknown error during upload';
+    }
+    
+    // Log the full error for debugging but throw a clean message to the user
+    console.error('[Filecoin Upload] Failed:', {
+      videoPath,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    
+    // Re-throw with the clean message - this will be sent to the renderer
+    throw new Error(errorMessage);
+  }
 }
 
 async function handleSaveFilecoinConfig(
@@ -812,7 +837,30 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
   // Wait for backend to be ready, then notify renderer and start upload worker
   setTimeout(async () => {
     if (backendProcess && !backendProcess.killed) {
-      console.log('✅ Backend ready, notifying renderer...');
+      console.log('⏳ Waiting for backend to be ready...');
+      
+      // Wait for backend health check to pass
+      let backendReady = false;
+      let attempts = 0;
+      const maxAttempts = 30; // 30 seconds max wait
+      
+      while (!backendReady && attempts < maxAttempts) {
+        try {
+          const response = await fetch('http://localhost:8000/api/health');
+          if (response.ok) {
+            backendReady = true;
+            console.log('✅ Backend health check passed');
+          }
+        } catch {
+          attempts++;
+          console.log(`⏳ Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      if (!backendReady) {
+        console.warn('⚠️ Backend health check failed after max attempts');
+      }
       
       // Notify all renderer windows that backend is ready
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -825,10 +873,10 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
         await uploadWorker.start({ enabled: true, pollInterval: 15000 });
         console.log('✅ Upload worker started automatically with backend');
       } catch (error) {
-        console.error('Failed to start upload worker automatically:', error);
+        console.error('❌ Failed to start upload worker automatically:', error);
       }
     }
-  }, 3000); // Give backend 3 seconds to initialize
+  }, 1000); // Start checking after 1 second
 
   return { pid: backendProcess.pid, message: 'Backend started' };
 }
@@ -922,13 +970,48 @@ async function handleRestartBackend(): Promise<{ pid: number | undefined; messag
     backendProcess = null;
   });
 
-  // Wait for backend to be ready and notify the frontend
-  setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      console.log('📢 Notifying frontend that backend is ready (restart)');
-      mainWindow.webContents.send('backend-ready');
+  // Wait for backend to be ready, then notify frontend and start upload worker
+  setTimeout(async () => {
+    if (backendProcess && !backendProcess.killed) {
+      console.log('⏳ Restart: Waiting for backend to be ready...');
+      
+      // Wait for backend health check to pass
+      let backendReady = false;
+      let attempts = 0;
+      const maxAttempts = 30; // 30 seconds max wait
+      
+      while (!backendReady && attempts < maxAttempts) {
+        try {
+          const response = await fetch('http://localhost:8000/api/health');
+          if (response.ok) {
+            backendReady = true;
+            console.log('✅ Restart: Backend health check passed');
+          }
+        } catch {
+          attempts++;
+          console.log(`⏳ Restart: Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      // Notify frontend
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        console.log('📢 Notifying frontend that backend is ready (restart)');
+        mainWindow.webContents.send('backend-ready');
+      }
+      
+      // Start upload worker after backend is ready
+      if (backendReady) {
+        try {
+          const uploadWorker = getUploadWorker();
+          await uploadWorker.start({ enabled: true, pollInterval: 15000 });
+          console.log('✅ Upload worker started automatically (restart)');
+        } catch (error) {
+          console.error('❌ Failed to start upload worker automatically (restart):', error);
+        }
+      }
     }
-  }, 3000); // Wait 3 seconds for backend to initialize
+  }, 1000); // Start checking after 1 second
 
   return { pid: backendProcess.pid, message: 'Backend restarted with new configuration' };
 }
@@ -1029,13 +1112,33 @@ async function handleUploadWorkerStop(): Promise<{
 async function handleUploadWorkerGetStatus(): Promise<{
   isRunning: boolean;
   config: UploadWorkerConfig;
+  currentOperation?: {
+    id: number;
+    videoPath: string;
+    stage: string;
+  };
+  recentErrors: Array<{
+    id: number;
+    videoPath: string;
+    stage: string;
+    message: string;
+    timestamp: string;
+  }>;
+  errorCounts: Record<string, number>;
 }> {
   try {
     const worker = getUploadWorker();
+    const detailedStatus = worker.getDetailedStatus();
 
     return {
-      isRunning: worker.isWorkerRunning(),
-      config: worker.getConfig(),
+      isRunning: detailedStatus.isRunning,
+      config: detailedStatus.config,
+      currentOperation: detailedStatus.currentOperation,
+      recentErrors: detailedStatus.recentErrors.map(e => ({
+        ...e,
+        timestamp: e.timestamp.toISOString(),
+      })),
+      errorCounts: detailedStatus.errorCounts,
     };
   } catch (error) {
     console.error('Failed to get upload worker status:', error);
@@ -1255,13 +1358,50 @@ async function tryStartBackend(): Promise<void> {
       backendProcess = null;
     });
 
-    // Notify frontend after backend has had time to initialize
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        console.log('📢 Notifying frontend that backend is ready (auto-start)');
-        mainWindow.webContents.send('backend-ready');
+    // Wait for backend to be ready, then notify frontend and start upload worker
+    setTimeout(async () => {
+      if (backendProcess && !backendProcess.killed) {
+        console.log('⏳ Auto-start: Waiting for backend to be ready...');
+        
+        // Wait for backend health check to pass
+        let backendReady = false;
+        let attempts = 0;
+        const maxAttempts = 30; // 30 seconds max wait
+        
+        while (!backendReady && attempts < maxAttempts) {
+          try {
+            const response = await fetch('http://localhost:8000/api/health');
+            if (response.ok) {
+              backendReady = true;
+              console.log('✅ Auto-start: Backend health check passed');
+            }
+          } catch {
+            attempts++;
+            console.log(`⏳ Auto-start: Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        
+        // Notify all renderer windows that backend is ready
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          console.log('📢 Notifying frontend that backend is ready (auto-start)');
+          mainWindow.webContents.send('backend-ready');
+        }
+        
+        // Start upload worker after backend is ready
+        if (backendReady) {
+          try {
+            const uploadWorker = getUploadWorker();
+            await uploadWorker.start({ enabled: true, pollInterval: 15000 });
+            console.log('✅ Upload worker started automatically with backend (auto-start)');
+          } catch (error) {
+            console.error('❌ Failed to start upload worker automatically (auto-start):', error);
+          }
+        } else {
+          console.warn('⚠️ Backend not ready, upload worker not started');
+        }
       }
-    }, 3000); // Wait 3 seconds for backend to initialize
+    }, 1000); // Start checking after 1 second
 
     console.log(`✅ Backend auto-started with PID: ${backendProcess.pid}`);
   } catch (err) {

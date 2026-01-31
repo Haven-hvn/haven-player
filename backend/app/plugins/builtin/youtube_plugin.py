@@ -58,6 +58,9 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
     """
 
     def __init__(self):
+        # Initialize RetryableMixin first
+        super().__init__()
+        
         self.config = {}
         self.initialized = False
         self.download_dir = None  # Will be set from global config on initialization
@@ -222,6 +225,29 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             logger.warning("Currently: only basic download formats will work (lower quality, may fail for some videos).")
             logger.warning(self._get_runtime_installation_guide())
 
+        # Configure retry behavior for YouTube downloads
+        self.configure_retry(
+            max_retries=3,
+            retry_delay_seconds=2.0,
+            retryable_patterns=[
+                "JavaScript runtime",
+                "Requested format is not available",
+                "Sign in to confirm your age",
+                "HTTP Error 429",
+                "Too Many Requests",
+                "network error",
+                "connection timeout",
+                "read timeout",
+            ],
+            non_retryable_patterns=[
+                "Video unavailable",
+                "Private video",
+                "This video is not available",
+                "404: Not Found",
+                "copyright claim",
+            ]
+        )
+        
         self.initialized = True
         logger.info("YouTubePlugin initialized")
         return True
@@ -870,8 +896,280 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             logger.error(f"Error getting channel videos: {e}")
             return []
 
+    def _build_download_command(
+        self,
+        source: MediaSource,
+        output_template: str,
+        video_format: str,
+        video_quality: str,
+        ffmpeg_available: bool
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """
+        Build the yt-dlp download command based on format and quality settings.
+        
+        Args:
+            source: MediaSource to download
+            output_template: Output file template
+            video_format: Container format (mp4, webm, mkv)
+            video_quality: Quality setting (best, 1080p, 720p, 480p)
+            ffmpeg_available: Whether FFmpeg is available for stream merging
+            
+        Returns:
+            Tuple of (command_args, extra_context)
+        """
+        # Build format string based on quality setting and FFmpeg availability
+        if video_quality == "best":
+            # Best quality with requested container
+            if ffmpeg_available:
+                # Can merge separate streams for optimal quality
+                format_str = f"bestvideo[ext={video_format}]+bestaudio/bestvideo+bestaudio/best[acodec!=none][ext={video_format}]/best[acodec!=none]"
+            else:
+                # Use combined streams only (no merging)
+                format_str = f"best[vcodec!=none][acodec!=none][ext={video_format}]/best[vcodec!=none][acodec!=none]"
+        else:
+            # Specific quality with requested container
+            # Convert "1080p" to height=1080 for yt-dlp
+            height = video_quality.replace("p", "")
+
+            if ffmpeg_available:
+                # Can merge separate streams for optimized quality
+                format_str = (
+                    f"bestvideo[height<={height}][ext={video_format}]+bestaudio/"
+                    f"bestvideo[height<={height}]+bestaudio/"
+                    f"bestvideo+bestaudio"
+                )
+            else:
+                # Use combined streams only (no merging required)
+                format_str = (
+                    f"best[height<={height}][vcodec!=none][acodec!=none][ext={video_format}]/"
+                    f"best[height<={height}][vcodec!=none][acodec!=none]/"
+                    f"best[vcodec!=none][acodec!=none]"
+                )
+
+        logger.info(f"Using yt-dlp format string: {format_str}")
+
+        cmd = [
+            "yt-dlp",
+            "--format", format_str,
+            "--output", output_template,
+            source.uri
+        ]
+
+        # Add merge format option if container specified and FFmpeg is available
+        # Only applies when using separate streams (+ merging)
+        if video_format != "mp4" and ffmpeg_available:
+            cmd.extend(["-S", f"ext:{video_format}"])
+
+        # Add JavaScript runtime if available (for signature decryption)
+        if self._is_js_runtime_available():
+            # Use 'ejs:github' to download challenge solver script from GitHub (faster, no npm install)
+            cmd.extend(["--remote-components", "ejs:github"])
+            cmd.extend(["--js-runtimes", self.js_runtime_type])
+            logger.info(f"Using JavaScript runtime ({self.js_runtime_type}) with EJS challenge solver for full YouTube decryption")
+        else:
+            logger.debug("No JS runtime available - using degraded mode")
+
+        # Add cookie file if configured (for age-gated/bot-protected videos)
+        cookie_path = self._get_cookie_file_path()
+        if cookie_path:
+            if self._validate_cookie_file(cookie_path):
+                cmd.extend(["--cookies", cookie_path])
+                logger.info("Using authentication cookies for download")
+            else:
+                logger.warning("Cookie file configured but invalid - downloading without authentication")
+
+        if source.metadata.get("download_subtitles"):
+            cmd.extend(["--write-subs", "--write-auto-subs", "--sub-lang", "en"])
+
+        logger.info(f"yt-dlp command: {' '.join(cmd)}")
+
+        extra_context = {
+            "output_template": output_template,
+            "video_format": video_format,
+            "video_quality": video_quality,
+            "ffmpeg_available": ffmpeg_available,
+        }
+
+        return (cmd, extra_context)
+
+    def _build_fallback_command(
+        self,
+        source: MediaSource,
+        output_template: str
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """
+        Build a simpler fallback download command that doesn't require complex merging.
+        
+        Args:
+            source: MediaSource to download
+            output_template: Output file template
+            
+        Returns:
+            Tuple of (command_args, extra_context)
+        """
+        simple_cmd = ["yt-dlp"]
+
+        # Add JavaScript components for the fallback too
+        if self._is_js_runtime_available():
+            simple_cmd.extend(["--remote-components", "ejs:github", "--js-runtimes", self.js_runtime_type])
+
+        # Add the simpler format that doesn't require complex merging
+        simple_cmd.extend([
+            "--format", "worst[vcodec!=none][ext=mp4]/best[vcodec!=none][ext=mp4]?/worst[vcodec!=none]",
+            "--output", output_template,
+            source.uri
+        ])
+
+        logger.info(f"Built fallback command: {' '.join(simple_cmd)}")
+
+        extra_context = {
+            "output_template": output_template,
+            "is_fallback": True,
+        }
+
+        return (simple_cmd, extra_context)
+
+    def _extract_output_path(
+        self,
+        result_stdout: str,
+        channel_dir: str,
+        safe_title: str,
+        source_id: str
+    ) -> Tuple[Optional[str], Optional[int]]:
+        """
+        Extract the output file path from yt-dlp stdout.
+        
+        Args:
+            result_stdout: Standard output from yt-dlp
+            channel_dir: Directory where the file should be
+            safe_title: Sanitized video title
+            source_id: Video source ID
+            
+        Returns:
+            Tuple of (output_path, file_size_bytes)
+        """
+        output_path = None
+        file_size_bytes = None
+
+        # Look for various merge patterns in yt-dlp output
+        # Common patterns include:
+        # 1. [ffmpeg] Merging formats into "filename.ext"
+        # 2. [Merger] Merging into "filename.ext"  
+        # 3. [download] Merging formats into "filename.ext"
+        # 4. The final [download] Destination: line (after merge)
+        merge_patterns = [
+            ("[ffmpeg] Merging formats into", "yt-dlp with ffmpeg merge"),
+            ("[Merger] Merging into", "yt-dlp merger"),
+            ("[download] Merging formats into", "yt-dlp download merge")
+        ]
+        
+        for pattern, description in merge_patterns:
+            for line in result_stdout.split('\n'):
+                if pattern in line:
+                    # Extract the final merged filename (removes quotes if present)
+                    output_path = line.split(pattern)[1].strip().strip('"').strip("'")
+                    logger.info(f"Found merged file via {description}: {output_path}")
+                    break
+            if output_path:
+                break
+        
+        # If still no output path, look for the final download destination
+        # Collect all download destinations and find the most likely video file
+        if not output_path:
+            download_paths = []
+            for line in result_stdout.split('\n'):
+                if "[download] Destination:" in line:
+                    path = line.split("[download] Destination:")[1].strip()
+                    download_paths.append(path)
+            
+            # Log all found download paths for debugging
+            if download_paths:
+                logger.debug(f"Found download destinations: {download_paths}")
+            
+            # Filter out audio-only files and find the actual video file
+            # Look for files with video extensions (.mp4, .mkv, .webm, .avi, .mov, .flv)
+            video_extensions = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv'}
+            for path in download_paths:
+                ext = os.path.splitext(path)[1].lower()
+                if ext in video_extensions:
+                    output_path = path
+                    logger.info(f"Selected video file by extension {ext}: {output_path}")
+                    break
+            
+            # If no video file found with standard extensions, try any file that's not audio-only
+            if not output_path and download_paths:
+                # Filter out known audio-only extensions
+                audio_extensions = {'.m4a', '.mp3', '.aac', '.wav', '.flac', '.opus', '.ogg', '.f140', '.f251'}
+                for path in download_paths:
+                    ext = os.path.splitext(path)[1].lower()
+                    if ext not in audio_extensions:
+                        output_path = path
+                        logger.info(f"Selected non-audio file {ext}: {output_path}")
+                        break
+            
+            # Last resort: use the last download destination
+            if not output_path and download_paths:
+                output_path = download_paths[-1]
+                logger.info(f"Using last download destination: {output_path}")
+
+        # Validate that we actually got an output path and the file exists
+        # First check if the detected output path exists
+        if output_path and os.path.exists(output_path):
+            # Found the file at the detected path
+            file_size_bytes = os.path.getsize(output_path)
+            logger.info(f"Successfully downloaded video to: {output_path}")
+        else:
+            # File not found at detected path, search for it in the output directory
+            # This handles cases where yt-dlp creates temporary files or renames files
+            search_prefix = f"{safe_title}_{source_id}".lower()
+            logger.info(f"Searching for files with prefix '{search_prefix}' in {channel_dir}")
+            
+            # Search for files matching the pattern (case-insensitive)
+            matching_files = []
+            try:
+                file_list = os.listdir(channel_dir)
+                logger.info(f"Files in directory: {file_list}")
+                for file in file_list:
+                    if file.lower().startswith(search_prefix):
+                        file_path = os.path.join(channel_dir, file)
+                        if os.path.isfile(file_path):
+                            matching_files.append(file_path)
+                            logger.info(f"Found matching file: {file_path}")
+            except Exception as e:
+                logger.error(f"Error searching for files in {channel_dir}: {e}")
+                matching_files = []
+            
+            # Filter out small files (likely temporary/intermediate files)
+            # and prioritize video files
+            video_files = []
+            for file_path in matching_files:
+                try:
+                    file_size = os.path.getsize(file_path)
+                    if file_size > 1024 * 1024:  # At least 1MB (video files are larger)
+                        video_files.append((file_path, file_size))
+                except Exception:
+                    continue
+            
+            # Sort by file size (largest first) - video files are usually larger than audio
+            video_files.sort(key=lambda x: x[1], reverse=True)
+            
+            if video_files:
+                output_path, file_size_bytes = video_files[0]
+                logger.info(f"Found video file via search: {output_path} (size: {file_size_bytes} bytes)")
+            elif matching_files:
+                # Use any file if no large files found
+                output_path = matching_files[0]
+                file_size_bytes = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+                logger.info(f"Using found file (may be small/audio): {output_path}")
+            else:
+                # No file found at all
+                output_path = None
+                file_size_bytes = None
+
+        return (output_path, file_size_bytes)
+
     async def _download_video(self, source: MediaSource) -> Dict[str, Any]:
-        """Download a YouTube video using yt-dlp."""
+        """Download a YouTube video using yt-dlp with retry logic."""
         try:
             # Always get the latest global download directory
             db = next(get_db_session())
@@ -910,262 +1208,57 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
                 logger.warning("  - macOS: brew install ffmpeg")
                 logger.warning("  - Windows: Download from https://ffmpeg.org/download.html")
 
-            # Build format string based on quality setting and FFmpeg availability
-            if video_quality == "best":
-                # Best quality with requested container
-                if ffmpeg_available:
-                    # Can merge separate streams for optimal quality
-                    format_str = f"bestvideo[ext={video_format}]+bestaudio/bestvideo+bestaudio/best[acodec!=none][ext={video_format}]/best[acodec!=none]"
-                else:
-                    # Use combined streams only (no merging)
-                    format_str = f"best[vcodec!=none][acodec!=none][ext={video_format}]/best[vcodec!=none][acodec!=none]"
-            else:
-                # Specific quality with requested container
-                # Convert "1080p" to height=1080 for yt-dlp
-                height = video_quality.replace("p", "")
+            # Define primary download operation
+            def primary_operation():
+                return self._build_download_command(
+                    source, output_template, video_format, video_quality, ffmpeg_available
+                )
 
-                if ffmpeg_available:
-                    # Can merge separate streams for optimized quality
-                    format_str = (
-                        f"bestvideo[height<={height}][ext={video_format}]+bestaudio/"
-                        f"bestvideo[height<={height}]+bestaudio/"
-                        f"bestvideo+bestaudio"
-                    )
-                else:
-                    # Use combined streams only (no merging required)
-                    format_str = (
-                        f"best[height<={height}][vcodec!=none][acodec!=none][ext={video_format}]/"
-                        f"best[height<={height}][vcodec!=none][acodec!=none]/"
-                        f"best[vcodec!=none][acodec!=none]"
-                    )
+            # Define fallback operation (simpler format)
+            def fallback_operation():
+                return self._build_fallback_command(source, output_template)
 
-            logger.info(f"Using yt-dlp format string: {format_str}")
-
-            cmd = [
-                "yt-dlp",
-                "--format", format_str,
-                "--output", output_template,
-                source.uri
-            ]
-
-            # Add merge format option if container specified and FFmpeg is available
-            # Only applies when using separate streams (+ merging)
-            if video_format != "mp4" and ffmpeg_available:
-                cmd.extend(["-S", f"ext:{video_format}"])
-
-            # Add JavaScript runtime if available (for signature decryption)
-            if self._is_js_runtime_available():
-                # Use 'ejs:github' to download challenge solver script from GitHub (faster, no npm install)
-                cmd.extend(["--remote-components", "ejs:github"])
-                cmd.extend(["--js-runtimes", self.js_runtime_type])
-                logger.info(f"Using JavaScript runtime ({self.js_runtime_type}) with EJS challenge solver for full YouTube decryption")
-            else:
-                logger.debug("No JS runtime available - using degraded mode")
-
-            # Add cookie file if configured (for age-gated/bot-protected videos)
-            cookie_path = self._get_cookie_file_path()
-            if cookie_path:
-                if self._validate_cookie_file(cookie_path):
-                    cmd.extend(["--cookies", cookie_path])
-                    logger.info("Using authentication cookies for download")
-                else:
-                    logger.warning("Cookie file configured but invalid - downloading without authentication")
-
-            logger.info(f"yt-dlp command: {' '.join(cmd)}")
-
-            if source.metadata.get("download_subtitles"):
-                cmd.extend(["--write-subs", "--write-auto-subs", "--sub-lang", "en"])
-
+            # Execute download with retry logic using RetryableMixin
             logger.info(f"Downloading video: {source.uri}")
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=3600
+            retry_result = await self.execute_with_retry(
+                operation=primary_operation,
+                fallback_strategies=[fallback_operation],
+                operation_name="yt-dlp download"
             )
 
-            if result.returncode != 0:
-                stderr_output = result.stderr
+            if not retry_result["success"]:
+                # All attempts failed
+                error_msg = retry_result.get("error", "Unknown error")
+                
+                # Add helpful info about JavaScript runtime if relevant
+                if "JavaScript runtime" in error_msg or "Requested format" in error_msg:
+                    error_msg += "\n\n" + self._get_runtime_installation_guide()
+                
+                return {
+                    "success": False,
+                    "error": error_msg,
+                }
 
-                # Check if the error is related to JavaScript runtime
-                if "JavaScript runtime" in stderr_output or "Requested format is not available" in stderr_output or \
-                   "Sign in to confirm your age" in stderr_output:
-                    logger.warning(f"Initial format failed, trying simpler format without video+audio merge")
-                    # Try a much simpler format that doesn't require JS signature decoding
-                    simple_cmd = [
-                        "yt-dlp"
-                    ]
-
-                    # Add JavaScript components for the fallback too
-                    if self._is_js_runtime_available():
-                        simple_cmd.extend(["--remote-components", "ejs:github", "--js-runtimes", self.js_runtime_type])
-
-                    # Add the simpler format that doesn't require complex merging
-                    simple_cmd.extend([
-                        "--format", "worst[vcodec!=none][ext=mp4]/best[vcodec!=none][ext=mp4]?/worst[vcodec!=none]",
-                        "--output", output_template,
-                        source.uri
-                    ])
-
-                    logger.info(f"Retrying with simpler format: {' '.join(simple_cmd)}")
-                    fallback_result = subprocess.run(
-                        simple_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=3600
-                    )
-
-                    if fallback_result.returncode == 0:
-                        result = fallback_result
-                        logger.info("✓ Fallback format succeeded!")
-                    else:
-                        # Fallback failed, return error
-                        logger.error(f"Fallback also failed: {fallback_result.stderr}")
-                        combined_error = result.stderr + "\n\n" + fallback_result.stderr
-
-                        # Add helpful info about JavaScript runtime
-                        combined_error += "\n\n" + self._get_runtime_installation_guide()
-
-                        return {
-                            "success": False,
-                            "error": combined_error,
-                        }
-                else:
-                    # Non-recoverable error, return immediately
-                    logger.error(f"Download failed: {stderr_output}")
-                    return {
-                        "success": False,
-                        "error": stderr_output,
-                    }
-
-            # Execution continues here only if we didn't hit an error above
-            # (either original succeeded, or fallback succeeded)
-
-            # Extract output path - prioritize merged video filename over temporary files
-            output_path = None
+            # Download succeeded, extract output path from result
+            result_stdout = retry_result.get("stdout", "")
+            result_stderr = retry_result.get("stderr", "")
             
             # Debug: log yt-dlp output for troubleshooting
-            logger.debug(f"yt-dlp stdout (first 10 lines): {list(result.stdout.split('\\n')[:10])}")
-            
-            # Look for various merge patterns in yt-dlp output
-            # Common patterns include:
-            # 1. [ffmpeg] Merging formats into "filename.ext"
-            # 2. [Merger] Merging into "filename.ext"  
-            # 3. [download] Merging formats into "filename.ext"
-            # 4. The final [download] Destination: line (after merge)
-            merge_patterns = [
-                ("[ffmpeg] Merging formats into", "yt-dlp with ffmpeg merge"),
-                ("[Merger] Merging into", "yt-dlp merger"),
-                ("[download] Merging formats into", "yt-dlp download merge")
-            ]
-            
-            for pattern, description in merge_patterns:
-                for line in result.stdout.split('\n'):
-                    if pattern in line:
-                        # Extract the final merged filename (removes quotes if present)
-                        output_path = line.split(pattern)[1].strip().strip('"').strip("'")
-                        logger.info(f"Found merged file via {description}: {output_path}")
-                        break
-                if output_path:
-                    break
-            
-            # If still no output path, look for the final download destination
-            # Collect all download destinations and find the most likely video file
-            if not output_path:
-                download_paths = []
-                for line in result.stdout.split('\n'):
-                    if "[download] Destination:" in line:
-                        path = line.split("[download] Destination:")[1].strip()
-                        download_paths.append(path)
-                
-                # Log all found download paths for debugging
-                if download_paths:
-                    logger.debug(f"Found download destinations: {download_paths}")
-                
-                # Filter out audio-only files and find the actual video file
-                # Look for files with video extensions (.mp4, .mkv, .webm, .avi, .mov, .flv)
-                video_extensions = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv'}
-                for path in download_paths:
-                    ext = os.path.splitext(path)[1].lower()
-                    if ext in video_extensions:
-                        output_path = path
-                        logger.info(f"Selected video file by extension {ext}: {output_path}")
-                        break
-                
-                # If no video file found with standard extensions, try any file that's not audio-only
-                if not output_path and download_paths:
-                    # Filter out known audio-only extensions
-                    audio_extensions = {'.m4a', '.mp3', '.aac', '.wav', '.flac', '.opus', '.ogg', '.f140', '.f251'}
-                    for path in download_paths:
-                        ext = os.path.splitext(path)[1].lower()
-                        if ext not in audio_extensions:
-                            output_path = path
-                            logger.info(f"Selected non-audio file {ext}: {output_path}")
-                            break
-                
-                # Last resort: use the last download destination
-                if not output_path and download_paths:
-                    output_path = download_paths[-1]
-                    logger.info(f"Using last download destination: {output_path}")
+            logger.debug(f"yt-dlp stdout (first 10 lines): {list(result_stdout.split('\\n')[:10])}")
 
-            # Validate that we actually got an output path and the file exists
-            # First check if the detected output path exists
-            if output_path and os.path.exists(output_path):
-                # Found the file at the detected path
-                file_size_bytes = os.path.getsize(output_path)
-                logger.info(f"Successfully downloaded video to: {output_path}")
-            else:
-                # File not found at detected path, search for it in the output directory
-                # This handles cases where yt-dlp creates temporary files or renames files
-                output_dir = channel_dir
-                search_prefix = f"{safe_title}_{source.source_id}".lower()
-                logger.info(f"Searching for files with prefix '{search_prefix}' in {output_dir}")
-                
-                # Search for files matching the pattern (case-insensitive)
-                matching_files = []
-                try:
-                    file_list = os.listdir(output_dir)
-                    logger.info(f"Files in directory: {file_list}")
-                    for file in file_list:
-                        if file.lower().startswith(search_prefix):
-                            file_path = os.path.join(output_dir, file)
-                            if os.path.isfile(file_path):
-                                matching_files.append(file_path)
-                                logger.info(f"Found matching file: {file_path}")
-                except Exception as e:
-                    logger.error(f"Error searching for files in {output_dir}: {e}")
-                    matching_files = []
-                
-                # Filter out small files (likely temporary/intermediate files)
-                # and prioritize video files
-                video_files = []
-                for file_path in matching_files:
-                    try:
-                        file_size = os.path.getsize(file_path)
-                        if file_size > 1024 * 1024:  # At least 1MB (video files are larger)
-                            video_files.append((file_path, file_size))
-                    except Exception:
-                        continue
-                
-                # Sort by file size (largest first) - video files are usually larger than audio
-                video_files.sort(key=lambda x: x[1], reverse=True)
-                
-                if video_files:
-                    output_path, file_size_bytes = video_files[0]
-                    logger.info(f"Found video file via search: {output_path} (size: {file_size_bytes} bytes)")
-                elif matching_files:
-                    # Use any file if no large files found
-                    output_path = matching_files[0]
-                    file_size_bytes = os.path.getsize(output_path) if os.path.exists(output_path) else 0
-                    logger.info(f"Using found file (may be small/audio): {output_path}")
-                else:
-                    # No file found at all
-                    error_msg = f"Download completed but no valid file found. Output path from parser: {output_path if output_path else 'None'}"
-                    logger.error(error_msg)
-                    return {
-                        "success": False,
-                        "error": error_msg,
-                    }
+            # Extract output path from yt-dlp output
+            output_path, file_size_bytes = self._extract_output_path(
+                result_stdout, channel_dir, safe_title, source.source_id
+            )
+
+            if not output_path:
+                error_msg = f"Download completed but no valid file found. Check yt-dlp output for details."
+                logger.error(error_msg)
+                logger.debug(f"yt-dlp stderr: {result_stderr}")
+                return {
+                    "success": False,
+                    "error": error_msg,
+                }
 
             return {
                 "success": True,
@@ -1181,6 +1274,8 @@ class YouTubePlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
             }
         except Exception as e:
             logger.error(f"Error downloading video: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {
                 "success": False,
                 "error": str(e),

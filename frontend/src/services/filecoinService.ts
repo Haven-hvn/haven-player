@@ -557,10 +557,17 @@ export async function uploadVideoToFilecoin(
 
     if (readiness.status === 'blocked') {
       const errorMessage =
-        readiness.validation.errorMessage ||
-        readiness.suggestions.join('. ') ||
+        readiness.validation?.errorMessage ||
+        (readiness.suggestions && readiness.suggestions.length > 0 
+          ? readiness.suggestions.join('. ') 
+          : null) ||
         'Upload blocked: Payment setup incomplete';
-      throw new Error(errorMessage);
+      
+      // Create a structured error that includes error code information
+      const paymentError = new Error(errorMessage);
+      (paymentError as Error & { code?: string; type?: string }).code = 'PAYMENT_REQUIRED';
+      (paymentError as Error & { code?: string; type?: string }).type = 'payment_validation_error';
+      throw paymentError;
     }
 
     onProgress?.({

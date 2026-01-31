@@ -10,7 +10,7 @@ module.exports = {
     '^.+\\.(ts|tsx)$': 'ts-jest',
   },
   setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'],
-  moduleNameMapping: {
+  moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
   },
@@ -30,4 +30,4 @@ module.exports = {
       statements: 80,
     },
   },
-}; 
+};

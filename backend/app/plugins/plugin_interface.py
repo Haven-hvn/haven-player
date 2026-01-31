@@ -300,3 +300,30 @@ class ArchiverPlugin(ABC):
         """
         meta = self.get_metadata()
         return media_type in meta.media_types
+
+    async def get_active_operations(self) -> List[Dict[str, Any]]:
+        """
+        Get currently active operations from this plugin.
+        
+        This method should return a list of all currently active operations
+        (e.g., recordings, downloads, uploads) without calling discover_sources().
+        This is a lightweight method used for status updates and monitoring.
+        
+        Each operation dictionary should contain:
+        - operation_id: Unique identifier for the operation
+        - plugin_name: Name of the plugin (from metadata)
+        - plugin_display_name: Human-readable plugin name
+        - operation_type: Type of operation (e.g., "recording", "download", "upload")
+        - source_id: ID of the source being processed
+        - source_name: Human-readable name of the source
+        - source_uri: URI of the source (if applicable)
+        - status: Current status (e.g., "running", "paused", "stopping", "error")
+        - progress: Progress percentage (0-100)
+        - start_time: ISO format timestamp when operation started
+        - duration_seconds: Duration of the operation in seconds
+        - file_size_bytes: Current file size in bytes (if applicable)
+        
+        Returns:
+            List of operation dictionaries. Default implementation returns empty list.
+        """
+        return []

@@ -24,7 +24,6 @@ import {
   IconButton,
   Tooltip,
   Fade,
-  Switch,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -102,7 +101,6 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
   pluginHealthStatus = [],
   nodeActive = false,
   filecoinConfigured = false,
-  onNodeToggle,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -442,21 +440,6 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
                 >
                   Upload Worker
                 </Typography>
-                <Box sx={{ flexGrow: 1 }} />
-                <Switch
-                  checked={nodeActive}
-                  onChange={(e) => onNodeToggle?.(e.target.checked)}
-                  disabled={!filecoinConfigured}
-                  size="small"
-                  sx={{
-                    '& .MuiSwitch-switchBase.Mui-checked': {
-                      color: liquidGlassTokens.neon.success,
-                    },
-                    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
-                      backgroundColor: `${liquidGlassTokens.neon.success}60`,
-                    },
-                  }}
-                />
               </Box>
 
               {/* Status indicator */}
@@ -481,9 +464,9 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
                   }}
                 >
                   {nodeActive 
-                    ? 'Active - Earning rewards' 
+                    ? 'Active - Auto-uploading' 
                     : filecoinConfigured 
-                      ? 'Inactive - Start to earn' 
+                      ? 'Waiting for backend...' 
                       : 'Configure Filecoin first'}
                 </Typography>
               </Box>
@@ -821,7 +804,8 @@ const BottomAction: React.FC<{
   label: string;
   expanded: boolean;
   onClick?: () => void;
-}> = ({ icon, label, expanded, onClick }) => (
+  active?: boolean;
+}> = ({ icon, label, expanded, onClick, active = false }) => (
   <Tooltip title={expanded ? '' : label} placement="right">
     <Box
       onClick={onClick}
@@ -835,8 +819,9 @@ const BottomAction: React.FC<{
         cursor: 'pointer',
         justifyContent: expanded ? 'flex-start' : 'center',
         transition: `all ${liquidGlassTokens.motion.durationFast} ${liquidGlassTokens.motion.enter}`,
+        backgroundColor: active ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
         '&:hover': {
-          backgroundColor: 'rgba(255, 255, 255, 0.04)',
+          backgroundColor: active ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.04)',
           '& .action-icon': {
             color: liquidGlassTokens.neon.cyan,
           },
@@ -849,7 +834,9 @@ const BottomAction: React.FC<{
       <Box
         className="action-icon"
         sx={{
-          color: `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
+          color: active 
+            ? liquidGlassTokens.neon.cyan 
+            : `rgba(255, 255, 255, ${liquidGlassTokens.text.tertiary})`,
           display: 'flex',
           alignItems: 'center',
           minWidth: 24,
@@ -865,9 +852,12 @@ const BottomAction: React.FC<{
           className="action-label"
           sx={{
             fontSize: '14px',
-            color: `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
+            color: active 
+              ? liquidGlassTokens.neon.cyan 
+              : `rgba(255, 255, 255, ${liquidGlassTokens.text.secondary})`,
             transition: `all ${liquidGlassTokens.motion.durationFast} ease`,
             whiteSpace: 'nowrap',
+            fontWeight: active ? 500 : 400,
           }}
         >
           {label}

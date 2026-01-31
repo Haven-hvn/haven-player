@@ -330,6 +330,46 @@ class PumpFunPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePluginMix
         except Exception as e:
             logger.error(f"PumpFunPlugin health check failed: {e}")
             return False
+
+    async def get_active_operations(self) -> List[Dict[str, Any]]:
+        """
+        Get currently active operations from this plugin.
+        
+        Returns a list of all currently active recording operations
+        without calling discover_sources(). This is a lightweight method
+        used for status updates and monitoring.
+        
+        Returns:
+            List of operation dictionaries with recording status.
+        """
+        try:
+            recording_service = await self._get_recording_service()
+            active_recordings = recording_service.active_recordings
+            
+            operations = []
+            metadata = self.get_metadata()
+            
+            for mint_id, recorder in active_recordings.items():
+                operations.append({
+                    "operation_id": f"pumpfun-{mint_id}",
+                    "plugin_name": metadata.name,
+                    "plugin_display_name": "PumpFun Archiver",
+                    "operation_type": "recording",
+                    "source_id": mint_id,
+                    "source_name": mint_id,
+                    "source_uri": getattr(recorder, 'source_uri', None),
+                    "status": recorder.state.value if hasattr(recorder, 'state') else 'running',
+                    "progress": getattr(recorder, 'progress_percent', 0),
+                    "start_time": recorder.start_time.isoformat() if hasattr(recorder, 'start_time') and recorder.start_time else None,
+                    "duration_seconds": getattr(recorder, 'duration_seconds', 0),
+                    "file_size_bytes": getattr(recorder, 'current_file_size', 0),
+                })
+            
+            return operations
+        except Exception as e:
+            logger.error(f"Error getting active operations: {e}")
+            return []
+
     
     async def stop_archiving(self, source_id: str) -> Dict[str, Any]:
         """

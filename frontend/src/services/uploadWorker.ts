@@ -44,11 +44,38 @@ export interface UploadQueueEntry {
   vlm_json_upload_error: string | null;
 }
 
+export interface UploadError {
+  id: number;
+  videoPath: string;
+  stage: string;
+  message: string;
+  timestamp: Date;
+}
+
+export interface UploadWorkerStatus {
+  isRunning: boolean;
+  config: UploadWorkerConfig;
+  currentOperation?: {
+    id: number;
+    videoPath: string;
+    stage: string;
+  };
+  recentErrors: UploadError[];
+  errorCounts: Record<string, number>;
+}
+
 export class UploadWorker {
   private pollingInterval: NodeJS.Timeout | null = null;
   private isProcessing = false;
   private config: UploadWorkerConfig;
   private isRunning = false;
+  private recentErrors: UploadError[] = [];
+  private errorCounts: Record<string, number> = {};
+  private currentOperation?: {
+    id: number;
+    videoPath: string;
+    stage: string;
+  };
 
   constructor(config?: Partial<UploadWorkerConfig>) {
     this.config = {
@@ -91,22 +118,39 @@ export class UploadWorker {
   async processQueue(): Promise<void> {
     // Only process one upload (video OR JSON) at a time
     if (this.isProcessing) {
+      console.log('[UploadWorker] Already processing, skipping this poll');
       return;
     }
 
     if (!this.config.enabled) {
+      console.log('[UploadWorker] Worker disabled, skipping queue check');
       return;
     }
 
+    this.isProcessing = true;
+
     try {
+      console.log('[UploadWorker] Checking upload queue...');
+
       // Priority 1: Process JSON upload jobs
-      const jsonResponse = await fetch('http://localhost:8000/api/upload-queue/vlm-json/pop');
+      let jsonResponse;
+      try {
+        jsonResponse = await fetch('http://localhost:8000/api/upload-queue/vlm-json/pop');
+      } catch (fetchError) {
+        console.error('[UploadWorker] Failed to connect to backend for JSON queue check:', fetchError);
+        return;
+      }
 
       if (jsonResponse.ok && jsonResponse.status !== 204) {
-        const jsonEntry: UploadQueueEntry | null = await jsonResponse.json();
+        let jsonEntry: UploadQueueEntry | null = null;
+        try {
+          jsonEntry = await jsonResponse.json();
+        } catch (parseError) {
+          console.error('[UploadWorker] Failed to parse JSON queue response:', parseError);
+          return;
+        }
 
         if (jsonEntry && jsonEntry.video_path && jsonEntry.id) {
-          this.isProcessing = true;
           console.log(`[UploadWorker] Processing JSON upload: ${jsonEntry.video_path} (id=${jsonEntry.id})`);
 
           const success = await this.processJsonUpload(jsonEntry);
@@ -116,28 +160,41 @@ export class UploadWorker {
           } else {
             console.log(`[UploadWorker] JSON upload failed: ${jsonEntry.video_path}`);
           }
-
-          this.isProcessing = false;
           return; // Process one job per cycle
         }
       }
 
-      // Priority 2: Process regular video uploads (existing logic)
-      const response = await fetch('http://localhost:8000/api/upload-queue/pop');
+      // Priority 2: Process regular video uploads
+      let response;
+      try {
+        response = await fetch('http://localhost:8000/api/upload-queue/pop');
+      } catch (fetchError) {
+        console.error('[UploadWorker] Failed to connect to backend for video queue check:', fetchError);
+        return;
+      }
 
       if (!response.ok || response.status === 204) {
         // No pending uploads or error
         if (response.status !== 204) {
           const errorText = await response.text();
           console.error(`[UploadWorker] Error getting next upload: ${response.status} - ${errorText}`);
+        } else {
+          console.log('[UploadWorker] No pending uploads in queue');
         }
         return;
       }
 
-      const queueEntry: UploadQueueEntry | null = await response.json();
+      let queueEntry: UploadQueueEntry | null = null;
+      try {
+        queueEntry = await response.json();
+      } catch (parseError) {
+        console.error('[UploadWorker] Failed to parse video queue response:', parseError);
+        return;
+      }
 
       // No queue entry available (queue is empty)
       if (!queueEntry) {
+        console.log('[UploadWorker] Queue entry is null');
         return;
       }
 
@@ -147,10 +204,24 @@ export class UploadWorker {
         return;
       }
 
-      this.isProcessing = true;
       console.log(`[UploadWorker] Processing video upload: ${queueEntry.video_path} (id=${queueEntry.id})`);
 
-      const success = await this.processUpload(queueEntry);
+      // Track current operation
+      this.currentOperation = {
+        id: queueEntry.id,
+        videoPath: queueEntry.video_path,
+        stage: 'starting',
+      };
+
+      const success = await this.processUpload(queueEntry, (stage) => {
+        // Update current operation stage
+        if (this.currentOperation) {
+          this.currentOperation.stage = stage;
+        }
+      });
+
+      // Clear current operation
+      this.currentOperation = undefined;
 
       if (success) {
         console.log(`[UploadWorker] Video upload complete: ${queueEntry.video_path}`);
@@ -165,29 +236,58 @@ export class UploadWorker {
     }
   }
 
-  private async processUpload(queueEntry: UploadQueueEntry): Promise<boolean> {
+  private async processUpload(
+    queueEntry: UploadQueueEntry,
+    onStageChange?: (stage: string) => void
+  ): Promise<boolean> {
+    console.log(`[UploadWorker] Starting processUpload for id=${queueEntry.id}, path=${queueEntry.video_path}`);
+    
+    // Track which stage we're in for error reporting
+    let currentStage: 'config' | 'file-check' | 'file-read' | 'encryption' | 'upload' | 'status-update' = 'config';
+    
+    const updateStage = (stage: typeof currentStage) => {
+      currentStage = stage;
+      onStageChange?.(stage);
+    };
+    
     try {
       // Load Filecoin config
+      updateStage('config');
+      console.log('[UploadWorker] Loading Filecoin config...');
       const config = await this.loadFilecoinConfig();
       if (!config) {
+        console.error('[UploadWorker] Filecoin config not available - cannot upload');
         throw new Error('Filecoin config not available');
       }
+      console.log('[UploadWorker] Filecoin config loaded successfully');
 
       // Verify video file exists
+      updateStage('file-check');
+      console.log(`[UploadWorker] Checking if file exists: ${queueEntry.video_path}`);
       if (!fs.existsSync(queueEntry.video_path)) {
+        console.error(`[UploadWorker] Video file not found: ${queueEntry.video_path}`);
         throw new Error(`Video file not found: ${queueEntry.video_path}`);
       }
+      console.log('[UploadWorker] File exists, proceeding with upload');
 
       // Read video file
+      updateStage('file-read');
+      console.log('[UploadWorker] Reading video file...');
       const file = this.readFileAsFile(queueEntry.video_path);
+      console.log(`[UploadWorker] File read: ${file.name}, size: ${file.size} bytes`);
 
       // Perform upload (reusing existing logic)
-      console.log(`[UploadWorker] Starting upload for ${queueEntry.video_path}...`);
+      updateStage(config.encryptionEnabled ? 'encryption' : 'upload');
+      console.log(`[UploadWorker] Calling uploadVideoToFilecoin for ${queueEntry.video_path}...`);
       const result = await uploadVideoToFilecoin({
         file,
         config,
         filePath: queueEntry.video_path,
         onProgress: (progress) => {
+          // Track stage from progress
+          if (progress.stage === 'encrypting') updateStage('encryption');
+          else if (progress.stage === 'uploading') updateStage('upload');
+          
           // Log progress periodically
           if (progress.progress % 10 === 0 || progress.stage === 'completed') {
             console.log(`[UploadWorker] Upload progress: ${progress.progress}% (${progress.stage})`);
@@ -198,6 +298,8 @@ export class UploadWorker {
       console.log(`[UploadWorker] Upload successful: CID=${result.rootCid}, pieceId=${result.pieceId}`);
 
       // Update status to completed with FileCoin metadata
+      updateStage('status-update');
+      console.log(`[UploadWorker] Updating queue status to completed for id=${queueEntry.id}`);
       const updateResponse = await fetch(
         `http://localhost:8000/api/upload-queue/${queueEntry.id}/status`,
         {
@@ -226,14 +328,19 @@ export class UploadWorker {
         return false;
       }
 
+      console.log(`[UploadWorker] Status updated successfully for id=${queueEntry.id}`);
       return true;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[UploadWorker] Upload failed for ${queueEntry.video_path}:`, error);
+      console.error(`[UploadWorker] Upload failed at stage '${currentStage}' for ${queueEntry.video_path}:`, error);
 
-      // Update status to failed
+      // Track the error locally
+      this.trackError(queueEntry.id, queueEntry.video_path, currentStage, errorMessage);
+
+      // Update status to failed with stage information
       try {
+        console.log(`[UploadWorker] Updating queue status to failed for id=${queueEntry.id} (stage: ${currentStage})`);
         await fetch(
           `http://localhost:8000/api/upload-queue/${queueEntry.id}/status`,
           {
@@ -242,6 +349,7 @@ export class UploadWorker {
             body: JSON.stringify({
               status: 'failed',
               error: errorMessage,
+              error_stage: currentStage,
             }),
           }
         );
@@ -334,29 +442,41 @@ export class UploadWorker {
 
   private async loadFilecoinConfig(): Promise<FilecoinConfig | null> {
     try {
-      // In main process, we can't use ipcRenderer
-      // We need to read the config directly from secure storage
-      const app = await import('electron').then(e => e.default || e.app);
-      const { safeStorage, app: appModule } = await import('electron');
+      // In main process, import electron directly
+      const { safeStorage, app } = require('electron');
+      const path = require('path');
 
-      const configPath = await import('path').then(p => p.join(appModule.getPath('userData'), 'filecoin-config.json'));
+      const configPath = path.join(app.getPath('userData'), 'filecoin-config.json');
+      
+      console.log('[UploadWorker] Loading Filecoin config from:', configPath);
 
-      if (!require('fs').existsSync(configPath)) {
+      if (!fs.existsSync(configPath)) {
+        console.log('[UploadWorker] Filecoin config file not found at:', configPath);
         return null;
       }
 
-      const fileBuffer = require('fs').readFileSync(configPath);
+      const fileBuffer = fs.readFileSync(configPath);
       const data = fileBuffer.toString('utf-8');
       const config = JSON.parse(data);
 
+      console.log('[UploadWorker] Filecoin config loaded, checking encrypted private key...');
+
       // Decrypt private key if available
-      if (!config.encryptedPrivateKey || !safeStorage.isEncryptionAvailable()) {
+      if (!config.encryptedPrivateKey) {
+        console.log('[UploadWorker] No encrypted private key in config');
+        return null;
+      }
+
+      if (!safeStorage.isEncryptionAvailable()) {
+        console.log('[UploadWorker] Safe storage not available');
         return null;
       }
 
       try {
         const encryptedBuffer = Buffer.from(config.encryptedPrivateKey, 'base64');
         const privateKey = safeStorage.decryptString(encryptedBuffer);
+
+        console.log('[UploadWorker] Filecoin config loaded successfully');
 
         return {
           privateKey,
@@ -430,6 +550,52 @@ export class UploadWorker {
 
   isWorkerRunning(): boolean {
     return this.isRunning;
+  }
+
+  /**
+   * Track an error for display in the UI
+   */
+  private trackError(id: number, videoPath: string, stage: string, message: string): void {
+    const error: UploadError = {
+      id,
+      videoPath,
+      stage,
+      message,
+      timestamp: new Date(),
+    };
+
+    // Add to recent errors (keep last 10)
+    this.recentErrors.unshift(error);
+    if (this.recentErrors.length > 10) {
+      this.recentErrors = this.recentErrors.slice(0, 10);
+    }
+
+    // Update error counts by stage
+    this.errorCounts[stage] = (this.errorCounts[stage] || 0) + 1;
+
+    console.error(`[UploadWorker] Error tracked - Stage: ${stage}, Message: ${message}`);
+  }
+
+  /**
+   * Clear error history
+   */
+  clearErrors(): void {
+    this.recentErrors = [];
+    this.errorCounts = {};
+    console.log('[UploadWorker] Error history cleared');
+  }
+
+  /**
+   * Get detailed worker status including errors
+   */
+  getDetailedStatus(): UploadWorkerStatus {
+    return {
+      isRunning: this.isRunning,
+      config: this.getConfig(),
+      currentOperation: this.currentOperation,
+      recentErrors: [...this.recentErrors],
+      errorCounts: { ...this.errorCounts },
+    };
   }
 }
 

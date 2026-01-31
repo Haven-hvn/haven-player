@@ -6,38 +6,34 @@ import {
   type LitEncryptionMetadata,
 } from '../litService';
 
-// Mock the Lit Protocol packages
-jest.mock('@lit-protocol/lit-node-client', () => ({
-  LitNodeClient: jest.fn().mockImplementation(() => ({
-    connect: jest.fn().mockResolvedValue(undefined),
+// Mock the Lit Protocol v8 packages
+jest.mock('@lit-protocol/lit-client', () => ({
+  createLitClient: jest.fn().mockResolvedValue({
     disconnect: jest.fn().mockResolvedValue(undefined),
-    ready: true,
     encrypt: jest.fn().mockResolvedValue({
       ciphertext: 'mock-ciphertext',
       dataToEncryptHash: 'mock-hash',
     }),
-    decrypt: jest.fn().mockResolvedValue({
-      decryptedData: new Uint8Array([1, 2, 3, 4]),
+    decrypt: jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3, 4])),
+  }),
+}));
+
+jest.mock('@lit-protocol/networks', () => ({
+  nagaDev: {
+    name: 'naga-dev',
+    networkId: 'naga-dev',
+  },
+}));
+
+jest.mock('@lit-protocol/auth', () => ({
+  createAuthManager: jest.fn().mockReturnValue({
+    createEoaAuthContext: jest.fn().mockResolvedValue({
+      authSig: 'mock-auth-sig',
     }),
-    getSessionSigs: jest.fn().mockResolvedValue({}),
-  })),
-}));
-
-jest.mock('@lit-protocol/constants', () => ({
-  LIT_NETWORK: {
-    DatilDev: 'datil-dev',
+  }),
+  storagePlugins: {
+    memory: jest.fn().mockReturnValue({}),
   },
-  LIT_ABILITY: {
-    AccessControlConditionDecryption: 'access-control-condition-decryption',
-  },
-}));
-
-jest.mock('@lit-protocol/auth-helpers', () => ({
-  LitAccessControlConditionResource: jest.fn().mockImplementation((resource: string) => ({
-    resource,
-    getResourceKey: jest.fn().mockReturnValue(resource),
-    isValidLitAbility: jest.fn().mockReturnValue(true),
-  })),
 }));
 
 describe('litService', () => {

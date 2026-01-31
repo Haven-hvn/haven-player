@@ -454,8 +454,58 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
         />
       </Box>
 
-      {/* Right side - Points, Streak, Queue Status (READ-ONLY INDICATORS) */}
+      {/* Right side - Points, Streak, Queue Status, Errors (READ-ONLY INDICATORS) */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        {/* Error Indicator - Shows when there are failed uploads */}
+        {queueStats.failed > 0 && (
+          <Tooltip 
+            title={
+              <Box>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: liquidGlassTokens.neon.error }}>
+                  {queueStats.failed} upload{queueStats.failed !== 1 ? 's' : ''} failed
+                </Typography>
+                {(queueStats.vlm_analysis_failed || 0) > 0 && (
+                  <Typography variant="caption" display="block" sx={{ color: liquidGlassTokens.neon.amber }}>
+                    {queueStats.vlm_analysis_failed} analysis failed
+                  </Typography>
+                )}
+                <Typography variant="caption" display="block" sx={{ color: 'rgba(255,255,255,0.6)', mt: 0.5 }}>
+                  Check console for details
+                </Typography>
+              </Box>
+            }
+          >
+            <Chip
+              icon={
+                <StatusDotIcon
+                  sx={{
+                    fontSize: 8,
+                    color: liquidGlassTokens.neon.error,
+                    animation: 'pulse 1s infinite',
+                  }}
+                />
+              }
+              label={`${queueStats.failed} error${queueStats.failed !== 1 ? 's' : ''}`}
+              size="small"
+              sx={{
+                background: `${liquidGlassTokens.neon.error}15`,
+                border: `1px solid ${liquidGlassTokens.neon.error}50`,
+                color: liquidGlassTokens.neon.error,
+                fontSize: '12px',
+                fontWeight: 600,
+                height: 28,
+                cursor: 'pointer',
+                '&:hover': {
+                  background: `${liquidGlassTokens.neon.error}25`,
+                },
+                '& .MuiChip-icon': {
+                  marginLeft: '8px',
+                },
+              }}
+            />
+          </Tooltip>
+        )}
+
         {/* Queue Status Pill (read-only indicator) */}
         {(queueStats.pending > 0 || queueStats.uploading > 0) && (
           <Tooltip title={`${queueStats.uploading} uploading, ${queueStats.pending} pending`}>
@@ -464,7 +514,7 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
                 <StatusDotIcon
                   sx={{
                     fontSize: 8,
-                    color: liquidGlassTokens.neon.cyan,
+                    color: queueStats.failed > 0 ? liquidGlassTokens.neon.amber : liquidGlassTokens.neon.cyan,
                     animation: queueStats.uploading > 0 ? 'pulse 1.5s infinite' : 'none',
                   }}
                 />
@@ -472,9 +522,9 @@ const HealthPulseBar: React.FC<HealthPulseBarProps> = ({
               label={`${queueStats.uploading} / ${queueStats.pending}`}
               size="small"
               sx={{
-                background: `${liquidGlassTokens.neon.cyan}10`,
-                border: `1px solid ${liquidGlassTokens.neon.cyan}30`,
-                color: liquidGlassTokens.neon.cyan,
+                background: queueStats.failed > 0 ? `${liquidGlassTokens.neon.amber}10` : `${liquidGlassTokens.neon.cyan}10`,
+                border: queueStats.failed > 0 ? `1px solid ${liquidGlassTokens.neon.amber}40` : `1px solid ${liquidGlassTokens.neon.cyan}30`,
+                color: queueStats.failed > 0 ? liquidGlassTokens.neon.amber : liquidGlassTokens.neon.cyan,
                 fontSize: '12px',
                 fontWeight: 500,
                 height: 28,

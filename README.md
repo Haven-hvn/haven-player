@@ -49,7 +49,7 @@ Built-in visual language model (VLM) processing analyzes your videos:
 - Searchable metadata
 
 ### 🔄 Catalog Restore & Sync
-Your video catalog (metadata, analysis, access controls) can be synchronized across devices. Lose your machine? Restore your entire library catalog from backup. The encrypted video files can be retrieved separately using their content identifiers.
+Sync your catalog across devices and restore your library from backup anywhere. Your library is kept completely private by encrypting content identifiers, ensuring zero metadata leakage.
 
 ### 📊 Spatial Operations Dashboard
 Visual interface showing:

@@ -55,7 +55,6 @@ Sync your catalog across devices and restore your library from backup anywhere. 
 Visual interface showing:
 - Active recording operations
 - Plugin health and status
-- Storage utilization
 - Processing queue
 
 ## Architecture

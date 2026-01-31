@@ -442,5 +442,3 @@ export function useLayoutMode(): UseLayoutModeReturn {
     setGridDensity,
   };
 }
-
-export default useLayoutMode;

@@ -31,7 +31,7 @@ export { default as DetailPanel } from './DetailPanel';
 export { default as OperationQueueTray } from './OperationQueueTray';
 
 // Pipeline Stage Indicator
-export { default as PipelineStageIndicator } from './PipelineStageIndicator';
+export { PipelineStageIndicator } from './PipelineStageIndicator';
 
 // DePIN Components
 export { default as RewardsTooltip } from './RewardsTooltip';

@@ -320,5 +320,3 @@ export const StagePill: React.FC<StagePillProps> = ({
     </Tooltip>
   );
 };
-
-export default PipelineStageIndicator;

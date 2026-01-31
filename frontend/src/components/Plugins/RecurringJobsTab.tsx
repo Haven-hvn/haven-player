@@ -510,5 +510,3 @@ export const RecurringJobsTab: React.FC<RecurringJobsTabProps> = ({ pluginName, 
     </Box>
   );
 };
-
-export default RecurringJobsTab;

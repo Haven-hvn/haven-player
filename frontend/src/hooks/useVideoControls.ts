@@ -902,5 +902,3 @@ export const useVideoControls = (
     isRecovering: isRecoveringRef.current,
   };
 };
-
-export default useVideoControls;

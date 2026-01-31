@@ -7,9 +7,8 @@ A modern video analysis application with Electron + FastAPI architecture. Haven 
 ### Main Application Interface
 
 Sleek Dark-themed video analysis dash
+<img width="1920" height="988" alt="main" src="https://github.com/user-attachments/assets/c4e6d7a9-3317-4374-a816-c5f5050e8a1b" />
 
-![Screenshot 2025-06-21 040505](https://github.com/user-attachments/assets/f3a1857a-affc-4331-a67f-5fb2600a402b)
-board with sidebar navigation_
 
 ### Video Analysis Progress
 
@@ -17,13 +16,11 @@ Real-time progress visualization
 
 ![Screenshot 2025-06-21 040642](https://github.com/user-attachments/assets/40c6eade-4392-4fd9-95f0-e9e27e475032)
 
-### Configuration Modal
+### Plugin support
 
-AI model configuration and settings interface
+Various plugins available
 
-![Screenshot 2025-06-21 040603](https://github.com/user-attachments/assets/623791a0-95d8-4eba-b122-e29efb48dc0f)
-![Screenshot 2025-06-21 040548](https://github.com/user-attachments/assets/ea0745f9-3738-4a7e-9c8a-786867a7cad2)
-
+<img width="1920" height="988" alt="plugin" src="https://github.com/user-attachments/assets/4e789170-8c50-4c79-b190-8be080a4a9d5" />
 
 ## Architecture
 

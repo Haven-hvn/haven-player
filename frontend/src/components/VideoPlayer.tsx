@@ -351,11 +351,26 @@ const VideoPlayer: React.FC = () => {
       try {
         setLoading(true); setLoadError(null); setPlaybackSource(null); setSourceFallbackAttempts(0);
         const decodedPath = decodeURIComponent(videoPath);
-        const [videosData, timestampsData, gateway] = await Promise.all([videoService.getAll(), videoService.getTimestamps(decodedPath), loadGatewayConfig()]);
-        const videoData = videosData.find((v) => v.path === decodedPath);
+        
+        // First, fetch all videos to find the matching one
+        // The decodedPath could be either a file path OR a source_uri (e.g., YouTube URL)
+        const videosData = await videoService.getAll();
+        const videoData = videosData.find((v) => v.path === decodedPath || v.source_uri === decodedPath);
+        
         if (!videoData) throw new Error('Video not found');
+        
+        // Use the actual video.path (file path) for subsequent API calls
+        // This ensures timestamps and other APIs work correctly
+        const actualVideoPath = videoData.path;
+        
+        // Now fetch timestamps using the actual file path
+        const [timestampsData, gateway] = await Promise.all([
+          videoService.getTimestamps(actualVideoPath),
+          loadGatewayConfig()
+        ]);
+        
         setVideo(videoData); setTimestamps(timestampsData);
-        const source = await resolvePlaybackSource({ videoPath: decodedPath, rootCid: videoData.filecoin_root_cid, gatewayConfig: gateway, checkFileExists: fileExistsViaIpc, isEncrypted: videoData.is_encrypted ?? false, litEncryptionMetadata: videoData.lit_encryption_metadata ?? null });
+        const source = await resolvePlaybackSource({ videoPath: actualVideoPath, rootCid: videoData.filecoin_root_cid, gatewayConfig: gateway, checkFileExists: fileExistsViaIpc, isEncrypted: videoData.is_encrypted ?? false, litEncryptionMetadata: videoData.lit_encryption_metadata ?? null });
         setPlaybackSource(source);
         if (source.type === 'both') setSelectedSource('local');
         else if (source.type === 'local') setSelectedSource('local');

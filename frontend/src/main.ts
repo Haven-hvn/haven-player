@@ -13,6 +13,42 @@ import type { LitEncryptionMetadata } from './services/litService';
 import { getUploadWorker } from './services/uploadWorker';
 import type { UploadWorkerConfig } from './types/plugin';
 
+// Safe logging utility to prevent EPIPE errors during startup
+const safeLog = (...args: unknown[]): void => {
+  try {
+    console.log(...args);
+  } catch (error) {
+    // Ignore EPIPE errors that can occur when stdout/stderr is closed
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'EPIPE') {
+      // Re-throw non-EPIPE errors
+      throw error;
+    }
+  }
+};
+
+const safeError = (...args: unknown[]): void => {
+  try {
+    console.error(...args);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'EPIPE') {
+      throw error;
+    }
+  }
+};
+
+const safeWarn = (...args: unknown[]): void => {
+  try {
+    console.warn(...args);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'EPIPE') {
+      throw error;
+    }
+  }
+};
+
 // Unified IPC handler type definition
 type IPCHandler<T = unknown> = (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => Promise<T>;
 
@@ -43,7 +79,7 @@ function startMemoryMonitoring(): void {
   memoryCheckInterval = setInterval(() => {
     const memoryUsage = process.memoryUsage();
     
-    console.log('📊 Main process memory:', {
+    safeLog('📊 Main process memory:', {
       rss: `${(memoryUsage.rss / 1024 / 1024).toFixed(2)} MB`,
       heapUsed: `${(memoryUsage.heapUsed / 1024 / 1024).toFixed(2)} MB`,
       heapTotal: `${(memoryUsage.heapTotal / 1024 / 1024).toFixed(2)} MB`,
@@ -52,24 +88,24 @@ function startMemoryMonitoring(): void {
 
     // Warn if heap exceeds 200MB when idle
     if (memoryUsage.heapUsed > 200 * 1024 * 1024) {
-      console.warn('⚠️ Main process memory high - heap exceeds 200MB');
+      safeWarn('⚠️ Main process memory high - heap exceeds 200MB');
       
       // Trigger manual GC in development if available
       if (!app.isPackaged && (global as typeof globalThis & { gc?: () => void }).gc) {
-        console.log('🗑️ Running manual GC...');
+        safeLog('🗑️ Running manual GC...');
         (global as typeof globalThis & { gc?: () => void }).gc!();
       }
     }
   }, 60000); // Every minute
   
-  console.log('📊 Memory monitoring started (interval: 60s)');
+  safeLog('📊 Memory monitoring started (interval: 60s)');
 }
 
 function stopMemoryMonitoring(): void {
   if (memoryCheckInterval) {
     clearInterval(memoryCheckInterval);
     memoryCheckInterval = null;
-    console.log('🛑 Memory monitoring stopped');
+    safeLog('🛑 Memory monitoring stopped');
   }
 }
 
@@ -106,14 +142,14 @@ function findPythonExecutable(backendDir: string): { pythonPath: string; venvPat
         : path.join(venvPath, 'bin', pythonName);
       
       if (fs.existsSync(pythonPath)) {
-        console.log(`✅ Found Python in virtual environment: ${pythonPath}`);
+        safeLog(`✅ Found Python in virtual environment: ${pythonPath}`);
         return { pythonPath, venvPath };
       }
     }
   }
   
   // Fall back to system Python
-  console.log(`⚠️ No virtual environment found, using system Python: ${pythonName}`);
+  safeLog(`⚠️ No virtual environment found, using system Python: ${pythonName}`);
   return { pythonPath: pythonName, venvPath: null };
 }
 
@@ -138,10 +174,10 @@ function activateVenvEnvironment(venvPath: string | null, _backendDir: string, b
       env.Path = env.PATH; // Windows uses both PATH and Path
     }
     
-    console.log(`🔧 Activated virtual environment: ${venvPath}`);
-    console.log(`   Added to PATH: ${venvBinPath}`);
+    safeLog(`🔧 Activated virtual environment: ${venvPath}`);
+    safeLog(`   Added to PATH: ${venvBinPath}`);
   } else {
-    console.log(`⚠️ No virtual environment to activate, using system Python`);
+    safeLog(`⚠️ No virtual environment to activate, using system Python`);
   }
   
   return env;
@@ -158,7 +194,7 @@ function spawnBackendProcess(
 
 
   if (app.isPackaged) {
-    console.log('🚀 [Production] Using prepared backend executable');
+    safeLog('🚀 [Production] Using prepared backend executable');
     
     // In production, the backend exe should be located at the root of the app resources
     // (resources/app/haven-backend.exe) or alongside the exe depending on your forge config.
@@ -166,11 +202,11 @@ function spawnBackendProcess(
     const backendExePath = path.join(app.getAppPath(), 'haven-backend.exe');
 
     if (!fs.existsSync(backendExePath)) {
-      console.error(`❌ Backend executable not found at: ${backendExePath}`);
+      safeError(`❌ Backend executable not found at: ${backendExePath}`);
       // Fallback to trying relative path just in case structure differs
       // This handles the case where app.isPackaged is true but structure is weird
     } else {
-      console.log(`✅ Found backend executable at: ${backendExePath}`);
+      safeLog(`✅ Found backend executable at: ${backendExePath}`);
     }
 
     // We use 'spawn' instead of 'exec' for the EXE to better manage the process lifecycle
@@ -182,7 +218,7 @@ function spawnBackendProcess(
     });
 
     childProcess.on('error', (error: Error) => {
-      console.error(`❌ Failed to start backend executable: ${error.message}`);
+      safeError(`❌ Failed to start backend executable: ${error.message}`);
     });
 
     return childProcess;
@@ -196,19 +232,19 @@ function spawnBackendProcess(
   // Activate venv environment (sets PATH, VIRTUAL_ENV, etc.)
   const env = activateVenvEnvironment(venvPath, backendDir, baseEnv);
 
-  console.log(`🐍 Starting backend with Python: ${pythonExecutable}`);
-  console.log(`📁 Backend directory: ${backendDir}`);
-  console.log(`💻 Platform: ${platform()}`);
+  safeLog(`🐍 Starting backend with Python: ${pythonExecutable}`);
+  safeLog(`📁 Backend directory: ${backendDir}`);
+  safeLog(`💻 Platform: ${platform()}`);
   if (venvPath) {
-    console.log(`🔧 Virtual environment: ${venvPath}`);
+    safeLog(`🔧 Virtual environment: ${venvPath}`);
   }
 
   let childProcess: ChildProcess;
 
   if (isWindows) {
     const fullCommand = `start "HavenPlayerBackend" cmd /k ""${pythonExecutable}" ${uvicornArgs.join(' ')}"`;
-    console.log(`📝 Windows command: ${fullCommand}`);
-    console.log(`📁 Working directory: ${backendDir}`);
+    safeLog(`📝 Windows command: ${fullCommand}`);
+    safeLog(`📁 Working directory: ${backendDir}`);
     
     const execProcess = exec(fullCommand, {
       cwd: backendDir,
@@ -216,25 +252,25 @@ function spawnBackendProcess(
       windowsHide: false,
     }, (error: Error | null, stdout: string, stderr: string) => {
       if (error) {
-        console.error(`❌ Failed to start backend process on Windows: ${error.message}`);
-        console.error(` stdout: ${stdout}`);
-        console.error(` stderr: ${stderr}`);
+        safeError(`❌ Failed to start backend process on Windows: ${error.message}`);
+        safeError(` stdout: ${stdout}`);
+        safeError(` stderr: ${stderr}`);
       }
     });
     childProcess = execProcess as ChildProcess;
   } else {
-    console.log(`📝 Command: ${pythonExecutable} ${uvicornArgs.join(' ')}`);
+    safeLog(`📝 Command: ${pythonExecutable} ${uvicornArgs.join(' ')}`);
     childProcess = spawn(pythonExecutable, uvicornArgs, {
       cwd: backendDir,
       env,
       stdio: 'inherit',
     });
     childProcess.on('error', (error: Error) => {
-      console.error(`❌ Failed to start backend process: ${error.message}`);
-      console.error(` Python executable: ${pythonExecutable}`);
-      console.error(` Backend directory: ${backendDir}`);
+      safeError(`❌ Failed to start backend process: ${error.message}`);
+      safeError(` Python executable: ${pythonExecutable}`);
+      safeError(` Backend directory: ${backendDir}`);
       if (venvPath) {
-        console.error(` Virtual environment: ${venvPath}`);
+        safeError(` Virtual environment: ${venvPath}`);
       }
     });
   }
@@ -361,7 +397,7 @@ function readIpfsGatewayConfig(): IpfsGatewayConfig {
       return { baseUrl };
     }
   } catch (error) {
-    console.error('Failed to read IPFS gateway config:', error);
+    safeError('Failed to read IPFS gateway config:', error);
   }
 
   return { baseUrl: DEFAULT_IPFS_GATEWAY };
@@ -375,7 +411,7 @@ function writeIpfsGatewayConfig(config: IpfsGatewayConfig): IpfsGatewayConfig {
   try {
     fs.writeFileSync(configPath, JSON.stringify(payload, null, 2), 'utf-8');
   } catch (error) {
-    console.error('Failed to save IPFS gateway config:', error);
+    safeError('Failed to save IPFS gateway config:', error);
     throw new Error('Unable to persist IPFS gateway configuration');
   }
 
@@ -439,7 +475,7 @@ async function handleAddMagnetUrl(_event: Electron.IpcMainInvokeEvent, magnetUrl
 
     return await response.json();
   } catch (error) {
-    console.error('Failed to handle magnet URL:', error);
+    safeError('Failed to handle magnet URL:', error);
     throw error;
   }
 }
@@ -488,16 +524,23 @@ async function handleGetFilecoinConfig(): Promise<{ privateKey: string; rpcUrl?:
           dataSetId: config.dataSetId,
           encryptionEnabled: config.encryptionEnabled ?? false,
         };
-        console.log(`[FilecoinConfig] Loaded config from ${configPath} - encryptionEnabled: ${loadedConfig.encryptionEnabled}`);
+        try {
+          safeLog(`[FilecoinConfig] Loaded config from ${configPath} - encryptionEnabled: ${loadedConfig.encryptionEnabled}`);
+        } catch (logError) {
+          // Ignore EPIPE errors that can occur when stderr is closed
+          if ((logError as NodeJS.ErrnoException).code !== 'EPIPE') {
+            throw logError;
+          }
+        }
         return loadedConfig;
       } catch (error) {
-        console.error('Failed to decrypt private key:', error);
+        safeError('Failed to decrypt private key:', error);
         return null;
       }
     }
     return null;
   } catch (error) {
-    console.error('Failed to load Filecoin config:', error);
+    safeError('Failed to load Filecoin config:', error);
     return null;
   }
 }
@@ -553,7 +596,7 @@ async function handleUploadToFilecoin(
     }
     
     // Log the full error for debugging but throw a clean message to the user
-    console.error('[Filecoin Upload] Failed:', {
+    safeError('[Filecoin Upload] Failed:', {
       videoPath,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
@@ -580,7 +623,7 @@ async function handleSaveFilecoinConfig(
       const encrypted = safeStorage.encryptString(config.privateKey);
       encryptedPrivateKey = encrypted.toString('base64');
     } catch (error) {
-      console.error('Failed to encrypt private key:', error);
+      safeError('Failed to encrypt private key:', error);
       throw new Error('Failed to encrypt private key');
     }
     
@@ -593,13 +636,13 @@ async function handleSaveFilecoinConfig(
       encryptionEnabled,
     };
     
-    console.log(`[FilecoinConfig] Saving config - encryptionEnabled: ${encryptionEnabled}`);
+    safeLog(`[FilecoinConfig] Saving config - encryptionEnabled: ${encryptionEnabled}`);
     
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
-    console.log(`[FilecoinConfig] ✅ Config saved to ${configPath}`);
+    safeLog(`[FilecoinConfig] ✅ Config saved to ${configPath}`);
     return { success: true };
   } catch (error) {
-    console.error('Failed to save Filecoin config:', error);
+    safeError('Failed to save Filecoin config:', error);
     throw new Error(`Failed to save config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -630,7 +673,7 @@ async function handleGetArkivConfig(): Promise<{
     
     return { rpcUrl, enabled, syncEnabled, expirationWeeks };
   } catch (error) {
-    console.error('Failed to load Arkiv config:', error);
+    safeError('Failed to load Arkiv config:', error);
     return {
       rpcUrl: 'https://mendoza.hoodi.arkiv.network/rpc',
       enabled: false,
@@ -656,7 +699,7 @@ async function handleSaveArkivConfig(
     fs.writeFileSync(configPath, JSON.stringify(dataToSave, null, 2), 'utf-8');
     return { success: true };
   } catch (error) {
-    console.error('Failed to save Arkiv config:', error);
+    safeError('Failed to save Arkiv config:', error);
     throw new Error(`Failed to save Arkiv config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -681,7 +724,7 @@ async function handleGetWalletAddress(): Promise<{ wallet_address: string } | nu
       wallet_address: wallet.address,
     };
   } catch (error) {
-    console.error('Failed to get wallet address:', error);
+    safeError('Failed to get wallet address:', error);
     return null;
   }
 }
@@ -721,7 +764,7 @@ async function handleValidateEvmConfig(
       rpc_url: finalRpcUrl,
     };
   } catch (error) {
-    console.error('Failed to validate EVM config:', error);
+    safeError('Failed to validate EVM config:', error);
     throw new Error(`Failed to validate EVM config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -778,7 +821,7 @@ async function handleCheckEvmBalance(
       rpc_url: finalRpcUrl,
     };
   } catch (error) {
-    console.error('Failed to check EVM balance:', error);
+    safeError('Failed to check EVM balance:', error);
     throw new Error(`Failed to check wallet balance: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -809,7 +852,7 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
       arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
     }
   } catch (err) {
-    console.error('Failed to load Arkiv config for backend:', err);
+    safeError('Failed to load Arkiv config for backend:', err);
   }
 
   const backendDir = path.join(app.getAppPath(), '..', 'backend');
@@ -830,14 +873,14 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
   backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
 
   backendProcess.on('exit', (code) => {
-    console.log(`Backend process exited with code ${code}`);
+    safeLog(`Backend process exited with code ${code}`);
     backendProcess = null;
   });
 
   // Wait for backend to be ready, then notify renderer and start upload worker
   setTimeout(async () => {
     if (backendProcess && !backendProcess.killed) {
-      console.log('⏳ Waiting for backend to be ready...');
+      safeLog('⏳ Waiting for backend to be ready...');
       
       // Wait for backend health check to pass
       let backendReady = false;
@@ -849,17 +892,17 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
           const response = await fetch('http://localhost:8000/api/health');
           if (response.ok) {
             backendReady = true;
-            console.log('✅ Backend health check passed');
+            safeLog('✅ Backend health check passed');
           }
         } catch {
           attempts++;
-          console.log(`⏳ Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
+          safeLog(`⏳ Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
       
       if (!backendReady) {
-        console.warn('⚠️ Backend health check failed after max attempts');
+        safeWarn('⚠️ Backend health check failed after max attempts');
       }
       
       // Notify all renderer windows that backend is ready
@@ -871,9 +914,9 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
       try {
         const uploadWorker = getUploadWorker();
         await uploadWorker.start({ enabled: true, pollInterval: 15000 });
-        console.log('✅ Upload worker started automatically with backend');
+        safeLog('✅ Upload worker started automatically with backend');
       } catch (error) {
-        console.error('❌ Failed to start upload worker automatically:', error);
+        safeError('❌ Failed to start upload worker automatically:', error);
       }
     }
   }, 1000); // Start checking after 1 second
@@ -945,7 +988,7 @@ async function handleRestartBackend(): Promise<{ pid: number | undefined; messag
       arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
     }
   } catch (err) {
-    console.error('Failed to load Arkiv config for backend restart:', err);
+    safeError('Failed to load Arkiv config for backend restart:', err);
   }
 
   const backendDir = path.join(app.getAppPath(), '..', 'backend');
@@ -966,14 +1009,14 @@ async function handleRestartBackend(): Promise<{ pid: number | undefined; messag
   backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
 
   backendProcess.on('exit', (code) => {
-    console.log(`Backend process exited with code ${code}`);
+    safeLog(`Backend process exited with code ${code}`);
     backendProcess = null;
   });
 
   // Wait for backend to be ready, then notify frontend and start upload worker
   setTimeout(async () => {
     if (backendProcess && !backendProcess.killed) {
-      console.log('⏳ Restart: Waiting for backend to be ready...');
+      safeLog('⏳ Restart: Waiting for backend to be ready...');
       
       // Wait for backend health check to pass
       let backendReady = false;
@@ -985,18 +1028,18 @@ async function handleRestartBackend(): Promise<{ pid: number | undefined; messag
           const response = await fetch('http://localhost:8000/api/health');
           if (response.ok) {
             backendReady = true;
-            console.log('✅ Restart: Backend health check passed');
+            safeLog('✅ Restart: Backend health check passed');
           }
         } catch {
           attempts++;
-          console.log(`⏳ Restart: Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
+          safeLog(`⏳ Restart: Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
       
       // Notify frontend
       if (mainWindow && !mainWindow.isDestroyed()) {
-        console.log('📢 Notifying frontend that backend is ready (restart)');
+        safeLog('📢 Notifying frontend that backend is ready (restart)');
         mainWindow.webContents.send('backend-ready');
       }
       
@@ -1005,9 +1048,9 @@ async function handleRestartBackend(): Promise<{ pid: number | undefined; messag
         try {
           const uploadWorker = getUploadWorker();
           await uploadWorker.start({ enabled: true, pollInterval: 15000 });
-          console.log('✅ Upload worker started automatically (restart)');
+          safeLog('✅ Upload worker started automatically (restart)');
         } catch (error) {
-          console.error('❌ Failed to start upload worker automatically (restart):', error);
+          safeError('❌ Failed to start upload worker automatically (restart):', error);
         }
       }
     }
@@ -1047,7 +1090,7 @@ async function handleDecryptTextWithLit(
     const decryptedText = await decryptTextWithLit(ciphertext, metadata, config.privateKey);
     return decryptedText;
   } catch (error) {
-    console.error('Failed to decrypt text with Lit:', error);
+    safeError('Failed to decrypt text with Lit:', error);
     throw new Error(`Failed to decrypt text: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -1084,7 +1127,7 @@ async function handleUploadWorkerStart(
         : 'Upload worker started (disabled - Filecoin not configured)',
     };
   } catch (error) {
-    console.error('Failed to start upload worker:', error);
+    safeError('Failed to start upload worker:', error);
     throw new Error(`Failed to start upload worker: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -1104,7 +1147,7 @@ async function handleUploadWorkerStop(): Promise<{
       message: 'Upload worker stopped',
     };
   } catch (error) {
-    console.error('Failed to stop upload worker:', error);
+    safeError('Failed to stop upload worker:', error);
     throw new Error(`Failed to stop upload worker: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -1141,7 +1184,7 @@ async function handleUploadWorkerGetStatus(): Promise<{
       errorCounts: detailedStatus.errorCounts,
     };
   } catch (error) {
-    console.error('Failed to get upload worker status:', error);
+    safeError('Failed to get upload worker status:', error);
     throw new Error(`Failed to get upload worker status: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -1169,7 +1212,7 @@ async function handleUploadWorkerUpdateConfig(
       message: 'Upload worker config updated',
     };
   } catch (error) {
-    console.error('Failed to update upload worker config:', error);
+    safeError('Failed to update upload worker config:', error);
     throw new Error(`Failed to update upload worker config: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -1231,7 +1274,7 @@ function registerIPCHandlers(): void {
     ipcHandlers.set(channel, handler as any);
   }
   
-  console.log(`✅ Registered ${ipcHandlers.size} IPC handlers`);
+  safeLog(`✅ Registered ${ipcHandlers.size} IPC handlers`);
 }
 
 function cleanupIPCHandlers(): void {
@@ -1239,10 +1282,10 @@ function cleanupIPCHandlers(): void {
     try {
       ipcMain.removeHandler(channel);
     } catch (error) {
-      console.warn(`Failed to remove handler for ${channel}:`, error);
+      safeWarn(`Failed to remove handler for ${channel}:`, error);
     }
   }
-  console.log(`🧹 Cleaned up ${ipcHandlers.size} IPC handlers`);
+  safeLog(`🧹 Cleaned up ${ipcHandlers.size} IPC handlers`);
   ipcHandlers.clear();
 }
 
@@ -1273,11 +1316,11 @@ function createWindow() {
   const indexPath = path.join(__dirname, 'index.html');
   
   if (isDev) {
-    console.log('Loading from development server: http://localhost:3000');
+    safeLog('Loading from development server: http://localhost:3000');
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools();
   } else {
-    console.log('Loading from local file:', indexPath);
+    safeLog('Loading from local file:', indexPath);
     mainWindow.loadFile(indexPath);
   }
   
@@ -1311,7 +1354,7 @@ async function tryStartBackend(): Promise<void> {
   try {
     const cfg = await loadDecryptedFilecoinConfig();
     if (!cfg || !cfg.privateKey) {
-      console.log('📋 Backend not auto-started: Filecoin config not yet configured.');
+      safeLog('📋 Backend not auto-started: Filecoin config not yet configured.');
       return;
     }
 
@@ -1331,7 +1374,7 @@ async function tryStartBackend(): Promise<void> {
         arkivExpirationWeeks = arkivConfig.expirationWeeks ?? 4;
       }
     } catch (err) {
-      console.error('Failed to load Arkiv config for auto-start:', err);
+      safeError('Failed to load Arkiv config for auto-start:', err);
     }
 
     const backendDir = path.join(app.getAppPath(), '..', 'backend');
@@ -1349,19 +1392,19 @@ async function tryStartBackend(): Promise<void> {
       RING_DTLS_FIX: '1',
     };
 
-    console.log('🚀 Auto-starting backend with configured environment variables...');
+    safeLog('🚀 Auto-starting backend with configured environment variables...');
     const { pythonPath, venvPath } = findPythonExecutable(backendDir);
     backendProcess = spawnBackendProcess(pythonPath, venvPath, backendDir, env);
 
     backendProcess.on('exit', (code) => {
-      console.log(`Backend process exited with code ${code}`);
+      safeLog(`Backend process exited with code ${code}`);
       backendProcess = null;
     });
 
     // Wait for backend to be ready, then notify frontend and start upload worker
     setTimeout(async () => {
       if (backendProcess && !backendProcess.killed) {
-        console.log('⏳ Auto-start: Waiting for backend to be ready...');
+        safeLog('⏳ Auto-start: Waiting for backend to be ready...');
         
         // Wait for backend health check to pass
         let backendReady = false;
@@ -1373,18 +1416,18 @@ async function tryStartBackend(): Promise<void> {
             const response = await fetch('http://localhost:8000/api/health');
             if (response.ok) {
               backendReady = true;
-              console.log('✅ Auto-start: Backend health check passed');
+              safeLog('✅ Auto-start: Backend health check passed');
             }
           } catch {
             attempts++;
-            console.log(`⏳ Auto-start: Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
+            safeLog(`⏳ Auto-start: Backend not ready yet, attempt ${attempts}/${maxAttempts}...`);
             await new Promise(resolve => setTimeout(resolve, 1000));
           }
         }
         
         // Notify all renderer windows that backend is ready
         if (mainWindow && !mainWindow.isDestroyed()) {
-          console.log('📢 Notifying frontend that backend is ready (auto-start)');
+          safeLog('📢 Notifying frontend that backend is ready (auto-start)');
           mainWindow.webContents.send('backend-ready');
         }
         
@@ -1393,19 +1436,19 @@ async function tryStartBackend(): Promise<void> {
           try {
             const uploadWorker = getUploadWorker();
             await uploadWorker.start({ enabled: true, pollInterval: 15000 });
-            console.log('✅ Upload worker started automatically with backend (auto-start)');
+            safeLog('✅ Upload worker started automatically with backend (auto-start)');
           } catch (error) {
-            console.error('❌ Failed to start upload worker automatically (auto-start):', error);
+            safeError('❌ Failed to start upload worker automatically (auto-start):', error);
           }
         } else {
-          console.warn('⚠️ Backend not ready, upload worker not started');
+          safeWarn('⚠️ Backend not ready, upload worker not started');
         }
       }
     }, 1000); // Start checking after 1 second
 
-    console.log(`✅ Backend auto-started with PID: ${backendProcess.pid}`);
+    safeLog(`✅ Backend auto-started with PID: ${backendProcess.pid}`);
   } catch (err) {
-    console.error('Failed to auto-start backend:', err);
+    safeError('Failed to auto-start backend:', err);
   }
 }
 
@@ -1432,10 +1475,10 @@ app.on('window-all-closed', () => {
     const worker = getUploadWorker();
     if (worker.isWorkerRunning()) {
       worker.stop();
-      console.log('🛑 Upload worker stopped on window close');
+      safeLog('🛑 Upload worker stopped on window close');
     }
   } catch (error) {
-    console.warn('Failed to stop upload worker:', error);
+    safeWarn('Failed to stop upload worker:', error);
   }
   
   if (process.platform !== 'darwin') {
@@ -1462,7 +1505,7 @@ app.on('will-quit', () => {
   // Stop backend process
   if (backendProcess && !backendProcess.killed) {
     backendProcess.kill();
-    console.log('🛑 Backend process killed on quit');
+    safeLog('🛑 Backend process killed on quit');
   }
   
   // Stop upload worker

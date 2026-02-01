@@ -44,7 +44,7 @@ import {
   Warning as WarningIcon,
 } from '@mui/icons-material';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
-import { CircuitSubstrateSimple } from '@/components/LiquidGlass';
+
 import type { Source, SourceType, StateFilter } from '@/types/transformation';
 import type { PluginHealth } from '@/types/plugin';
 
@@ -149,13 +149,6 @@ const SourceNavigator: React.FC<SourceNavigatorProps> = ({
         zIndex: 20, // Above canvas when expanded
       }}
     >
-      {/* Circuit substrate background */}
-      <CircuitSubstrateSimple
-        color={liquidGlassTokens.neon.cyan}
-        opacity={0.06}
-        animated={true}
-      />
-
       {/* Vertical circuit line accent */}
       <Box
         sx={{

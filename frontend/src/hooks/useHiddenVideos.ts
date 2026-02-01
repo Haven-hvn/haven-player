@@ -79,5 +79,3 @@ export const useHiddenVideos = (): UseHiddenVideosReturn => {
     clearHidden,
   };
 };
-
-export default useHiddenVideos;

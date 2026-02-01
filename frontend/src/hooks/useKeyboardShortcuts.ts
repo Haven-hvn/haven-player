@@ -235,5 +235,3 @@ export const useKeyboardShortcuts = (
   };
 };
 
-export default useKeyboardShortcuts;
-

@@ -204,5 +204,3 @@ export const useThrottledRAF = (
     };
   }, [enabled, shouldThrottle]);
 };
-
-export default useBackgroundThrottling;

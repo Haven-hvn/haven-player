@@ -607,13 +607,3 @@ export const AnalysisProgressBar: React.FC<AnalysisProgressBarProps> = ({
     </div>
   );
 };
-
-export default {
-  useVideoItemLogic,
-  VideoItemContextMenu,
-  CopyNotification,
-  AnalysisProgressBar,
-  formatDuration,
-  generateAnalysisSegments,
-  getStatusConfig,
-};

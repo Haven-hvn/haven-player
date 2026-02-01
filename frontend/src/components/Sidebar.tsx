@@ -12,7 +12,7 @@ import {
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsNavigation } from "@/context/SettingsNavigationContext";
 import { liquidGlassTokens, glowEffects } from "@/styles/liquidGlassTheme";
-import { CircuitSubstrateSimple, CircuitLine } from "@/components/LiquidGlass";
+import { CircuitLine } from "@/components/LiquidGlass";
 
 interface SidebarProps {
   onRefresh?: () => void;
@@ -78,13 +78,6 @@ const Sidebar: React.FC<SidebarProps> = (props: SidebarProps) => {
         overflow: "hidden",
       }}
     >
-      {/* Circuit substrate background */}
-      <CircuitSubstrateSimple 
-        color={liquidGlassTokens.neon.cyan} 
-        opacity={0.08} 
-        animated={true}
-      />
-      
       {/* Vertical circuit line accent */}
       <Box
         sx={{

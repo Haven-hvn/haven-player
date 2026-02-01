@@ -58,6 +58,14 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
   const animationRef = useRef<number | undefined>(undefined);
   const lastFrameTimeRef = useRef<number>(0);
   const phaseRef = useRef<number>(0);
+  
+  // Cycle timing: run for 3 seconds, pause for 57 seconds (60 second total cycle)
+  const CYCLE_PERIOD = 60000; // 60 seconds
+  const ACTIVE_DURATION = 3000; // 3 seconds
+  const [isCycleActive, setIsCycleActive] = useState(true);
+  const cycleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cycleStartRef = useRef<number>(Date.now());
+  
   // Note: IntersectionObserver removed - it fails when element is behind 
   // transparent layers. We rely on useBackgroundThrottling for pause/resume.
   
@@ -132,6 +140,42 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
   // Use background throttling to pause animation when app is hidden
   const { shouldThrottle, isVisible } = useBackgroundThrottling();
   
+  // Manage the 60-second animation cycle (3s active, 57s paused)
+  useEffect(() => {
+    const runCycle = () => {
+      const now = Date.now();
+      const elapsed = now - cycleStartRef.current;
+      const cyclePosition = elapsed % CYCLE_PERIOD;
+      
+      // Active for first 3 seconds of each 60-second cycle
+      const shouldBeActive = cyclePosition < ACTIVE_DURATION;
+      
+      setIsCycleActive(shouldBeActive);
+      
+      // Schedule next check at the next transition point
+      let nextCheckDelay: number;
+      if (shouldBeActive) {
+        // Currently active, schedule check for when active period ends
+        nextCheckDelay = ACTIVE_DURATION - cyclePosition;
+      } else {
+        // Currently paused, schedule check for when next cycle starts
+        nextCheckDelay = CYCLE_PERIOD - cyclePosition;
+      }
+      
+      cycleTimeoutRef.current = setTimeout(runCycle, nextCheckDelay);
+    };
+    
+    // Start the cycle
+    cycleStartRef.current = Date.now();
+    runCycle();
+    
+    return () => {
+      if (cycleTimeoutRef.current) {
+        clearTimeout(cycleTimeoutRef.current);
+      }
+    };
+  }, []);
+  
   // Cache DOM elements once on mount - avoids querySelectorAll per frame
   useEffect(() => {
     if (!svgRef.current) return;
@@ -147,6 +191,12 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
   
   // Optimized animation - only updates every 100ms (10fps), batches DOM writes
   const animate = useCallback((timestamp: number) => {
+    // Stop animation if cycle is no longer active
+    if (!isCycleActive) {
+      animationRef.current = undefined;
+      return;
+    }
+    
     // Frame rate limiting - 10fps max
     if (timestamp - lastFrameTimeRef.current < ANIMATION_FRAME_INTERVAL) {
       animationRef.current = requestAnimationFrame(animate);
@@ -175,26 +225,16 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
     });
     
     animationRef.current = requestAnimationFrame(animate);
-  }, [networkActive]);
+  }, [networkActive, isCycleActive]);
   
   // Pulse animation effect - pauses when app is in background
   useEffect(() => {
-    // Debug logging (remove in production)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('CircuitSubstrate animation check:', { 
-        animated, 
-        shouldThrottle, 
-        isVisible, 
-        hasSvg: !!svgRef.current 
-      });
-    }
-    
-    // Only animate when enabled and visible
+    // Only animate when enabled, visible, and in the active portion of cycle
     // Note: shouldThrottle can have false positives on initial mount, so we only
     // use it to PAUSE an existing animation, not prevent starting one
     const isRunning = animationRef.current !== undefined;
-    const shouldAnimate = animated && isVisible && svgMounted;
-    const shouldStop = !animated || !isVisible || (isRunning && shouldThrottle);
+    const shouldAnimate = animated && isVisible && svgMounted && isCycleActive;
+    const shouldStop = !animated || !isVisible || (isRunning && shouldThrottle) || !isCycleActive;
     
     if (shouldStop) {
       // Cancel any existing animation when conditions not met
@@ -218,7 +258,7 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [animated, shouldThrottle, isVisible, animate, svgMounted]);
+  }, [animated, shouldThrottle, isVisible, animate, svgMounted, isCycleActive]);
   
   return (
     <Box
@@ -306,7 +346,8 @@ const CircuitSubstrate: React.FC<CircuitSubstrateProps> = ({
         </g>
         
         {/* Animated flowing overlay paths - only 20% of paths to reduce CPU */}
-        {animated && (
+        {/* Only show when animated AND cycle is active */}
+        {animated && isCycleActive && (
           <g 
             className="circuit-flow-group"
             style={{ 

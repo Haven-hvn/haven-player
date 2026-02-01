@@ -183,5 +183,3 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
   };
 };
 
-export default useLitDecryption;
-

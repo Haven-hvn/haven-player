@@ -514,5 +514,3 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
     error: videosError,
   };
 }
-
-export default useTransformationPipeline;

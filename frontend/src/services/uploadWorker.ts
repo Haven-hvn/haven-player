@@ -10,7 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadVideoToFilecoin } from './filecoinService';
+import { uploadVideoToFilecoin, validateFileForFilecoinUpload } from './filecoinService';
 import type { FilecoinConfig } from '../types/filecoin';
 import type { UploadWorkerConfig } from '../types/plugin';
 
@@ -275,6 +275,50 @@ export class UploadWorker {
       console.log('[UploadWorker] Reading video file...');
       const file = this.readFileAsFile(queueEntry.video_path);
       console.log(`[UploadWorker] File read: ${file.name}, size: ${file.size} bytes`);
+
+      // Validate file size before upload
+      updateStage('file-read');
+      console.log('[UploadWorker] Validating file size for Filecoin upload...');
+      const sizeValidation = validateFileForFilecoinUpload(file, config.encryptionEnabled);
+      
+      if (!sizeValidation.valid) {
+        console.error('[UploadWorker] Size validation failed:', sizeValidation.errorMessage);
+        
+        // Track as size validation error
+        this.trackError(
+          queueEntry.id,
+          queueEntry.video_path,
+          'size_validation',
+          sizeValidation.userMessage || sizeValidation.errorMessage || 'File size validation failed'
+        );
+        
+        // Update status to failed with size validation error
+        try {
+          console.log(`[UploadWorker] Updating queue status to failed for id=${queueEntry.id} (size_validation)`);
+          await fetch(
+            `http://localhost:8000/api/upload-queue/${queueEntry.id}/status`,
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                status: 'failed',
+                error: sizeValidation.userMessage || sizeValidation.errorMessage,
+                error_stage: 'size_validation',
+              }),
+            }
+          );
+        } catch (updateError) {
+          console.error('[UploadWorker] Failed to update failed status:', updateError);
+        }
+        
+        return false;
+      }
+      
+      console.log('[UploadWorker] Size validation passed:', {
+        originalSize: sizeValidation.originalSize,
+        projectedSize: sizeValidation.projectedSize,
+        maxAllowed: sizeValidation.maxAllowed,
+      });
 
       // Perform upload (reusing existing logic)
       updateStage(config.encryptionEnabled ? 'encryption' : 'upload');

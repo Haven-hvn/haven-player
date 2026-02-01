@@ -30,6 +30,166 @@ import { mkdtemp, readFile as readFileFromFs, rm, writeFile } from 'fs/promises'
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+// ============================================
+// Filecoin Upload Size Limits
+// ============================================
+const MAX_UPLOAD_SIZE = 1_065_353_216; // ~1 GiB (hard limit from Synapse SDK)
+const MIN_UPLOAD_SIZE = 127; // Minimum size for PieceCIDv2 calculation
+const ENCRYPTION_OVERHEAD_FACTOR = 1.35; // Base64 encoding overhead (~35%)
+const CAR_OVERHEAD_FACTOR = 1.01; // CAR file overhead (~1%)
+const SAFETY_MARGIN = 1.05; // Additional 5% safety margin
+
+export type SizeValidationReason = 'TOO_SMALL' | 'TOO_LARGE' | 'ENCRYPTION_WOULD_EXCEED' | 'CAR_WOULD_EXCEED' | null;
+
+export interface FilecoinSizeValidationResult {
+  valid: boolean;
+  reason: SizeValidationReason;
+  originalSize: number;
+  projectedSize: number;
+  maxAllowed: number;
+  encryptionEnabled: boolean;
+  errorMessage?: string;
+  userMessage?: string;
+}
+
+/**
+ * Format bytes to human-readable string
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/**
+ * Calculate the effective maximum file size based on encryption setting
+ */
+export function getMaxFileSize(encryptionEnabled: boolean = false): number {
+  const totalOverhead = encryptionEnabled
+    ? ENCRYPTION_OVERHEAD_FACTOR * CAR_OVERHEAD_FACTOR * SAFETY_MARGIN
+    : CAR_OVERHEAD_FACTOR * SAFETY_MARGIN;
+  
+  return Math.floor(MAX_UPLOAD_SIZE / totalOverhead);
+}
+
+/**
+ * Calculate projected upload size after encryption and CAR creation
+ */
+export function calculateProjectedSize(
+  fileSize: number,
+  encryptionEnabled: boolean = false
+): number {
+  let projectedSize = fileSize;
+  
+  // Account for encryption overhead
+  if (encryptionEnabled) {
+    projectedSize = Math.ceil(fileSize * ENCRYPTION_OVERHEAD_FACTOR);
+  }
+  
+  // Account for CAR overhead
+  projectedSize = Math.ceil(projectedSize * CAR_OVERHEAD_FACTOR);
+  
+  // Account for safety margin
+  projectedSize = Math.ceil(projectedSize * SAFETY_MARGIN);
+  
+  return projectedSize;
+}
+
+/**
+ * Validate file size for Filecoin upload
+ * 
+ * Performs pre-flight size validation to ensure the file won't exceed
+ * the Synapse SDK's hard upload size limit after encryption and CAR creation.
+ * 
+ * @param fileSize - Original file size in bytes
+ * @param encryptionEnabled - Whether Lit Protocol encryption is enabled
+ * @returns Validation result with detailed information
+ */
+export function validateFilecoinUploadSize(
+  fileSize: number,
+  encryptionEnabled: boolean = false
+): FilecoinSizeValidationResult {
+  // Check minimum size (for PieceCIDv2 calculation)
+  if (fileSize < MIN_UPLOAD_SIZE) {
+    const errorMessage = `File size (${fileSize} bytes) is below minimum required size (${MIN_UPLOAD_SIZE} bytes) for Filecoin upload`;
+    return {
+      valid: false,
+      reason: 'TOO_SMALL',
+      originalSize: fileSize,
+      projectedSize: fileSize,
+      maxAllowed: MIN_UPLOAD_SIZE,
+      encryptionEnabled,
+      errorMessage,
+      userMessage: `File is too small. Minimum size is ${MIN_UPLOAD_SIZE} bytes.`,
+    };
+  }
+
+  // Calculate projected size after encryption and CAR creation
+  const projectedSize = calculateProjectedSize(fileSize, encryptionEnabled);
+  
+  // Check against maximum upload size
+  if (projectedSize > MAX_UPLOAD_SIZE) {
+    const maxOriginalSize = getMaxFileSize(encryptionEnabled);
+    const maxUnencrypted = getMaxFileSize(false);
+    
+    let errorMessage: string;
+    let userMessage: string;
+    let reason: SizeValidationReason;
+    
+    if (encryptionEnabled) {
+      errorMessage = `File size (${formatBytes(fileSize)}) would exceed ${formatBytes(MAX_UPLOAD_SIZE)} limit after encryption. ` +
+        `Projected size: ${formatBytes(projectedSize)}. ` +
+        `Maximum allowed with encryption: ${formatBytes(maxOriginalSize)}. ` +
+        `Try disabling encryption (max unencrypted: ${formatBytes(maxUnencrypted)}) or compressing the file.`;
+      userMessage = `File (${formatBytes(fileSize)}) would exceed ${formatBytes(MAX_UPLOAD_SIZE)} limit after encryption. ` +
+        `Try disabling encryption or compressing the file.`;
+      reason = 'ENCRYPTION_WOULD_EXCEED';
+    } else {
+      errorMessage = `File size (${formatBytes(fileSize)}) exceeds maximum upload size of ${formatBytes(maxOriginalSize)}. ` +
+        `Projected CAR size: ${formatBytes(projectedSize)}. ` +
+        `Please compress or split the file.`;
+      userMessage = `File (${formatBytes(fileSize)}) exceeds ${formatBytes(maxOriginalSize)} maximum upload size. ` +
+        `Please compress or split the file.`;
+      reason = 'TOO_LARGE';
+    }
+    
+    return {
+      valid: false,
+      reason,
+      originalSize: fileSize,
+      projectedSize,
+      maxAllowed: maxOriginalSize,
+      encryptionEnabled,
+      errorMessage,
+      userMessage,
+    };
+  }
+
+  // Validation passed
+  return {
+    valid: true,
+    reason: null,
+    originalSize: fileSize,
+    projectedSize,
+    maxAllowed: getMaxFileSize(encryptionEnabled),
+    encryptionEnabled,
+  };
+}
+
+/**
+ * Validate a File object for Filecoin upload
+ * 
+ * Convenience wrapper that extracts size from File object
+ */
+export function validateFileForFilecoinUpload(
+  file: File,
+  encryptionEnabled: boolean = false
+): FilecoinSizeValidationResult {
+  return validateFilecoinUploadSize(file.size, encryptionEnabled);
+}
+
 // Simple logger for browser environment that matches filecoin-pin's Logger interface
 // LogFn expects (msg: string, ...args: unknown[]) signature
 // But filecoin-pin may call it with objects, so we handle both cases
@@ -367,6 +527,37 @@ export async function uploadVideoToFilecoin(
   let progressInterval: NodeJS.Timeout | undefined;
 
   try {
+    // Step 0: Validate file size before any processing
+    // This is critical to avoid wasting time on files that will fail due to size limits
+    onProgress?.({
+      stage: 'preparing',
+      progress: 1,
+      message: 'Validating file size...',
+    });
+
+    const sizeValidation = validateFileForFilecoinUpload(file, config.encryptionEnabled);
+    
+    if (!sizeValidation.valid) {
+      logger.error('Size validation failed', {
+        reason: sizeValidation.reason,
+        originalSize: sizeValidation.originalSize,
+        projectedSize: sizeValidation.projectedSize,
+        maxAllowed: sizeValidation.maxAllowed,
+      });
+      
+      const sizeError = new Error(sizeValidation.userMessage || sizeValidation.errorMessage || 'File size validation failed');
+      (sizeError as Error & { code?: string; type?: string; sizeValidation?: FilecoinSizeValidationResult }).code = 'SIZE_VALIDATION_FAILED';
+      (sizeError as Error & { code?: string; type?: string; sizeValidation?: FilecoinSizeValidationResult }).type = 'size_validation_error';
+      (sizeError as Error & { code?: string; type?: string; sizeValidation?: FilecoinSizeValidationResult }).sizeValidation = sizeValidation;
+      throw sizeError;
+    }
+
+    logger.info('Size validation passed', {
+      originalSize: sizeValidation.originalSize,
+      projectedSize: sizeValidation.projectedSize,
+      maxAllowed: sizeValidation.maxAllowed,
+    });
+
     // Step 1: Prepare file (encrypt if enabled)
     onProgress?.({
       stage: 'preparing',

@@ -149,6 +149,14 @@ module.exports = [
           test: /\.(png|jpe?g|gif|svg)$/i,
           type: 'asset/resource',
         },
+        // Fix ESM/CJS interop issues with base-x and bs58
+        // These packages export ESM that webpack doesn't handle correctly
+        {
+          test: /node_modules[/\\](base-x|bs58)[/\\].*\.(js|cjs|mjs)$/,
+          resolve: {
+            fullySpecified: false,
+          },
+        },
       ],
     },
     resolve: {
@@ -157,14 +165,19 @@ module.exports = [
         '@': path.resolve(__dirname, 'src'),
         'process/browser': require.resolve('process/browser.js'),
         'pino-pretty': false,
+        // Force CommonJS versions to fix ESM/CJS interop
+        'base-x': path.resolve(__dirname, 'node_modules/base-x/src/cjs/index.cjs'),
+        'bs58': path.resolve(__dirname, 'node_modules/bs58/src/cjs/index.cjs'),
       },
       fallback: {
         "buffer": require.resolve("buffer"),
         "process": require.resolve("process/browser.js"),
         "process/browser": require.resolve("process/browser.js"),
       },
-      conditionNames: ['import', 'require', 'default', 'browser', 'module', 'node'],
-      mainFields: ['browser', 'module', 'main'],
+      // Prioritize CommonJS versions for packages with ESM/CJS interop issues
+      // BUT put 'browser' first so packages like pino use their browser-compatible versions
+      conditionNames: ['browser', 'require', 'import', 'default', 'module', 'node'],
+      mainFields: ['browser', 'main', 'module'],
       fullySpecified: false,
     },
     output: {

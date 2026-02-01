@@ -14,10 +14,20 @@ import {
   CardContent,
   Chip,
   Grid,
+  Collapse,
+  IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  Divider,
 } from '@mui/material';
 import {
   CloudUpload as CloudUploadIcon,
   Info as InfoIcon,
+  Error as ErrorIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
+  Storage as StorageIcon,
 } from '@mui/icons-material';
 import { useUploadWorker } from '@/hooks/useUploadWorker';
 import { uploadCoordinatorConfigService } from '@/services/uploadCoordinatorConfigService';
@@ -34,6 +44,7 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
     error,
   } = useUploadWorker();
   const [backendConfig, setBackendConfig] = useState<UploadCoordinatorConfig | null>(null);
+  const [showErrors, setShowErrors] = useState(false);
 
   // Load backend config on mount
   useEffect(() => {
@@ -57,6 +68,67 @@ const UploadWorkerConfig: React.FC<UploadWorkerConfigProps> = ({ filecoinConfigu
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           Upload worker error: {error}
+        </Alert>
+      )}
+
+      {/* Size Validation Errors */}
+      {status?.recentErrors && status.recentErrors.length > 0 && (
+        <Alert 
+          severity="warning" 
+          sx={{ mb: 2 }}
+          icon={<ErrorIcon />}
+          action={
+            <IconButton
+              size="small"
+              color="inherit"
+              onClick={() => setShowErrors(!showErrors)}
+            >
+              {showErrors ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          }
+        >
+          <Box>
+            <Typography variant="body2" fontWeight={600}>
+              Recent Upload Errors ({status.recentErrors.length})
+            </Typography>
+            {status.errorCounts['size_validation'] > 0 && (
+              <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                <StorageIcon sx={{ fontSize: 12, mr: 0.5, verticalAlign: 'middle' }} />
+                {status.errorCounts['size_validation']} file(s) rejected due to size limits
+              </Typography>
+            )}
+            
+            <Collapse in={showErrors}>
+              <List dense sx={{ mt: 1, pl: 0 }}>
+                {status.recentErrors.slice(0, 5).map((err, index) => (
+                  <React.Fragment key={err.id}>
+                    <ListItem sx={{ px: 0, py: 0.5 }}>
+                      <ListItemText
+                        primary={
+                          <Typography variant="caption" fontWeight={500}>
+                            {err.videoPath.split('/').pop()}
+                          </Typography>
+                        }
+                        secondary={
+                          <Typography variant="caption" color="text.secondary">
+                            {err.stage === 'size_validation' ? 'Size limit exceeded' : err.stage}: {err.message.substring(0, 100)}{err.message.length > 100 ? '...' : ''}
+                          </Typography>
+                        }
+                      />
+                    </ListItem>
+                    {index < Math.min(status.recentErrors.length, 5) - 1 && (
+                      <Divider component="li" sx={{ my: 0.5 }} />
+                    )}
+                  </React.Fragment>
+                ))}
+                {status.recentErrors.length > 5 && (
+                  <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
+                    ... and {status.recentErrors.length - 5} more
+                  </Typography>
+                )}
+              </List>
+            </Collapse>
+          </Box>
         </Alert>
       )}
 

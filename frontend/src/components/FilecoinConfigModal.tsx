@@ -22,6 +22,7 @@ import {
   Lock as LockIcon,
 } from "@mui/icons-material";
 import type { FilecoinConfig } from "@/types/filecoin";
+import { formatBytes, getMaxFileSize } from "@/services/filecoinService";
 
 const { ipcRenderer } = require("electron");
 
@@ -45,6 +46,11 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
     dataSetId: undefined,
     encryptionEnabled: false,
   });
+
+  // Calculate max upload sizes based on encryption setting
+  const maxSizeUnencrypted = getMaxFileSize(false);
+  const maxSizeEncrypted = getMaxFileSize(true);
+  const currentMaxSize = getMaxFileSize(config.encryptionEnabled);
 
   useEffect(() => {
     if (open) {
@@ -372,6 +378,52 @@ const FilecoinConfigModal: React.FC<FilecoinConfigModalProps> = ({
                   ? "Videos will be encrypted with Lit Protocol before uploading to Filecoin. Only your wallet can decrypt them."
                   : "Videos will be uploaded to Filecoin without encryption."}
               </Typography>
+            </Box>
+
+            {/* Upload Size Limits Info */}
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 1,
+                p: 2,
+                backgroundColor: "#FFF8E1",
+                borderRadius: "8px",
+                border: "1px solid #FFE082",
+              }}
+            >
+              <Typography
+                sx={{
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "#F57C00",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                }}
+              >
+                <CloudUploadIcon sx={{ fontSize: 16 }} />
+                Upload Size Limits
+              </Typography>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                <Typography sx={{ fontSize: "12px", color: "#000000" }}>
+                  <strong>Maximum file size:</strong>{" "}
+                  <span style={{ color: config.encryptionEnabled ? "#F57C00" : "#2E7D32", fontWeight: 600 }}>
+                    {formatBytes(currentMaxSize)}
+                  </span>
+                  {config.encryptionEnabled && (
+                    <span style={{ color: "#6B6B6B" }}>
+                      {" "}(encryption reduces limit)
+                    </span>
+                  )}
+                </Typography>
+                <Typography sx={{ fontSize: "11px", color: "#6B6B6B" }}>
+                  Without encryption: {formatBytes(maxSizeUnencrypted)} | With encryption: {formatBytes(maxSizeEncrypted)}
+                </Typography>
+                <Typography sx={{ fontSize: "11px", color: "#6B6B6B", mt: 0.5 }}>
+                  Files larger than the limit will be rejected. Consider disabling encryption or compressing large files.
+                </Typography>
+              </Box>
             </Box>
 
             <Alert

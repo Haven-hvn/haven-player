@@ -16,6 +16,11 @@ from app.models.upload_queue import UploadQueue
 from app.models.video import Video
 from app.models.segment_metadata import SegmentMetadata
 from app.services.upload_queue_service import enqueue_video_for_upload
+from app.services.filecoin_size_limits import (
+    validate_filecoin_upload_size,
+    FilecoinSizeLimits,
+    SizeValidationReason,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -26,6 +31,7 @@ class UploadQueueCreate(BaseModel):
     video_path: str
     priority: Optional[int] = 0
     source: str = 'plugin'
+    encryption_enabled: Optional[bool] = False  # For size validation
 
 
 class UploadQueueUpdate(BaseModel):
@@ -107,6 +113,39 @@ class UploadQueueResponse(BaseModel):
         return dt.isoformat() if dt else None
 
 
+def _check_file_size_for_upload(
+    db: Session,
+    video_path: str,
+    encryption_enabled: bool = False
+) -> tuple[bool, Optional[str], Optional[int]]:
+    """
+    Check if video file size is within upload limits.
+    
+    Args:
+        db: Database session
+        video_path: Path to the video file
+        encryption_enabled: Whether encryption is enabled
+        
+    Returns:
+        Tuple of (is_valid, error_message, file_size)
+    """
+    # Get video from database to check file size
+    video = db.query(Video).filter(Video.path == video_path).first()
+    
+    if not video or not video.file_size:
+        # Video not in DB or no file_size recorded - skip validation
+        # The upload worker will validate later
+        return True, None, None
+    
+    # Validate file size
+    validation = validate_filecoin_upload_size(video.file_size, encryption_enabled)
+    
+    if not validation.valid:
+        return False, validation.user_message or validation.error_message, video.file_size
+    
+    return True, None, video.file_size
+
+
 @router.post("/upload-queue", response_model=UploadQueueResponse, status_code=201)
 async def add_to_upload_queue(
     queue_data: UploadQueueCreate,
@@ -118,6 +157,9 @@ async def add_to_upload_queue(
     This endpoint is called after a plugin successfully downloads a video.
     The video will be automatically uploaded to FileCoin when the UploadWorker
     processes the queue.
+    
+    Performs pre-flight size validation to reject files that would exceed
+    the Synapse SDK's upload size limit.
 
     Args:
         queue_data: Upload queue creation request
@@ -127,9 +169,57 @@ async def add_to_upload_queue(
         Created upload queue entry
 
     Raises:
-        HTTPException: If video already in queue or database error occurs
+        HTTPException: If video already in queue, size validation fails, or database error occurs
     """
     try:
+        # Pre-flight size validation
+        is_valid, error_message, file_size = _check_file_size_for_upload(
+            db, queue_data.video_path, queue_data.encryption_enabled
+        )
+        
+        if not is_valid:
+            logger.warning(
+                f"File size validation failed for {queue_data.video_path}: "
+                f"size={file_size}, error={error_message}"
+            )
+            
+            # Create a failed queue entry for tracking
+            queue_entry = UploadQueue(
+                video_path=queue_data.video_path,
+                priority=queue_data.priority,
+                source=queue_data.source,
+                status='failed',
+                error_message=error_message,
+            )
+            # Mark as failed in the failure sink
+            queue_entry.mark_as_failed(
+                stage='size_validation',
+                reason=error_message or 'File size validation failed'
+            )
+            # Skip VLM analysis since upload failed
+            queue_entry.vlm_analysis_status = 'skipped'
+            queue_entry.vlm_analysis_error = f"Upload failed: {error_message}"
+            
+            db.add(queue_entry)
+            db.commit()
+            db.refresh(queue_entry)
+            
+            logger.info(f"Created failed queue entry for oversized file: {queue_data.video_path}")
+            
+            # Return the failed entry but with a 413 Payload Too Large status
+            # This informs the client that the file was rejected due to size
+            response = UploadQueueResponse.model_validate(queue_entry)
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    'message': error_message,
+                    'file_size': file_size,
+                    'max_allowed_unencrypted': FilecoinSizeLimits.get_max_file_size(False),
+                    'max_allowed_encrypted': FilecoinSizeLimits.get_max_file_size(True),
+                    'queue_entry': response.model_dump(),
+                }
+            )
+
         result = enqueue_video_for_upload(
             db=db,
             video_path=queue_data.video_path,

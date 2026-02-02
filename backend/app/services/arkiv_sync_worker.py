@@ -5,6 +5,7 @@ This module provides a worker that processes Arkiv sync queue entries.
 It handles the synchronization of video timestamps with the Arkiv blockchain.
 """
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Optional, TypedDict
 import asyncio
@@ -268,19 +269,21 @@ class ArkivSyncWorker:
 
 
 async def run_arkiv_sync_worker(
-    api_base_url: str = "http://localhost:8000",
-    polling_interval: int = 30
+    api_base_url: str = "http://localhost:8000"
 ) -> None:
     """
     Background task that continuously processes Arkiv sync queue.
 
     Polls for pending sync jobs and processes them one at a time.
+    Uses random intervals (30s to 300s) to naturally stagger from other workers.
 
     Args:
         api_base_url: Base URL for the backend API
-        polling_interval: Seconds to wait between poll attempts
     """
-    logger.info("🚀 Starting Arkiv sync worker")
+    # Random startup delay (0-60s) to stagger from other workers
+    startup_delay = random.uniform(0, 60)
+    logger.info(f"🚀 Starting Arkiv sync worker (staggered startup: {startup_delay:.1f}s)")
+    await asyncio.sleep(startup_delay)
 
     async with ArkivSyncWorker(api_base_url) as worker:
         while True:
@@ -291,6 +294,9 @@ async def run_arkiv_sync_worker(
                 if processed > 0:
                     logger.info(f"✅ Processed {processed} Arkiv sync job(s)")
 
+                # Random interval between 30s and 300s to naturally stagger workers
+                polling_interval = random.uniform(30, 300)
+                logger.debug(f"Next Arkiv sync poll in {polling_interval:.1f}s")
                 await asyncio.sleep(polling_interval)
 
             except Exception as e:

@@ -913,7 +913,7 @@ async function handleStartBackend(): Promise<{ pid: number | undefined; message:
       // Start upload worker after backend is ready
       try {
         const uploadWorker = getUploadWorker();
-        await uploadWorker.start({ enabled: true, pollInterval: 15000 });
+        await uploadWorker.start({ enabled: true, pollInterval: 300000 });
         safeLog('✅ Upload worker started automatically with backend');
       } catch (error) {
         safeError('❌ Failed to start upload worker automatically:', error);
@@ -1047,7 +1047,7 @@ async function handleRestartBackend(): Promise<{ pid: number | undefined; messag
       if (backendReady) {
         try {
           const uploadWorker = getUploadWorker();
-          await uploadWorker.start({ enabled: true, pollInterval: 15000 });
+          await uploadWorker.start({ enabled: true, pollInterval: 300000 });
           safeLog('✅ Upload worker started automatically (restart)');
         } catch (error) {
           safeError('❌ Failed to start upload worker automatically (restart):', error);
@@ -1435,7 +1435,7 @@ async function tryStartBackend(): Promise<void> {
         if (backendReady) {
           try {
             const uploadWorker = getUploadWorker();
-            await uploadWorker.start({ enabled: true, pollInterval: 15000 });
+            await uploadWorker.start({ enabled: true, pollInterval: 300000 });
             safeLog('✅ Upload worker started automatically with backend (auto-start)');
           } catch (error) {
             safeError('❌ Failed to start upload worker automatically (auto-start):', error);

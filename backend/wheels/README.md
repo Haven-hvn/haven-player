@@ -1,56 +1,54 @@
-# Bundled Wheels
+# Bundled Dependencies
 
-This directory contains pre-built binary wheels for dependencies that don't have official Python 3.14 support yet.
+This directory contains pre-built binary wheels and system packages for dependencies that require specific compilation or platform support.
 
 ## libtorrent 2.0.11 for Python 3.14
 
-**File:** `libtorrent-2.0.11-cp314-cp314-linux_x86_64.whl`
+**Files:**
+- `libtorrent-2.0.11-cp314-cp314-linux_x86_64.whl` (Python Wheel)
+- `libboost-python1.83.0_1.83.0-2.1ubuntu3.1_amd64.deb` (System Dependency)
+- `libtorrent-rasterbar2.0t64_2.0.10-1.1build2_amd64.deb` (System Dependency)
+- `setup_ld_path.sh` (Environment Configuration)
+- `libs/` (Directory containing local shared libraries)
 
-**Platform:** Linux x86_64 only
-
+**Platform:** Linux x86_64 only  
 **Python Version:** 3.14+
 
-**Build Details:**
-- Built from libtorrent source (commit with Python 3.14 fixes)
-- Boost 1.83.0 compiled with Python 3.14 support
-- Patches applied to replace deprecated `distutils` with `sysconfig`:
-  - `bindings/python/CMakeLists.txt` (line 98-99)
-  - `bindings/python/Jamfile` (line 322)
+### Installation Steps
 
-**Tested:** All 94 unit tests pass with Python 3.14.2
+To ensure the `libtorrent` package works correctly within your virtual environment, the system library `libtorrent-rasterbar` must be accessible. The bundled wheel depends on the shared object `libtorrent-rasterbar.so.2.0`.
 
-### How It Works
+1. **Install System Dependencies:**
+   Install the provided Boost and libtorrent system packages to ensure the shared libraries are available on your system.
+   ```bash
+   sudo dpkg -i wheels/libboost-python1.83.0_1.83.0-2.1ubuntu3.1_amd64.deb
+   sudo dpkg -i wheels/libtorrent-rasterbar2.0t64_2.0.10-1.1build2_amd64.deb
+   ```
 
-The `requirements.txt` uses environment markers to select the appropriate wheel:
+2. **Configure Environment:**
+   Run the provided setup script to configure your library path. This ensures the Python environment can locate the shared libraries.
+   ```bash
+   source wheels/setup_ld_path.sh
+   ```
 
-```txt
-./wheels/libtorrent-2.0.11-cp314-cp314-linux_x86_64.whl; python_version >= "3.14" and platform_system == "Linux" and platform_machine == "x86_64"
-libtorrent==2.0.11; python_version < "3.14"
-```
+3. **Install Python Package:**
+   Install the Python wheel into your virtual environment.
+   ```bash
+   pip install wheels/libtorrent-2.0.11-cp314-cp314-linux_x86_64.whl
+   ```
 
-This means:
-- On Python 3.14+ Linux x86_64: Uses the bundled wheel
-- On older Python versions: Uses official PyPI package
-- On other platforms (macOS, Windows, ARM): Falls back to PyPI (may not work until official support)
+### Source Details
 
-### Rebuilding the Wheel
+The Python wheel is built from the HavenCTO/libtorrent fork, which includes necessary fixes for Python 3.14 compatibility.
 
-If you need to rebuild for a different Python 3.14 patch version or platform:
+**Build Configuration:**
+- **Boost:** 1.83.0 compiled with Python 3.14 support.
+- **Patches:** Replaces deprecated `distutils` with `sysconfig`.
+  - As per [PEP 632](https://www.python.org/dev/peps/pep-0632/), the `distutils` module is deprecated and removed from the Python standard library in favor of `setuptools`.
+  - Modified `bindings/python/CMakeLists.txt` (line 98-99).
+  - Modified `bindings/python/Jamfile` (line 322).
 
-```bash
-# See /home/tower/Documents/workspace/libtorrent/PYTHON_314_TEST_REPORT.md
-# for detailed build instructions
-```
+### Rebuilding
 
-### Future Migration
-
-Once libtorrent officially supports Python 3.14 on PyPI:
-1. Remove the bundled wheel from this directory
-2. Update requirements.txt to use `libtorrent>=2.0.11` for all Python versions
-3. Remove the platform-specific markers
-
-### Troubleshooting
-
-**ImportError: cannot import name 'libtorrent'**: Make sure you're using Python 3.14+ on Linux x86_64.
-
-**Wheel tag mismatch**: If you get a "not supported wheel" error, the wheel may need to be rebuilt for your exact Python version. Contact the maintainer.
+If you need to rebuild the wheel or the system packages, refer to the source repository:
+https://github.com/HavenCTO/libtorrent

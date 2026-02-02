@@ -1,14 +1,17 @@
 /**
- * Lit Protocol Service - Lit SDK v8 (Naga) Implementation
+ * Lit Protocol Service - Lit SDK v8 (Naga) Implementation with Hybrid Encryption
  * 
- * This service provides encryption/decryption capabilities using Lit Protocol.
- * Migrated from SDK v7 (Datil) to SDK v8 (Naga).
+ * This service provides encryption/decryption capabilities using Lit Protocol
+ * with a hybrid approach (AES-256-GCM + Lit BLS-IBE).
  * 
- * Key changes in v8:
- * - Uses createLitClient instead of LitNodeClient class
- * - Uses AuthManager with viem accounts instead of manual session signatures
- * - Network changed from datil-dev to nagaDev
- * - Encryption/decryption APIs updated for unified access control conditions
+ * Architecture:
+ * - AES-256-GCM for local file encryption (hardware accelerated)
+ * - Lit BLS-IBE for encrypting the AES key only (32 bytes)
+ * 
+ * Benefits:
+ * - Can encrypt/decrypt files of any size efficiently
+ * - Only 32 bytes (the AES key) is sent to Lit nodes
+ * - Uses standard Web Crypto API (hardware accelerated)
  */
 
 import { createLitClient, type LitClient } from '@lit-protocol/lit-client';
@@ -21,15 +24,60 @@ import type { PKPData } from '@lit-protocol/schemas';
 import { ethers } from 'ethers';
 import { createViemAccount } from './viemAdapter';
 
+// Re-export hybrid encryption functions and types
+export {
+  // Core hybrid encryption functions
+  hybridEncryptFile,
+  hybridDecryptFile,
+  // AES utilities (for advanced use cases)
+  generateAESKey,
+  generateIV,
+  aesEncrypt,
+  aesDecrypt,
+  // Metadata utilities
+  serializeHybridMetadata,
+  deserializeHybridMetadata,
+  isHybridMetadata,
+  // Performance utilities
+  getEncryptedSize,
+  getOriginalSize,
+  estimateProcessingTime,
+  // Types
+  type HybridEncryptionMetadata,
+  type HybridEncryptionResult,
+  type EvmBasicAccessControlCondition,
+} from './hybridCrypto';
+
 /**
  * Check if localStorage is available (browser environment)
  * Returns false in Node.js/Electron main process
+ * 
+ * Lit Protocol's storagePlugins.localStorage() does additional validation
+ * beyond basic localStorage availability, so we need to be more strict here.
  */
 function isLocalStorageAvailable(): boolean {
   try {
+    // Check if localStorage is undefined
     if (typeof localStorage === 'undefined') {
       return false;
     }
+    
+    // Detect Electron environment - Electron has localStorage but Lit SDK
+    // storagePlugins.localStorage() will fail due to additional checks
+    const isElectron = (
+      typeof process !== 'undefined' && 
+      process.versions != null && 
+      process.versions.electron != null
+    );
+    if (isElectron) {
+      return false;
+    }
+    
+    // Detect Node.js environment (no window object)
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    
     // Test actual functionality
     const testKey = '__lit_storage_test__';
     localStorage.setItem(testKey, 'test');
@@ -206,17 +254,11 @@ interface UnifiedAccessControlCondition {
   };
 }
 
-// Lit encryption metadata stored alongside the encrypted file
-// NOTE: ciphertext is NEVER stored in metadata - it's only stored on IPFS/Filecoin
-// The encrypted data itself must be downloaded from IPFS/Filecoin for decryption
-export interface LitEncryptionMetadata {
-  // ciphertext is NOT included - it's stored on IPFS/Filecoin only
-  dataToEncryptHash: string;
-  accessControlConditions: EvmBasicAccessControlCondition[];
-  chain: string;
-  // Version field for future compatibility checks
-  version?: 'v8';
-}
+// Import HybridEncryptionMetadata from hybridCrypto for use in this file
+import type { HybridEncryptionMetadata } from './hybridCrypto';
+
+// Export the HybridEncryptionMetadata as LitEncryptionMetadata for consistency
+export type LitEncryptionMetadata = HybridEncryptionMetadata;
 
 // Lit client and auth manager singletons
 let litClient: LitClient | null = null;
@@ -242,46 +284,87 @@ export function getWalletAddressFromPrivateKey(privateKey: string): string {
   return wallet.address;
 }
 
+// Promise to track initialization in progress (prevents race conditions)
+let initPromise: Promise<LitClient> | null = null;
+
 /**
  * Initialize or get existing Lit client
  * Uses Naga-dev network (free development network) - Lit SDK v8
+ * 
+ * This function handles Electron environments where localStorage may not be available
+ * by falling back to memory storage automatically.
  */
 export async function initLitClient(): Promise<LitClient> {
-  if (litClient) {
+  // Return existing client if already initialized
+  if (litClient && authManager) {
     return litClient;
   }
 
-  // Create Lit client for v8
-  litClient = await createLitClient({
-    network: nagaDev,
-  });
-
-  // Initialize AuthManager for session management
-  // Use localStorage in browser, memory storage in Node.js/Electron main process
-  const appName = 'haven-player';
-  const networkName = 'naga-dev';
-  const useLocalStorage = isLocalStorageAvailable();
-  
-  if (useLocalStorage) {
-    authManager = createAuthManager({
-      storage: storagePlugins.localStorage({
-        appName,
-        networkName,
-      }),
-    });
-    console.log('[Lit] Using localStorage for session caching');
-  } else {
-    // Fallback to memory storage for Node.js/Electron main process
-    // Session signatures will be recreated on each upload, but that's fine
-    // since we have the private key available
-    authManager = createAuthManager({
-      storage: createMemoryStorage(appName, networkName),
-    });
-    console.log('[Lit] Using memory storage for session caching (Node.js environment)');
+  // If initialization is already in progress, return the existing promise
+  // This prevents race conditions when multiple components try to initialize simultaneously
+  if (initPromise) {
+    return initPromise;
   }
 
-  console.log('[Lit] Connected to Lit network (naga-dev) - SDK v8');
-  return litClient;
+  // Start initialization
+  initPromise = (async (): Promise<LitClient> => {
+    try {
+      // Create Lit client for v8
+      litClient = await createLitClient({
+        network: nagaDev,
+      });
+
+      // Initialize AuthManager for session management
+      // Use localStorage in browser, memory storage in Node.js/Electron main process
+      const appName = 'haven-player';
+      const networkName = 'naga-dev';
+      
+      // Try to use localStorage first, but wrap in try-catch because the Lit SDK
+      // storagePlugins.localStorage() can throw errors in Electron environments
+      // even when isLocalStorageAvailable() returns true
+      let useMemoryStorage = true;
+      
+      if (isLocalStorageAvailable()) {
+        try {
+          authManager = createAuthManager({
+            storage: storagePlugins.localStorage({
+              appName,
+              networkName,
+            }),
+          });
+          useMemoryStorage = false;
+          console.log('[Lit] Using localStorage for session caching');
+        } catch (storageError) {
+          console.warn('[Lit] localStorage plugin failed, falling back to memory storage:', storageError);
+          useMemoryStorage = true;
+        }
+      }
+      
+      if (useMemoryStorage) {
+        // Fallback to memory storage for Node.js/Electron main process
+        // Session signatures will be recreated on each upload, but that's fine
+        // since we have the private key available
+        authManager = createAuthManager({
+          storage: createMemoryStorage(appName, networkName),
+        });
+        console.log('[Lit] Using memory storage for session caching (Node.js/Electron environment)');
+      }
+
+      console.log('[Lit] Connected to Lit network (naga-dev) - SDK v8');
+      return litClient;
+    } catch (error) {
+      // Reset state on error so next call can retry
+      litClient = null;
+      authManager = null;
+      console.error('[Lit] Failed to initialize Lit client:', error);
+      throw error;
+    } finally {
+      // Clear the promise so future calls can retry if needed
+      initPromise = null;
+    }
+  })();
+
+  return initPromise;
 }
 
 /**
@@ -289,9 +372,14 @@ export async function initLitClient(): Promise<LitClient> {
  */
 export async function disconnectLitClient(): Promise<void> {
   if (litClient) {
-    await litClient.disconnect();
+    try {
+      await litClient.disconnect();
+    } catch (error) {
+      console.warn('[Lit] Error during disconnect:', error);
+    }
     litClient = null;
     authManager = null;
+    initPromise = null;
     console.log('[Lit] Disconnected from Lit network');
   }
 }
@@ -331,12 +419,23 @@ function toUnifiedAccessControlConditions(
 }
 
 /**
+ * Convert Uint8Array to ArrayBuffer safely for Blob constructor
+ */
+function toArrayBuffer(data: Uint8Array): ArrayBuffer {
+  // Create a new ArrayBuffer and copy the data to avoid SharedArrayBuffer issues
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  return buffer;
+}
+
+/**
  * Get authentication context for Lit Protocol operations (v8)
  * Replaces the old session signatures approach with AuthManager
  */
 async function getAuthContext(
   privateKey: string,
   chain: string = 'ethereum'
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   if (!litClient || !authManager) {
     throw new Error('Lit client not initialized. Call initLitClient() first.');
@@ -366,120 +465,17 @@ async function getAuthContext(
 }
 
 /**
- * Convert Uint8Array to ArrayBuffer safely for Blob constructor
+ * Encrypt a file using hybrid encryption (AES-256-GCM + Lit Protocol)
+ * 
+ * This is the primary encryption function for file storage.
+ * Uses hybrid encryption for efficient handling of large files.
+ * 
+ * @param fileBuffer - File data to encrypt
+ * @param privateKey - Private key for access control
+ * @param onProgress - Optional progress callback
+ * @returns Encrypted data and metadata
  */
-function toArrayBuffer(data: Uint8Array): ArrayBuffer {
-  // Create a new ArrayBuffer and copy the data to avoid SharedArrayBuffer issues
-  const buffer = new ArrayBuffer(data.byteLength);
-  new Uint8Array(buffer).set(data);
-  return buffer;
-}
-
-/**
- * Decrypt a video file using Lit Protocol
- * Requires the private key of the wallet that encrypted
- * NOTE: encryptedData must be provided - ciphertext is never stored in metadata
- */
-export async function decryptVideo(
-  encryptedData: Uint8Array,
-  metadata: LitEncryptionMetadata,
-  privateKey: string,
-  onProgress?: (message: string) => void
-): Promise<Blob> {
-  onProgress?.('Initializing Lit Protocol...');
-
-  const client = await initLitClient();
-
-  onProgress?.('Authenticating wallet...');
-
-  // Get authentication context for decryption (v8)
-  const authContext = await getAuthContext(privateKey, metadata.chain);
-
-  onProgress?.('Decrypting video...');
-
-  // Decode encryptedData from IPFS (UTF-8 bytes) back to base64 string
-  // Lit Protocol returns base64 string, which we encode as UTF-8 bytes for IPFS storage
-  let ciphertext: string;
-  if (!encryptedData || encryptedData.length === 0) {
-    throw new Error(
-      'No encrypted data provided. Cannot decrypt video. ' +
-      'The video may be missing the encrypted file on Filecoin/IPFS.'
-    );
-  }
-
-  try {
-    // Decode UTF-8 bytes back to base64 string
-    ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
-  } catch (decodeError) {
-    throw new Error(
-      `Failed to decode encrypted data: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. ` +
-      'The encrypted file may be corrupted or incomplete.'
-    );
-  }
-
-  // Convert access control conditions to unified format (v8)
-  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(
-    metadata.accessControlConditions
-  );
-
-  // Decrypt the file using v8 API
-  let decrypted: Uint8Array;
-  try {
-    const decryptResponse = await client.decrypt({
-      data: {
-        ciphertext,
-        dataToEncryptHash: metadata.dataToEncryptHash,
-      },
-      unifiedAccessControlConditions,
-      authContext, // v8: use authContext instead of sessionSigs
-      chain: metadata.chain,
-    });
-    decrypted = decryptResponse.decryptedData;
-  } catch (error) {
-    // Better error handling for decrypt errors
-    if (error instanceof DOMException) {
-      console.error('[Lit] DOMException during decryption:', error.message, error);
-      throw new Error(
-        `Decryption failed: ${error.message}. ` +
-        'Please verify your access control conditions and wallet configuration.'
-      );
-    }
-    if (error instanceof Error) {
-      // Check for specific Lit Protocol errors
-      if (error.message.includes('auth') || error.message.includes('authentication')) {
-        console.error('[Lit] Authentication error:', error.message, error);
-        throw new Error(
-          `Authentication failed: ${error.message}. ` +
-          'Please verify your wallet private key matches the encryption key.'
-        );
-      }
-      if (error.message.includes('unified access control')) {
-        console.error('[Lit] Access control error:', error.message, error);
-        throw new Error(
-          'Invalid encryption format. This video may need to be re-uploaded with the current SDK version.'
-        );
-      }
-      throw error;
-    }
-    throw new Error('Unknown error during decryption');
-  }
-
-  onProgress?.('Decryption complete');
-
-  // Convert decrypted data to blob using safe buffer conversion
-  const decryptedBuffer = toArrayBuffer(decrypted);
-  const decryptedBlob = new Blob([decryptedBuffer], {
-    type: 'video/mp4',
-  });
-
-  return decryptedBlob;
-}
-
-/**
- * Encrypt a file and return both the encrypted blob and metadata as separate items
- * This is useful for storing the encrypted file on Filecoin and metadata in database
- */
-export async function encryptFileForStorage(
+export async function encryptFile(
   fileBuffer: ArrayBuffer,
   privateKey: string,
   onProgress?: (message: string) => void
@@ -487,57 +483,47 @@ export async function encryptFileForStorage(
   encryptedData: Uint8Array;
   metadata: LitEncryptionMetadata;
 }> {
-  onProgress?.('Initializing Lit Protocol...');
-
-  const client = await initLitClient();
-  const walletAddress = getWalletAddressFromPrivateKey(privateKey);
-
-  onProgress?.('Creating access control conditions...');
-
-  const accessControlConditions = createOwnerOnlyAccessControlConditions(walletAddress);
-
-  // Convert to unified access control conditions format for v8
-  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(accessControlConditions);
-
-  onProgress?.('Encrypting file...');
-
-  const fileUint8Array = new Uint8Array(fileBuffer);
-
-  // Encrypt the file using v8 API
-  const encrypted = await client.encrypt({
-    dataToEncrypt: fileUint8Array,
-    unifiedAccessControlConditions,
-    chain: 'ethereum',
-  });
-
-  onProgress?.('Encryption complete');
-
-  // Lit Protocol returns ciphertext as a base64 string
-  // Encode it as UTF-8 bytes for IPFS storage
-  const encoder = new TextEncoder();
-  const encryptedData = encoder.encode(encrypted.ciphertext);
-
-  // Verify the encoding is reversible (sanity check)
-  const decoder = new TextDecoder('utf-8');
-  const decodedBack = decoder.decode(encryptedData);
-  if (decodedBack !== encrypted.ciphertext) {
-    throw new Error('Failed to properly encode ciphertext for storage - encoding/decoding mismatch');
-  }
-
-  // Don't store ciphertext in metadata - it's only stored on IPFS
-  // This ensures consistent behavior: always decode from IPFS, not from metadata
-  const metadata: LitEncryptionMetadata = {
-    // ciphertext is intentionally omitted - it's stored on IPFS only
-    dataToEncryptHash: encrypted.dataToEncryptHash,
-    accessControlConditions,
-    chain: 'ethereum',
-    version: 'v8', // Mark as v8 for future compatibility
-  };
-
+  const { hybridEncryptFile } = await import('./hybridCrypto');
+  const result = await hybridEncryptFile(
+    fileBuffer,
+    privateKey,
+    'ethereum',
+    onProgress
+  );
+  
   return {
+    encryptedData: result.encryptedFile,
+    metadata: result.metadata,
+  };
+}
+
+/**
+ * Decrypt a file using hybrid encryption (Lit Protocol + AES-256-GCM)
+ * 
+ * This is the primary decryption function for file storage.
+ * 
+ * @param encryptedData - Encrypted file data
+ * @param metadata - Hybrid encryption metadata
+ * @param privateKey - Private key for authentication
+ * @param mimeType - MIME type for the decrypted file
+ * @param onProgress - Optional progress callback
+ * @returns Decrypted file as Blob
+ */
+export async function decryptFile(
+  encryptedData: Uint8Array,
+  metadata: LitEncryptionMetadata,
+  privateKey: string,
+  mimeType: string = 'video/mp4',
+  onProgress?: (message: string) => void
+): Promise<Blob> {
+  const { hybridDecryptFile } = await import('./hybridCrypto');
+  return hybridDecryptFile(
     encryptedData,
     metadata,
-  };
+    privateKey,
+    mimeType,
+    onProgress
+  );
 }
 
 /**
@@ -572,12 +558,13 @@ export async function decryptTextWithLit(
     const decryptResponse = await client.decrypt({
       data: {
         ciphertext,
-        dataToEncryptHash: metadata.dataToEncryptHash,
+        dataToEncryptHash: metadata.keyHash,
       },
       unifiedAccessControlConditions,
       authContext, // v8: use authContext instead of sessionSigs
       chain: metadata.chain,
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
     decrypted = decryptResponse.decryptedData;
   } catch (error) {
     if (error instanceof Error) {
@@ -596,6 +583,8 @@ export async function decryptTextWithLit(
 /**
  * Encrypt arbitrary text (e.g., CID) with Lit using owner-only access control.
  * Returns ciphertext and metadata for later decryption.
+ * 
+ * Note: For text encryption, we use Lit directly (not hybrid) since text is small.
  */
 export async function encryptTextWithLit(
   text: string,
@@ -623,20 +612,26 @@ export async function encryptTextWithLit(
 
   // Encrypt using v8 API
   const encrypted = await client.encrypt({
-    dataToEncrypt,
+    dataToEncrypt: dataToEncrypt as unknown as ArrayBuffer,
     unifiedAccessControlConditions,
     chain: 'ethereum',
   });
 
   onProgress?.('Encryption complete');
 
-  // Don't store ciphertext in metadata - it's returned separately
+  // Import HybridEncryptionMetadata type
+  const { serializeHybridMetadata } = await import('./hybridCrypto');
+  
+  // Construct metadata (text uses direct Lit encryption, not hybrid)
   const metadata: LitEncryptionMetadata = {
-    // ciphertext is intentionally omitted - it's returned separately
-    dataToEncryptHash: encrypted.dataToEncryptHash,
+    version: 'hybrid-v1',
+    encryptedKey: encrypted.ciphertext,
+    keyHash: encrypted.dataToEncryptHash,
+    iv: '', // Not used for direct text encryption
+    algorithm: 'AES-GCM',
+    keyLength: 256,
     accessControlConditions,
     chain: 'ethereum',
-    version: 'v8', // Mark as v8 for future compatibility
   };
 
   return {
@@ -646,126 +641,17 @@ export async function encryptTextWithLit(
 }
 
 /**
- * Decrypt data that was encrypted with encryptFileForStorage
- */
-export async function decryptFileFromStorage(
-  encryptedData: Uint8Array,
-  metadata: LitEncryptionMetadata,
-  privateKey: string,
-  mimeType: string = 'video/mp4',
-  onProgress?: (message: string) => void
-): Promise<Blob> {
-  onProgress?.('Initializing Lit Protocol...');
-
-  const client = await initLitClient();
-
-  onProgress?.('Authenticating wallet...');
-
-  // Get authentication context for decryption (v8)
-  const authContext = await getAuthContext(privateKey, metadata.chain);
-
-  onProgress?.('Decrypting file...');
-
-  // Lit Protocol expects ciphertext as a base64 string
-  // Decode encryptedData from IPFS (UTF-8 bytes) back to base64 string
-  // The encryptedData was stored using TextEncoder, so we decode it back
-  if (!encryptedData || encryptedData.length === 0) {
-    throw new Error(
-      'No encrypted data provided. Cannot decrypt video. ' +
-      'The video may be missing the encrypted file on Filecoin/IPFS.'
-    );
-  }
-
-  let ciphertext: string;
-  try {
-    // Decode UTF-8 bytes back to base64 string
-    ciphertext = new TextDecoder('utf-8', { fatal: true }).decode(encryptedData);
-
-    // Validate the decoded ciphertext looks reasonable
-    if (ciphertext.length < 10) {
-      throw new Error('Decoded ciphertext appears invalid (too short)');
-    }
-  } catch (decodeError) {
-    throw new Error(
-      `Failed to decode encrypted data from IPFS: ${decodeError instanceof Error ? decodeError.message : 'unknown error'}. ` +
-      'The encrypted file may be corrupted or incomplete. Please ensure the video was properly uploaded to Filecoin.'
-    );
-  }
-
-  // Convert access control conditions to unified format (v8)
-  const unifiedAccessControlConditions = toUnifiedAccessControlConditions(
-    metadata.accessControlConditions
-  );
-
-  // Decrypt the file using v8 API
-  let decrypted: Uint8Array;
-  try {
-    const decryptResponse = await client.decrypt({
-      data: {
-        ciphertext,
-        dataToEncryptHash: metadata.dataToEncryptHash,
-      },
-      unifiedAccessControlConditions,
-      authContext, // v8: use authContext instead of sessionSigs
-      chain: metadata.chain,
-    });
-    decrypted = decryptResponse.decryptedData;
-  } catch (error) {
-    // Better error handling for decrypt errors
-    if (error instanceof DOMException) {
-      console.error('[Lit] DOMException during decryption:', error.message, error);
-      throw new Error(
-        `Decryption failed: ${error.message}. Please verify your access control conditions and wallet configuration.`
-      );
-    }
-    if (error instanceof Error) {
-      // Check for specific Lit Protocol errors
-      if (error.message.includes('auth') || error.message.includes('authentication')) {
-        console.error('[Lit] Authentication error:', error.message, error);
-        throw new Error(
-          `Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`
-        );
-      }
-      if (error.message.includes('unified access control')) {
-        console.error('[Lit] Access control error:', error.message, error);
-        throw new Error(
-          'Invalid encryption format. This video may need to be re-uploaded with the current SDK version.'
-        );
-      }
-      throw error;
-    }
-    throw new Error('Unknown error during decryption');
-  }
-
-  onProgress?.('Decryption complete');
-
-  // Convert decrypted data to blob using safe buffer conversion
-  const decryptedBuffer = toArrayBuffer(decrypted);
-  const decryptedBlob = new Blob([decryptedBuffer], {
-    type: mimeType,
-  });
-
-  return decryptedBlob;
-}
-
-/**
- * Check if Lit client is connected
+ * Check if Lit client is connected and ready
+ * This checks both the client and auth manager are initialized
  */
 export function isLitClientConnected(): boolean {
-  return litClient !== null;
+  return litClient !== null && authManager !== null;
 }
 
 /**
  * Serialize encryption metadata to JSON string for storage
- * Validates that ciphertext is not present (it should only be on IPFS)
  */
 export function serializeEncryptionMetadata(metadata: LitEncryptionMetadata): string {
-  // Ensure ciphertext is never included in metadata
-  if ('ciphertext' in metadata && (metadata as Record<string, unknown>).ciphertext !== undefined) {
-    throw new Error(
-      'Cannot serialize metadata with ciphertext - ciphertext must only be stored on IPFS, not in metadata'
-    );
-  }
   return JSON.stringify(metadata);
 }
 
@@ -773,13 +659,6 @@ export function serializeEncryptionMetadata(metadata: LitEncryptionMetadata): st
  * Deserialize encryption metadata from JSON string
  */
 export function deserializeEncryptionMetadata(metadataJson: string): LitEncryptionMetadata {
-  return JSON.parse(metadataJson) as LitEncryptionMetadata;
-}
-
-/**
- * Check if metadata is from v8 SDK
- * Useful for detecting compatibility issues
- */
-export function isV8Metadata(metadata: LitEncryptionMetadata): boolean {
-  return metadata.version === 'v8';
+  const { deserializeHybridMetadata } = require('./hybridCrypto');
+  return deserializeHybridMetadata(metadataJson);
 }

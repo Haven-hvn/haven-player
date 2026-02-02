@@ -20,7 +20,7 @@ type SynapseServiceShape = {
 import { executeUpload, checkUploadReadiness } from 'filecoin-pin/core/upload';
 import type { FilecoinUploadResult, FilecoinConfig } from '@/types/filecoin';
 import {
-  encryptFileForStorage, 
+  encryptFile,
   serializeEncryptionMetadata,
   type LitEncryptionMetadata,
   encryptTextWithLit,
@@ -575,15 +575,15 @@ export async function uploadVideoToFilecoin(
       onProgress?.({
         stage: 'encrypting',
         progress: 4,
-        message: 'Encrypting video with Lit Protocol...',
+        message: 'Encrypting video (AES-256-GCM + Lit Protocol)...',
       });
       
       try {
         // Read file as ArrayBuffer
         const fileBuffer = await file.arrayBuffer();
         
-        // Encrypt the file
-        const encryptResult = await encryptFileForStorage(
+        // Encrypt the file using hybrid encryption (AES-256-GCM + Lit Protocol)
+        const encryptResult = await encryptFile(
           fileBuffer,
           config.privateKey,
           (message: string) => {

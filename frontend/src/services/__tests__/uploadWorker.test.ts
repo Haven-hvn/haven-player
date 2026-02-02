@@ -94,7 +94,7 @@ describe('UploadWorker', () => {
       const config = defaultWorker.getConfig();
 
       expect(config.enabled).toBe(false);
-      expect(config.pollInterval).toBe(15000);
+      expect(config.pollInterval).toBe(300000);
       expect(config.maxConcurrentUploads).toBe(1);
       expect(config.retryAttempts).toBe(3);
     });

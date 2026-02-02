@@ -3,8 +3,10 @@ import { Video, VideoCreate, Timestamp, VideoGroup } from '@/types/video';
 import { videoService } from '@/services/api';
 import { useBackgroundThrottling } from './useBackgroundThrottling';
 
-// Polling interval when app is active (30 seconds)
-const ACTIVE_POLL_INTERVAL = 30000;
+// Initial poll delay when app becomes active (10 seconds)
+const INITIAL_POLL_DELAY = 10000;
+// Max random poll interval (120 seconds)
+const MAX_RANDOM_INTERVAL = 120000;
 // Polling interval when app is in background (null = pause completely)
 const BACKGROUND_POLL_INTERVAL: number | null = null;
 
@@ -224,31 +226,38 @@ export const useVideos = () => {
     fetchVideos();
   }, [fetchVideos]);
 
-  // Background-aware polling
+  // Background-aware polling with randomized intervals
   useEffect(() => {
-    // Clear existing interval
+    // Clear existing timeout
     if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
+      clearTimeout(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
 
-    // Determine polling interval based on throttle state
-    const interval = shouldThrottle ? BACKGROUND_POLL_INTERVAL : ACTIVE_POLL_INTERVAL;
-
-    // If interval is null (background), don't poll
-    if (interval === null) {
+    // If throttled (background), don't poll
+    if (shouldThrottle) {
       console.log('🔇 Video polling paused (app in background)');
       return;
     }
 
-    console.log(`🔄 Video polling active (interval: ${interval}ms)`);
-    pollIntervalRef.current = setInterval(() => {
-      fetchVideos();
-    }, interval);
+    let isFirstPoll = true;
+    
+    const poll = async () => {
+      await fetchVideos();
+      
+      // First poll after INITIAL_POLL_DELAY, subsequent polls random up to MAX_RANDOM_INTERVAL
+      const delay = isFirstPoll ? INITIAL_POLL_DELAY : Math.floor(Math.random() * MAX_RANDOM_INTERVAL);
+      isFirstPoll = false;
+      
+      console.log(`🔄 Next video poll in ${delay}ms`);
+      pollIntervalRef.current = setTimeout(poll, delay);
+    };
+
+    poll();
 
     return () => {
       if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
+        clearTimeout(pollIntervalRef.current);
         pollIntervalRef.current = null;
       }
     };

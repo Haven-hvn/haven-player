@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Video } from '@/types/video';
 import type { FilecoinConfig } from '@/types/filecoin';
 import {
-  decryptFileFromStorage,
+  decryptFile,
   deserializeEncryptionMetadata,
   type LitEncryptionMetadata,
 } from '@/services/litService';
@@ -28,6 +28,7 @@ export interface UseLitDecryptionReturn {
 
 /**
  * Hook for decrypting Lit Protocol encrypted videos during playback
+ * Uses hybrid encryption (AES-256-GCM + Lit Protocol)
  */
 export const useLitDecryption = (): UseLitDecryptionReturn => {
   const [decryptedUrl, setDecryptedUrl] = useState<string | null>(null);
@@ -114,8 +115,8 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
 
         const encryptedData = await loadEncryptedData();
 
-        // Decrypt the file using Lit Protocol
-        const decryptedBlob = await decryptFileFromStorage(
+        // Decrypt the file using hybrid decryption
+        const decryptedBlob = await decryptFile(
           encryptedData,
           metadata,
           config.privateKey,
@@ -144,12 +145,21 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
         if (error instanceof Error) {
           errorMessage = error.message;
           
-          // Handle DOMException errors (like attenuation parsing errors)
-          if (error.name === 'DOMException') {
+          // Handle out of memory errors
+          if (error.message.includes('out of memory') || 
+              error.message.includes('allocation failed') ||
+              error.message.includes('Array buffer allocation failed') ||
+              error.name === 'RangeError') {
+            console.error('[Lit Decryption] Out of memory error:', error);
+            errorMessage = `Video is too large to decrypt in memory. Try playing the local file instead of IPFS, or re-upload with a smaller file size.`;
+          }
+          // Handle DOMException errors
+          else if (error.name === 'DOMException') {
             console.error('[Lit Decryption] DOMException:', error.message, error);
             errorMessage = `Decryption error: ${error.message}. Please check your wallet configuration and try again.`;
-          } else if (error.message.includes('session key') || error.message.includes('signing shares')) {
-            // Handle Lit Protocol session signature errors
+          }
+          // Handle Lit Protocol authentication errors
+          else if (error.message.includes('session key') || error.message.includes('signing shares')) {
             console.error('[Lit Decryption] Session signature error:', error.message, error);
             errorMessage = `Authentication failed: ${error.message}. Please verify your wallet private key matches the encryption key.`;
           } else {
@@ -182,4 +192,3 @@ export const useLitDecryption = (): UseLitDecryptionReturn => {
     isEncrypted,
   };
 };
-

@@ -81,7 +81,12 @@ describe('litService', () => {
   describe('serializeEncryptionMetadata', () => {
     it('should serialize encryption metadata to JSON string', () => {
       const metadata: LitEncryptionMetadata = {
-        dataToEncryptHash: 'test-hash',
+        version: 'hybrid-v1',
+        encryptedKey: 'test-encrypted-key',
+        keyHash: 'test-hash',
+        iv: 'dGVzdC1pdg==', // base64 of "test-iv"
+        algorithm: 'AES-GCM',
+        keyLength: 256,
         accessControlConditions: [
           {
             contractAddress: '',
@@ -102,42 +107,22 @@ describe('litService', () => {
       
       expect(typeof serialized).toBe('string');
       const parsed = JSON.parse(serialized);
-      expect(parsed.dataToEncryptHash).toBe('test-hash');
+      expect(parsed.version).toBe('hybrid-v1');
+      expect(parsed.encryptedKey).toBe('test-encrypted-key');
+      expect(parsed.keyHash).toBe('test-hash');
       expect(parsed.chain).toBe('ethereum');
-      // ciphertext should NOT be in metadata (it's stored on IPFS only)
-      expect(parsed.ciphertext).toBeUndefined();
-    });
-
-    it('should throw error if ciphertext is present in metadata', () => {
-      const metadataWithCiphertext = {
-        ciphertext: 'test-ciphertext',
-        dataToEncryptHash: 'test-hash',
-        accessControlConditions: [
-          {
-            contractAddress: '',
-            standardContractType: '',
-            chain: 'ethereum',
-            method: '',
-            parameters: [':userAddress'],
-            returnValueTest: {
-              comparator: '=',
-              value: '0x1234567890123456789012345678901234567890',
-            },
-          },
-        ],
-        chain: 'ethereum',
-      } as any; // Use 'as any' to bypass TypeScript check for testing
-      
-      expect(() => {
-        serializeEncryptionMetadata(metadataWithCiphertext);
-      }).toThrow('Cannot serialize metadata with ciphertext');
     });
   });
 
   describe('deserializeEncryptionMetadata', () => {
     it('should deserialize JSON string to encryption metadata', () => {
       const metadata: LitEncryptionMetadata = {
-        dataToEncryptHash: 'test-hash',
+        version: 'hybrid-v1',
+        encryptedKey: 'test-encrypted-key',
+        keyHash: 'test-hash',
+        iv: 'dGVzdC1pdg==',
+        algorithm: 'AES-GCM',
+        keyLength: 256,
         accessControlConditions: [
           {
             contractAddress: '',
@@ -157,16 +142,28 @@ describe('litService', () => {
       const serialized = JSON.stringify(metadata);
       const deserialized = deserializeEncryptionMetadata(serialized);
       
-      expect(deserialized.dataToEncryptHash).toBe('test-hash');
+      expect(deserialized.version).toBe('hybrid-v1');
+      expect(deserialized.encryptedKey).toBe('test-encrypted-key');
+      expect(deserialized.keyHash).toBe('test-hash');
       expect(deserialized.chain).toBe('ethereum');
-      // ciphertext should NOT be in metadata (it's stored on IPFS only)
-      expect('ciphertext' in deserialized).toBe(false);
     });
 
     it('should throw on invalid JSON', () => {
       expect(() => {
         deserializeEncryptionMetadata('invalid-json');
       }).toThrow();
+    });
+
+    it('should throw on non-hybrid metadata', () => {
+      const legacyMetadata = {
+        dataToEncryptHash: 'test-hash',
+        accessControlConditions: [],
+        chain: 'ethereum',
+      };
+      
+      expect(() => {
+        deserializeEncryptionMetadata(JSON.stringify(legacyMetadata));
+      }).toThrow('Unsupported hybrid encryption version');
     });
   });
 
@@ -179,7 +176,12 @@ describe('litService', () => {
   describe('metadata roundtrip', () => {
     it('should preserve all metadata fields through serialize/deserialize cycle', () => {
       const originalMetadata: LitEncryptionMetadata = {
-        dataToEncryptHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        version: 'hybrid-v1',
+        encryptedKey: 'test-encrypted-key',
+        keyHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        iv: 'dGVzdC1pdg==',
+        algorithm: 'AES-GCM',
+        keyLength: 256,
         accessControlConditions: [
           {
             contractAddress: '',
@@ -194,19 +196,24 @@ describe('litService', () => {
           },
         ],
         chain: 'ethereum',
+        originalMimeType: 'video/mp4',
+        originalSize: 1024,
+        originalHash: 'hash123',
       };
       
       const serialized = serializeEncryptionMetadata(originalMetadata);
       const deserialized = deserializeEncryptionMetadata(serialized);
       
-      expect(deserialized.dataToEncryptHash).toBe(originalMetadata.dataToEncryptHash);
+      expect(deserialized.version).toBe(originalMetadata.version);
+      expect(deserialized.encryptedKey).toBe(originalMetadata.encryptedKey);
+      expect(deserialized.keyHash).toBe(originalMetadata.keyHash);
       expect(deserialized.chain).toBe(originalMetadata.chain);
       expect(deserialized.accessControlConditions).toHaveLength(1);
       expect(deserialized.accessControlConditions[0].returnValueTest.value).toBe(
         originalMetadata.accessControlConditions[0].returnValueTest.value
       );
-      // ciphertext should NOT be in metadata (it's stored on IPFS only)
-      expect('ciphertext' in deserialized).toBe(false);
+      expect(deserialized.originalSize).toBe(originalMetadata.originalSize);
+      expect(deserialized.originalMimeType).toBe(originalMetadata.originalMimeType);
     });
   });
 });

@@ -32,7 +32,8 @@ from app.models.database import get_db as get_db_session
 from app.models.plugin import Plugin as PluginModel
 from app.models.video import Video, Timestamp
 from app.models.analysis_job import AnalysisJob
-from app.lib.glitter_client import query_glitter_protocol
+from app.lib.glitter_client import query_glitter_protocol, get_glitter_index_status
+from app.utils.video.video_file_validator import is_video_content
 import libtorrent as lt
 
 logger = logging.getLogger(__name__)
@@ -147,8 +148,10 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
 
             for sub in enabled_subscriptions:
                 search_term = sub.get("search_term", "")
-                logger.info(f"Searching for '{search_term}'")
-                torrents = query_glitter_protocol(search_term, self.glitter_endpoint)
+                # Get filter_type from subscription config, default to "video"
+                filter_type = sub.get("filter_type", "video")
+                logger.info(f"Searching for '{search_term}' (filter: {filter_type})")
+                torrents = query_glitter_protocol(search_term, self.glitter_endpoint, filter_type)
                 logger.info(f"Found {len(torrents)} torrents for '{search_term}'.")
 
                 for torrent_data in torrents:
@@ -297,6 +300,38 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             # Get the output path for the downloaded file
             output_path = os.path.join(current_download_dir, torrent_info.name(), files.file_path(largest_video_index))
 
+            # Validate that the downloaded file actually contains video content
+            logger.info(f"Validating downloaded file for video content: {output_path}")
+            if not is_video_content(output_path):
+                logger.error(f"Downloaded file {output_path} does not contain valid video frames")
+                
+                # Clean up the invalid file
+                try:
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                        logger.info(f"Removed invalid file: {output_path}")
+                except Exception as cleanup_error:
+                    logger.error(f"Error cleaning up invalid file {output_path}: {cleanup_error}")
+                
+                # Create a failed analysis job to track this failure
+                current_time = datetime.utcnow()
+                failed_job = AnalysisJob(
+                    video_path=output_path,
+                    status='failed',
+                    error="Downloaded torrent file does not contain valid video frames",
+                    created_at=current_time,
+                    completed_at=current_time
+                )
+                db.add(failed_job)
+                db.commit()
+                
+                return ArchiveResult(
+                    success=False,
+                    error="Downloaded torrent file does not contain valid video frames. The torrent may contain audio-only content or the download was corrupted."
+                )
+            
+            logger.info(f"✓ Video validation successful: {output_path} contains valid video content")
+
             # Remove the torrent handle to stop seeding immediately
             ses.remove_torrent(handle)
             logger.info("Torrent stopped. Not seeding.")
@@ -351,12 +386,34 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             logger.error(f"Error archiving torrent {infohash}: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            
+            # Create a failed analysis job to track this failure in the failure sink
+            try:
+                current_time = datetime.utcnow()
+                failed_job = AnalysisJob(
+                    video_path=output_path if 'output_path' in locals() else f"torrent://{infohash}",
+                    status='failed',
+                    error=f"BitTorrent archive failed: {str(e)}",
+                    created_at=current_time,
+                    completed_at=current_time
+                )
+                db.add(failed_job)
+                db.commit()
+                logger.info(f"Created failed analysis job for torrent {infohash}")
+            except Exception as job_error:
+                logger.error(f"Failed to create analysis job for error tracking: {job_error}")
+            
             return ArchiveResult(success=False, error=str(e))
         finally:
             db.close()
 
-    async def health_check(self) -> bool:
-        """Check if plugin is healthy."""
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Check if plugin is healthy.
+        
+        Returns:
+            Dict with health status details including indexer status.
+        """
         try:
             import libtorrent
 
@@ -365,17 +422,60 @@ class BitTorrentPlugin(ArchiverPlugin, CollectionPluginMixin, ConfigurablePlugin
             app_config = db.query(AppConfig).first()
             if not app_config or not app_config.download_directory:
                 db.close()
-                return False
+                return {
+                    "healthy": False,
+                    "error": "Global download_directory not configured"
+                }
 
             download_dir = app_config.download_directory
             db.close()
 
-            return os.path.exists(download_dir)
+            if not os.path.exists(download_dir):
+                return {
+                    "healthy": False,
+                    "error": f"Download directory does not exist: {download_dir}"
+                }
+
+            # Check indexer status
+            is_available, newest_date, message = get_glitter_index_status(self.glitter_endpoint)
+            
+            from datetime import datetime
+            days_old = (datetime.now() - newest_date).days if newest_date else None
+            
+            health_status = {
+                "healthy": True,
+                "libtorrent_available": True,
+                "download_directory": download_dir,
+                "indexer": {
+                    "available": is_available,
+                    "endpoint": self.glitter_endpoint,
+                    "newest_torrent_date": newest_date.isoformat() if newest_date else None,
+                    "data_age_days": days_old,
+                    "status_message": message
+                }
+            }
+            
+            # Warn if data is stale
+            if days_old and days_old > 30:
+                health_status["warnings"] = [
+                    f"Indexer data is {days_old} days old (stale)",
+                    "Consider using an alternative BitTorrent indexer",
+                    "Options: Nyaa.si (anime), 1337x (general), Jackett (multi-indexer)"
+                ]
+            
+            return health_status
+            
         except ImportError:
-            return False
+            return {
+                "healthy": False,
+                "error": "libtorrent not available"
+            }
         except Exception as e:
             logger.error(f"BitTorrentPlugin health check failed: {e}")
-            return False
+            return {
+                "healthy": False,
+                "error": str(e)
+            }
 
     async def subscribe(
         self,

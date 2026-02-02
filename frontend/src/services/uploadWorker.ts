@@ -80,7 +80,7 @@ export class UploadWorker {
   constructor(config?: Partial<UploadWorkerConfig>) {
     this.config = {
       enabled: config?.enabled ?? false,
-      pollInterval: config?.pollInterval ?? 15000,  // Default 15s
+      pollInterval: config?.pollInterval ?? 300000,  // Default 5 minutes
       maxConcurrentUploads: config?.maxConcurrentUploads ?? 1,
       retryAttempts: config?.retryAttempts ?? 3,
     };
@@ -102,17 +102,17 @@ export class UploadWorker {
       return;
     }
 
-    console.log('[UploadWorker] Starting upload worker...');
+    // Random startup delay (0-60s) to stagger from other workers
+    const startupDelay = Math.floor(Math.random() * 60000);
+    console.log(`[UploadWorker] Starting upload worker (staggered startup: ${startupDelay}ms)...`);
     console.log(`[UploadWorker] Config: enabled=${this.config.enabled}, pollInterval=${this.config.pollInterval}ms`);
 
-    this.isRunning = true;
-    this.pollingInterval = setInterval(
-      () => this.processQueue(),
-      this.config.pollInterval
-    );
+    await new Promise(resolve => setTimeout(resolve, startupDelay));
 
-    // Process immediately on start
-    await this.processQueue();
+    this.isRunning = true;
+    
+    // Start the polling loop with random intervals
+    this.runPollingLoop();
   }
 
   async processQueue(): Promise<void> {
@@ -559,6 +559,22 @@ export class UploadWorker {
       '.json': 'application/json',
     };
     return mimeTypes[ext] || 'application/octet-stream';
+  }
+
+  private async runPollingLoop(): Promise<void> {
+    /**
+     * Main polling loop with random intervals (30s to 300s).
+     * Uses setTimeout recursively to vary the interval each time.
+     */
+    while (this.isRunning) {
+      await this.processQueue();
+      
+      // Random interval between 30s (30000ms) and 300s (300000ms)
+      const randomInterval = Math.floor(Math.random() * 270000) + 30000;
+      console.log(`[UploadWorker] Next poll in ${randomInterval}ms (${(randomInterval/1000).toFixed(1)}s)`);
+      
+      await new Promise(resolve => setTimeout(resolve, randomInterval));
+    }
   }
 
   stop(): void {

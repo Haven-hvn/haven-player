@@ -210,11 +210,23 @@ export function useTransformationPipeline(): UseTransformationPipelineReturn {
     }
   }, [fetchFilecoinConfig, fetchWalletAddress]);
 
-  // Poll health status periodically
+  // Poll health status periodically with randomized intervals
   useEffect(() => {
-    fetchSystemHealth();
-    const interval = setInterval(fetchSystemHealth, 30000); // Every 30 seconds
-    return () => clearInterval(interval);
+    let timeoutId: NodeJS.Timeout;
+    let isFirstPoll = true;
+    
+    const poll = async () => {
+      await fetchSystemHealth();
+      
+      // First poll after 10s, subsequent polls random up to 120s
+      const delay = isFirstPoll ? 10000 : Math.floor(Math.random() * 120000);
+      isFirstPoll = false;
+      
+      timeoutId = setTimeout(poll, delay);
+    };
+    
+    poll();
+    return () => clearTimeout(timeoutId);
   }, [fetchSystemHealth]);
 
   // Determine transformation state from video data

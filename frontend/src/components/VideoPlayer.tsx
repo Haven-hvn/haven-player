@@ -217,7 +217,7 @@ const ErrorOverlay = ({ error, onRetry, onSwitchSource, onGoBack, canSwitchSourc
       {retryCount > 0 && <Typography sx={{ color: 'rgba(255, 255, 255, 0.4)', fontSize: '0.8rem' }}>{retryCount} of {maxRetries} recovery attempts made</Typography>}
       <Box sx={{ display: 'flex', gap: 2, mt: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
         {canRetry && <IconButton onClick={onRetry} sx={{ color: '#fff', background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}30 0%, ${liquidGlassTokens.neon.cyan}15 100%)`, border: `1px solid ${liquidGlassTokens.neon.cyan}50`, borderRadius: liquidGlassTokens.radius.md, px: 3, py: 1, '&:hover': { background: `linear-gradient(135deg, ${liquidGlassTokens.neon.cyan}40 0%, ${liquidGlassTokens.neon.cyan}20 100%)`, boxShadow: glowEffects.cyan(0.3) } }}><RefreshIcon sx={{ mr: 1 }} /><Typography>Try Again</Typography></IconButton>}
-        {canSwitchSource && onSwitchSource && <IconButton onClick={onSwitchSource} sx={{ color: '#fff', background: `linear-gradient(135deg, ${liquidGlassTokens.neon.magenta}30 0%, ${liquidGlassTokens.neon.magenta}15 100%)`, border: `1px solid ${liquidGlassTokens.neon.magenta}50`, borderRadius: liquidGlassTokens.radius.md, px: 3, py: 1, '&:hover': { background: `linear-gradient(135deg, ${liquidGlassTokens.neon.magenta}40 0%, ${liquidGlassTokens.neon.magenta}20 100%)`, boxShadow: glowEffects.magenta(0.3) } }}><CloudIcon sx={{ mr: 1 }} /><Typography>Switch to {alternateSourceName || 'alternate source'}</Typography></IconButton>}
+        {canSwitchSource && onSwitchSource && <IconButton onClick={onSwitchSource} sx={{ color: '#fff', background: `linear-gradient(135deg, ${liquidGlassTokens.neon.magenta}30 0%, ${liquidGlassTokens.neon.magenta}15 100%)`, border: `1px solid ${liquidGlassTokens.neon.magenta}50`, borderRadius: liquidGlassTokens.radius.md, px: 3, py: 1, '&:hover': { background: `linear-gradient(135deg, ${liquidGlassTokens.neon.magenta}40 0%, ${liquidGlassTokens.neon.magenta}20 100%)`, boxShadow: glowEffects.magenta(0.3) } }}><StorageIcon sx={{ mr: 1 }} /><Typography>Switch to {alternateSourceName || 'Local File'}</Typography></IconButton>}
         <IconButton onClick={onGoBack} sx={{ color: 'rgba(255, 255, 255, 0.7)', backgroundColor: 'rgba(255, 255, 255, 0.08)', border: `1px solid ${liquidGlassTokens.glass.border}`, borderRadius: liquidGlassTokens.radius.md, px: 3, py: 1, '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.12)' } }}><ArrowBackIcon sx={{ mr: 1 }} /><Typography>Go Back</Typography></IconButton>
       </Box>
       {error.code !== undefined && <Typography sx={{ color: 'rgba(255, 255, 255, 0.3)', fontSize: '0.7rem', mt: 2 }}>Error code: {error.code} | Type: {error.type}</Typography>}
@@ -388,10 +388,23 @@ const VideoPlayer: React.FC = () => {
   useEffect(() => { return () => { clearDecryptedUrl(); }; }, [clearDecryptedUrl]);
 
   useEffect(() => {
-    if (!playbackSource || !video || playbackSource.type !== 'both') return;
+    if (!playbackSource || !video) return;
+    // Handle encrypted video from IPFS
     if (selectedSource === 'ipfs' && video.is_encrypted && video.lit_encryption_metadata) {
       if (!decryptedUrl && decryptionStatus.status !== 'decrypting' && decryptionStatus.status !== 'loading') {
-        const loadEncryptedData = async () => { const response = await fetch(playbackSource.ipfs.uri); if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`); const buffer = await response.arrayBuffer(); if (buffer.byteLength === 0) throw new Error('Empty response'); return new Uint8Array(buffer); };
+        console.log('[VideoPlayer] Loading encrypted video from IPFS using local decryption...');
+        const loadEncryptedData = async () => { 
+          const ipfsUri = playbackSource.type === 'ipfs' 
+            ? playbackSource.uri 
+            : playbackSource.type === 'both' 
+              ? playbackSource.ipfs.uri 
+              : '';
+          const response = await fetch(ipfsUri); 
+          if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`); 
+          const buffer = await response.arrayBuffer(); 
+          if (buffer.byteLength === 0) throw new Error('Empty response'); 
+          return new Uint8Array(buffer); 
+        };
         decryptVideo(video, loadEncryptedData).catch(() => {});
       }
     }
@@ -399,6 +412,22 @@ const VideoPlayer: React.FC = () => {
   }, [selectedSource, playbackSource, video, decryptedUrl, decryptionStatus.status, decryptVideo, clearDecryptedUrl]);
 
   useEffect(() => { if (decryptionStatus.status === 'completed' && decryptedUrl) controls.clearError(); }, [decryptionStatus.status, decryptedUrl, controls]);
+
+  // Auto-switch to local source when decryption fails
+  useEffect(() => {
+    if (decryptionStatus.status === 'error' && 
+        decryptionStatus.error &&
+        playbackSource?.type === 'both' &&
+        selectedSource === 'ipfs') {
+      // Check if error is something we can recover from by switching to local
+      if (decryptionStatus.error.includes('413') || 
+          decryptionStatus.error.includes('failed') ||
+          decryptionStatus.error.includes('too large')) {
+        console.warn('[VideoPlayer] Decryption from IPFS failed. Auto-switching to local source.');
+        handleSourceFallback();
+      }
+    }
+  }, [decryptionStatus.status, decryptionStatus.error, playbackSource?.type, selectedSource, handleSourceFallback]);
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
@@ -503,14 +532,31 @@ const VideoPlayer: React.FC = () => {
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               {playbackSource?.type === 'both' && (
-                <ToggleButtonGroup value={selectedSource} exclusive onChange={(_e: React.MouseEvent<HTMLElement>, newValue: SelectedSource | null) => { if (newValue) { setSelectedSource(newValue); controls.pause(); setPlayed(0); } }} size="small" sx={{ '& .MuiToggleButton-root': { color: 'rgba(255, 255, 255, 0.6)', borderColor: 'rgba(255, 255, 255, 0.2)', py: 0.5, px: 1.5, '&.Mui-selected': { color: '#fff', backgroundColor: `${liquidGlassTokens.neon.cyan}30`, '&:hover': { backgroundColor: `${liquidGlassTokens.neon.cyan}40` } }, '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' } } }}>
+                <ToggleButtonGroup value={selectedSource} exclusive onChange={(_e: React.MouseEvent<HTMLElement>, newValue: SelectedSource | null) => { if (newValue) { setSelectedSource(newValue); controls.pause(); setPlayed(0); } }} size="small" sx={{ '& .MuiToggleButton-root': { color: 'rgba(255, 255, 255, 0.6)', borderColor: 'rgba(255, 255, 255, 0.2)', py: 0.5, px: 1.5, '&.Mui-selected': { color: '#fff', backgroundColor: `${liquidGlassTokens.neon.cyan}30`, '&:hover': { backgroundColor: `${liquidGlassTokens.neon.cyan}40` } }, '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' }, '&.Mui-disabled': { color: 'rgba(255, 255, 255, 0.3)', borderColor: 'rgba(255, 255, 0.1)' } } }}>
                   <ToggleButton value="local"><StorageIcon sx={{ fontSize: 16, mr: 0.5 }} />Local</ToggleButton>
-                  <ToggleButton value="ipfs"><CloudIcon sx={{ fontSize: 16, mr: 0.5 }} />IPFS</ToggleButton>
+                  <Tooltip title={video?.is_encrypted ? "Encrypted videos from IPFS use local decryption" : "Play from IPFS"}>
+                    <span>
+                      <ToggleButton value="ipfs"><CloudIcon sx={{ fontSize: 16, mr: 0.5 }} />IPFS</ToggleButton>
+                    </span>
+                  </Tooltip>
                 </ToggleButtonGroup>
               )}
               {playbackSource?.type === 'local' && <Chip icon={<StorageIcon sx={{ fontSize: 14 }} />} label="Local" size="small" sx={{ backgroundColor: `${liquidGlassTokens.neon.success}20`, color: liquidGlassTokens.neon.success, border: `1px solid ${liquidGlassTokens.neon.success}30` }} />}
               {playbackSource?.type === 'ipfs' && ipfsGatewayHost && <Chip icon={<CloudIcon sx={{ fontSize: 14 }} />} label={`IPFS (${ipfsGatewayHost})`} size="small" sx={{ backgroundColor: `${liquidGlassTokens.neon.cyan}20`, color: liquidGlassTokens.neon.cyan, border: `1px solid ${liquidGlassTokens.neon.cyan}30` }} />}
-              {shouldTreatAsEncrypted && isEncrypted && <Chip icon={<LockIcon sx={{ fontSize: 14 }} />} label="Encrypted" size="small" sx={{ backgroundColor: `${liquidGlassTokens.neon.magenta}20`, color: liquidGlassTokens.neon.magenta, border: `1px solid ${liquidGlassTokens.neon.magenta}30` }} />}
+              {shouldTreatAsEncrypted && isEncrypted && (
+                <Tooltip title={selectedSource === 'ipfs' ? "Encrypted videos from IPFS are loaded entirely into memory for decryption. Large files may cause performance issues." : "Video is encrypted with Lit Protocol"}>
+                  <Chip 
+                    icon={<LockIcon sx={{ fontSize: 14 }} />} 
+                    label="Encrypted" 
+                    size="small" 
+                    sx={{ 
+                      backgroundColor: selectedSource === 'ipfs' ? `${liquidGlassTokens.neon.amber}20` : `${liquidGlassTokens.neon.magenta}20`, 
+                      color: selectedSource === 'ipfs' ? liquidGlassTokens.neon.amber : liquidGlassTokens.neon.magenta, 
+                      border: `1px solid ${selectedSource === 'ipfs' ? liquidGlassTokens.neon.amber : liquidGlassTokens.neon.magenta}30` 
+                    }} 
+                  />
+                </Tooltip>
+              )}
             </Box>
           </Box>
 

@@ -29,7 +29,7 @@ export const normalizeCid = (cid: string): string =>
     .trim()
     .replace(/^ipfs:\/\//i, "")
     .replace(/^\/?ipfs\//i, "")
-    .replace(/^\//, "");
+    .replace(/^\/+/, "");
 
 export const buildIpfsGatewayUrl = (
   cid: string,

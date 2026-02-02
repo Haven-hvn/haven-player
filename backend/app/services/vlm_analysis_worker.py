@@ -5,6 +5,7 @@ This module provides a worker that processes VLM analysis queue entries.
 It handles video analysis using VLM engine asynchronously.
 """
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Optional
 import asyncio
@@ -274,19 +275,21 @@ class VLMAnalysisWorker:
 
 
 async def run_vlm_analysis_worker(
-    api_base_url: str = "http://localhost:8000",
-    polling_interval: int = 60
+    api_base_url: str = "http://localhost:8000"
 ) -> None:
     """
     Background task that continuously processes VLM analysis queue.
 
     Polls for pending analysis jobs and processes them one at a time.
+    Uses random intervals (30s to 300s) to naturally stagger from other workers.
 
     Args:
         api_base_url: Base URL for the backend API
-        polling_interval: Seconds to wait between poll attempts
     """
-    logger.info("🚀 Starting VLM analysis worker")
+    # Random startup delay (0-60s) to stagger from other workers
+    startup_delay = random.uniform(0, 60)
+    logger.info(f"🚀 Starting VLM analysis worker (staggered startup: {startup_delay:.1f}s)")
+    await asyncio.sleep(startup_delay)
 
     async with VLMAnalysisWorker(api_base_url) as worker:
         while True:
@@ -297,6 +300,9 @@ async def run_vlm_analysis_worker(
                 if processed > 0:
                     logger.info(f"✅ Processed {processed} VLM analysis job(s)")
 
+                # Random interval between 30s and 300s to naturally stagger workers
+                polling_interval = random.uniform(30, 300)
+                logger.debug(f"Next VLM analysis poll in {polling_interval:.1f}s")
                 await asyncio.sleep(polling_interval)
 
             except Exception as e:

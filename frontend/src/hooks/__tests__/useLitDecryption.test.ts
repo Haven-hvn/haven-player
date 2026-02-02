@@ -12,14 +12,14 @@ jest.mock('electron', () => ({
 
 // Mock the litService
 jest.mock('../../services/litService', () => ({
-  decryptFileFromStorage: jest.fn(),
+  decryptFile: jest.fn(),
   deserializeEncryptionMetadata: jest.fn(),
 }));
 
 import { useLitDecryption } from '../useLitDecryption';
-import { decryptFileFromStorage, deserializeEncryptionMetadata } from '@/services/litService';
+import { decryptFile, deserializeEncryptionMetadata } from '@/services/litService';
 
-const mockDecryptFileFromStorage = decryptFileFromStorage as jest.Mock;
+const mockDecryptFile = decryptFile as jest.Mock;
 const mockDeserializeEncryptionMetadata = deserializeEncryptionMetadata as jest.Mock;
 
 // Mock URL.createObjectURL and URL.revokeObjectURL
@@ -41,8 +41,12 @@ describe('useLitDecryption', () => {
     share_to_arkiv: false,
     is_encrypted: true,
     lit_encryption_metadata: JSON.stringify({
-      ciphertext: 'test-ciphertext',
-      dataToEncryptHash: 'test-hash',
+      version: 'hybrid-v1',
+      encryptedKey: 'test-encrypted-key',
+      keyHash: 'test-hash',
+      iv: 'dGVzdC1pdg==', // base64 of "test-iv"
+      algorithm: 'AES-GCM',
+      keyLength: 256,
       accessControlConditions: [],
       chain: 'ethereum',
     }),
@@ -65,7 +69,7 @@ describe('useLitDecryption', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockIpcRenderer.invoke.mockReset();
-    mockDecryptFileFromStorage.mockReset();
+    mockDecryptFile.mockReset();
     mockDeserializeEncryptionMetadata.mockReset();
     mockCreateObjectURL.mockClear();
     mockRevokeObjectURL.mockClear();
@@ -103,12 +107,16 @@ describe('useLitDecryption', () => {
       privateKey: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
     });
     mockDeserializeEncryptionMetadata.mockReturnValue({
-      ciphertext: 'test',
-      dataToEncryptHash: 'hash',
+      version: 'hybrid-v1',
+      encryptedKey: 'test-encrypted-key',
+      keyHash: 'test-hash',
+      iv: 'dGVzdC1pdg==',
+      algorithm: 'AES-GCM',
+      keyLength: 256,
       accessControlConditions: [],
       chain: 'ethereum',
     });
-    mockDecryptFileFromStorage.mockResolvedValue(new Blob(['test']));
+    mockDecryptFile.mockResolvedValue(new Blob(['test']));
     const loadEncryptedData = jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
     
     // Decrypt a video to create a URL
@@ -166,12 +174,16 @@ describe('useLitDecryption', () => {
       data: new Uint8Array([1, 2, 3]),
     });
     mockDeserializeEncryptionMetadata.mockReturnValue({
-      ciphertext: 'test',
-      dataToEncryptHash: 'hash',
+      version: 'hybrid-v1',
+      encryptedKey: 'test-encrypted-key',
+      keyHash: 'test-hash',
+      iv: 'dGVzdC1pdg==',
+      algorithm: 'AES-GCM',
+      keyLength: 256,
       accessControlConditions: [],
       chain: 'ethereum',
     });
-    mockDecryptFileFromStorage.mockResolvedValue(new Blob(['test']));
+    mockDecryptFile.mockResolvedValue(new Blob(['test']));
     
     const { result } = renderHook(() => useLitDecryption());
     

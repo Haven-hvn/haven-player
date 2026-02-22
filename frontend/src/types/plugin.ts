@@ -67,7 +67,7 @@ export interface ArchiveResult {
   message: string;
 }
 
-export type PluginConfig = YouTubePluginConfig | PumpFunPluginConfig | BitTorrentPluginConfig | OpenRingPluginConfig;
+export type PluginConfig = YouTubePluginConfig | PumpFunPluginConfig | BitTorrentPluginConfig | OpenRingPluginConfig | WebVideoPluginConfig;
 
 export interface OpenRingDevice {
   device_id: string;
@@ -239,6 +239,24 @@ export interface BitTorrentPluginConfig {
     auto_archive: boolean;
   }>;
   glitter_endpoint: string;
+}
+
+export interface WebVideoPluginConfig {
+  domain: string;
+  api_endpoint?: string;
+  tags: Array<{
+    name: string;
+    enabled: boolean;
+    video_format?: 'mp4' | 'webm' | 'mkv';
+    video_quality?: 'best' | '1080p' | '720p' | '480p';
+    download_subtitles?: boolean;
+    auto_archive?: boolean;
+    created_at?: string;
+    last_polled_at?: string;
+  }>;
+  max_concurrent_downloads?: number;
+  max_videos_per_tag?: number;
+  request_timeout?: number;
 }
 
 // ========== Recurring Job Types ==========

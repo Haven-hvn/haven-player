@@ -19,13 +19,15 @@ import {
   Error as ErrorIcon,
   NavigateNext as NavigateNextIcon,
   Extension as ExtensionIcon,
+  Language as LanguageIcon,
 } from '@mui/icons-material';
-import { PluginConfigSchema, PluginConfigField, YouTubePluginConfig, BitTorrentPluginConfig, OpenRingPluginConfig } from '@/types/plugin';
+import { PluginConfigSchema, PluginConfigField, YouTubePluginConfig, BitTorrentPluginConfig, OpenRingPluginConfig, WebVideoPluginConfig } from '@/types/plugin';
 import { usePluginConfiguration } from '@/hooks/usePluginConfiguration';
 import { liquidGlassTokens, glowEffects } from '@/styles/liquidGlassTheme';
 import { YouTubePluginConfig as YouTubeConfig } from './YouTubePluginConfig';
 import { BitTorrentPluginConfig as BitTorrentConfig } from './BitTorrentPluginConfig';
 import { OpenRingPluginConfig as OpenRingConfig } from './OpenRingPluginConfig';
+import { WebVideoPluginConfig as WebVideoConfig } from './WebVideoPluginConfig';
 import { RecurringJobsTab } from './RecurringJobsTab';
 
 interface TabPanelProps {
@@ -233,6 +235,9 @@ export function PluginConfigurationModal({
     if (pluginName.toLowerCase().includes('ring') || pluginName.toLowerCase().includes('openring')) {
       return <RingBrandIcon sx={{ ...iconSx, color: '#2196F3' }} />;
     }
+    if (pluginName.toLowerCase().includes('webvideo')) {
+      return <LanguageIcon sx={{ ...iconSx, color: '#0096FF' }} />;
+    }
     return <GenericPluginIcon sx={{ ...iconSx, color: 'rgba(255, 255, 255, 0.7)' }} />;
   };
 
@@ -240,6 +245,7 @@ export function PluginConfigurationModal({
     if (pluginName.toLowerCase().includes('youtube')) return '#FF0000';
     if (pluginName.toLowerCase().includes('torrent') || pluginName.toLowerCase().includes('bittorrent')) return '#4FC3F7';
     if (pluginName.toLowerCase().includes('ring') || pluginName.toLowerCase().includes('openring')) return '#2196F3';
+    if (pluginName.toLowerCase().includes('webvideo')) return '#0096FF';
     return liquidGlassTokens.neon.cyan;
   };
 
@@ -474,9 +480,15 @@ export function PluginConfigurationModal({
                       onChange={handleConfigChange}
                     />
                   )}
+                  {pluginName === 'WebVideoPlugin' && (
+                    <WebVideoConfig
+                      config={config as WebVideoPluginConfig}
+                      onChange={handleConfigChange}
+                    />
+                  )}
 
                   {/* Fallback to schema-driven rendering for other plugins */}
-                  {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin' || pluginName === 'OpenRingPlugin') && (
+                  {!(pluginName === 'YouTubePlugin' || pluginName === 'BitTorrentPlugin' || pluginName === 'OpenRingPlugin' || pluginName === 'WebVideoPlugin') && (
                     <Grid container spacing={2}>
                       {configSchema.config_schema.map((field) => (
                         <Grid size={{ xs: 12, sm: 6 }} key={field.name}>

@@ -42,6 +42,7 @@ def list_plugins(
         ("BitTorrentPlugin", "archiver", True, "Archive torrents from feeds/DHT"),
         ("PumpFunPlugin", "archiver", False, "Record PumpFun live streams"),
         ("OpenRingPlugin", "archiver", False, "Capture WebRTC streams"),
+        ("WebVideoPlugin", "archiver", True, "Archive videos from web APIs using direct downloads"),
     ]
     
     for name, ptype, enabled, desc in plugins_data:

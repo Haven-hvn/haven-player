@@ -75,6 +75,7 @@ class PluginManager:
         self.worker_plugins: Set[str] = {
             "BitTorrentPlugin",
             "YouTubePlugin",
+            "WebVideoPlugin",
             # Add more heavy I/O plugins here
         }
     

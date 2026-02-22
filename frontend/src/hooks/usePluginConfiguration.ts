@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { PluginConfigSchema, PumpFunPluginConfig, PluginConfig, YouTubePluginConfig, BitTorrentPluginConfig, OpenRingPluginConfig } from '@/types/plugin';
+import { PluginConfigSchema, PumpFunPluginConfig, PluginConfig, YouTubePluginConfig, BitTorrentPluginConfig, OpenRingPluginConfig, WebVideoPluginConfig } from '@/types/plugin';
 import { pluginService } from '@/services/api';
 
 const defaultPumpFunConfig: PumpFunPluginConfig = {
@@ -23,6 +23,15 @@ const defaultOpenRingConfig: OpenRingPluginConfig = {
   auto_recording_enabled: true,
   refresh_buffer_seconds: 60,
   devices: [],
+};
+
+const defaultWebVideoConfig: WebVideoPluginConfig = {
+  domain: '',
+  api_endpoint: 'api/videos',
+  tags: [],
+  max_concurrent_downloads: 3,
+  max_videos_per_tag: 50,
+  request_timeout: 60,
 };
 
 export function usePluginConfiguration(pluginName: string) {
@@ -53,6 +62,10 @@ export function usePluginConfiguration(pluginName: string) {
       // Filter out sensitive token fields if they exist in the config
       const { access_token, refresh_token, ...safeConfig } = actualConfig;
       return { ...defaultOpenRingConfig, ...safeConfig } as OpenRingPluginConfig;
+    }
+
+    if (pluginName.toLowerCase().includes('webvideo')) {
+      return { ...defaultWebVideoConfig, ...actualConfig } as WebVideoPluginConfig;
     }
 
     return actualConfig as PluginConfig;
@@ -144,7 +157,7 @@ export function usePluginConfiguration(pluginName: string) {
     setConfig((prev: PluginConfig | Record<string, any>) => ({ ...prev, [field_name]: value }));
   }, []);
 
-  const handleConfigChange = useCallback((newConfig: YouTubePluginConfig | BitTorrentPluginConfig | Record<string, any>) => {
+  const handleConfigChange = useCallback((newConfig: YouTubePluginConfig | BitTorrentPluginConfig | WebVideoPluginConfig | Record<string, any>) => {
     setConfig((prev) => ({ ...prev, ...newConfig }));
   }, []);
 

@@ -140,6 +140,7 @@ async def lifespan(app: FastAPI):
     worker_plugins = [
         "BitTorrentPlugin",
         "YouTubePlugin",
+        "WebVideoPlugin",
     ]
     plugin_manager.set_worker_plugins(worker_plugins)
     print(f"🔧 Worker mode enabled for plugins: {', '.join(worker_plugins)}")

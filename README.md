@@ -1,6 +1,11 @@
 # Haven Player
 
 > **Encrypted. Local. Yours forever.**
+>
+
+NOT MAINTAINED FOCUS IS ON A MODULAR ARCHITECTURE THAT IS WEB NATIVE AND COMPOSABLE
+- https://github.com/Haven-hvn/haven-cli
+- https://github.com/Haven-hvn/haven-dapp
 
 A video management application that puts you in control. Store your videos locally, encrypt them for privacy, and access them from anywhere—without giving up ownership of your data.
 
